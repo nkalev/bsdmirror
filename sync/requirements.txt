@@ -1,0 +1,10 @@
+# Sync service dependencies
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+redis==5.0.1
+pydantic-settings==2.1.0
+python-dotenv==1.0.1
+structlog==24.1.0
+croniter==2.0.1
+httpx==0.26.0
+aiohttp==3.9.3

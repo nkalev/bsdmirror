@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="BSD Mirror - Community mirror for FreeBSD, NetBSD, and OpenBSD distributions">
+    <title>BSD Mirror</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/css/style.css">
+    <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
+</head>
+<body>
+    <div class="background-gradient"></div>
+    
+    <header class="header">
+        <div class="container">
+            <div class="header-content">
+                <div class="logo">
+                    <span class="logo-icon">🔄</span>
+                    <span class="logo-text">BSD Mirror</span>
+                </div>
+                <nav class="nav">
+                    <a href="#mirrors" class="nav-link">Mirrors</a>
+                    <a href="#status" class="nav-link">Status</a>
+                    <a href="#about" class="nav-link">About</a>
+                    <a href="/admin" class="nav-link nav-admin">Admin</a>
+                </nav>
+                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
+                    <span class="theme-icon">🌙</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <!-- Hero Section -->
+        <section class="hero">
+            <div class="container">
+                <h1 class="hero-title">
+                    <span class="gradient-text">BSD Community Mirror</span>
+                </h1>
+                <p class="hero-subtitle">
+                    High-speed mirror for FreeBSD, NetBSD, and OpenBSD distributions.
+                    Serving the BSD community with reliable access to packages, releases, and documentation.
+                </p>
+                <div class="hero-stats" id="heroStats">
+                    <div class="stat-card loading">
+                        <div class="stat-icon">📦</div>
+                        <div class="stat-value" id="statMirrors">3</div>
+                        <div class="stat-label">BSD Distributions</div>
+                    </div>
+                    <div class="stat-card loading">
+                        <div class="stat-icon">💾</div>
+                        <div class="stat-value" id="statSize">Loading...</div>
+                        <div class="stat-label">Total Size</div>
+                    </div>
+                    <div class="stat-card loading">
+                        <div class="stat-icon">🔄</div>
+                        <div class="stat-value" id="statLastSync">Loading...</div>
+                        <div class="stat-label">Last Updated</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Mirrors Section -->
+        <section class="mirrors" id="mirrors">
+            <div class="container">
+                <h2 class="section-title">Available Mirrors</h2>
+                <div class="mirrors-grid">
+                    <!-- FreeBSD -->
+                    <div class="mirror-card" data-mirror="freebsd">
+                        <div class="mirror-header">
+                            <img src="/img/freebsd-logo.svg" alt="FreeBSD" class="mirror-logo">
+                            <div class="mirror-info">
+                                <h3 class="mirror-name">FreeBSD</h3>
+                                <span class="mirror-status" id="freebsd-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </span>
+                            </div>
+                        </div>
+                        <p class="mirror-description">
+                            The FreeBSD operating system - a powerful, flexible Unix-like OS for servers, desktops, and embedded platforms.
+                        </p>
+                        <div class="mirror-details">
+                            <div class="detail">
+                                <span class="detail-label">Size:</span>
+                                <span class="detail-value" id="freebsd-size">--</span>
+                            </div>
+                            <div class="detail">
+                                <span class="detail-label">Last Sync:</span>
+                                <span class="detail-value" id="freebsd-sync">--</span>
+                            </div>
+                        </div>
+                        <div class="mirror-actions">
+                            <a href="/FreeBSD/" class="btn btn-primary">
+                                <span>Browse Files</span>
+                                <span class="btn-arrow">→</span>
+                            </a>
+                            <button class="btn btn-secondary" onclick="copyRsync('FreeBSD')">
+                                <span>Copy rsync URL</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- NetBSD -->
+                    <div class="mirror-card" data-mirror="netbsd">
+                        <div class="mirror-header">
+                            <img src="/img/netbsd-logo.svg" alt="NetBSD" class="mirror-logo">
+                            <div class="mirror-info">
+                                <h3 class="mirror-name">NetBSD</h3>
+                                <span class="mirror-status" id="netbsd-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </span>
+                            </div>
+                        </div>
+                        <p class="mirror-description">
+                            NetBSD - "Of course it runs NetBSD". A highly portable, clean, and well-documented operating system.
+                        </p>
+                        <div class="mirror-details">
+                            <div class="detail">
+                                <span class="detail-label">Size:</span>
+                                <span class="detail-value" id="netbsd-size">--</span>
+                            </div>
+                            <div class="detail">
+                                <span class="detail-label">Last Sync:</span>
+                                <span class="detail-value" id="netbsd-sync">--</span>
+                            </div>
+                        </div>
+                        <div class="mirror-actions">
+                            <a href="/NetBSD/" class="btn btn-primary">
+                                <span>Browse Files</span>
+                                <span class="btn-arrow">→</span>
+                            </a>
+                            <button class="btn btn-secondary" onclick="copyRsync('NetBSD')">
+                                <span>Copy rsync URL</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- OpenBSD -->
+                    <div class="mirror-card" data-mirror="openbsd">
+                        <div class="mirror-header">
+                            <img src="/img/openbsd-logo.svg" alt="OpenBSD" class="mirror-logo">
+                            <div class="mirror-info">
+                                <h3 class="mirror-name">OpenBSD</h3>
+                                <span class="mirror-status" id="openbsd-status">
+                                    <span class="status-dot"></span>
+                                    <span class="status-text">Loading...</span>
+                                </span>
+                            </div>
+                        </div>
+                        <p class="mirror-description">
+                            OpenBSD - Proactively secure. Free. Functional. The most security-focused BSD distribution.
+                        </p>
+                        <div class="mirror-details">
+                            <div class="detail">
+                                <span class="detail-label">Size:</span>
+                                <span class="detail-value" id="openbsd-size">--</span>
+                            </div>
+                            <div class="detail">
+                                <span class="detail-label">Last Sync:</span>
+                                <span class="detail-value" id="openbsd-sync">--</span>
+                            </div>
+                        </div>
+                        <div class="mirror-actions">
+                            <a href="/OpenBSD/" class="btn btn-primary">
+                                <span>Browse Files</span>
+                                <span class="btn-arrow">→</span>
+                            </a>
+                            <button class="btn btn-secondary" onclick="copyRsync('OpenBSD')">
+                                <span>Copy rsync URL</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Status Section -->
+        <section class="status" id="status">
+            <div class="container">
+                <h2 class="section-title">Mirror Status</h2>
+                <div class="status-overview">
+                    <div class="status-card" id="overallStatus">
+                        <div class="status-indicator healthy">
+                            <span class="pulse"></span>
+                        </div>
+                        <div class="status-info">
+                            <h3>All Systems Operational</h3>
+                            <p>All mirrors are synchronized and available.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="access-methods">
+                    <h3>Access Methods</h3>
+                    <div class="method-grid">
+                        <div class="method-card">
+                            <div class="method-icon">🌐</div>
+                            <h4>HTTP/HTTPS</h4>
+                            <code class="method-url">https://<span id="hostname">mirror.example.com</span>/</code>
+                            <p>Direct browser access and package managers</p>
+                        </div>
+                        <div class="method-card">
+                            <div class="method-icon">🔄</div>
+                            <h4>rsync</h4>
+                            <code class="method-url">rsync://<span id="rsynchost">mirror.example.com</span>/</code>
+                            <p>For efficient synchronization and other mirrors</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- About Section -->
+        <section class="about" id="about">
+            <div class="container">
+                <h2 class="section-title">About This Mirror</h2>
+                <div class="about-content">
+                    <div class="about-text">
+                        <p>
+                            This is a community-operated mirror providing fast and reliable access to BSD operating system 
+                            distributions. We synchronize regularly with the official upstream mirrors to ensure you always 
+                            have access to the latest releases, packages, and security updates.
+                        </p>
+                        <h4>Maintained by</h4>
+                        <p>BSD Community Volunteers</p>
+                        
+                        <h4>Sync Schedule</h4>
+                        <p>Daily at 04:00 UTC</p>
+                        
+                        <h4>Contact</h4>
+                        <p>For issues or questions, please open an issue on our GitHub repository.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <p>&copy; 2024 BSD Mirror. Open source and community-driven.</p>
+                <div class="footer-links">
+                    <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
+                    <a href="/api/docs" target="_blank">API</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
+    <script src="/js/main.js"></script>
+</body>
+</html>
