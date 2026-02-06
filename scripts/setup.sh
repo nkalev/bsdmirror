@@ -69,23 +69,58 @@ apt-get install -y \
 # ===========================================
 # Install Docker
 # ===========================================
-if ! command -v docker &> /dev/null; then
-    log_info "Installing Docker..."
-    curl -fsSL https://get.docker.com -o get-docker.sh
-    sh get-docker.sh
-    rm get-docker.sh
-    
+install_docker() {
+    # Add Docker's official GPG key
+    install -m 0755 -d /etc/apt/keyrings
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    chmod a+r /etc/apt/keyrings/docker.gpg
+
+    # Add the Docker repository
+    echo \
+      "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+      $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+      tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Update package index
+    apt-get update
+
+    # Install Docker Engine and Compose plugin
+    apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
     # Enable Docker service
     systemctl enable docker
     systemctl start docker
+}
+
+if ! command -v docker &> /dev/null; then
+    log_info "Installing Docker..."
+    install_docker
 else
     log_info "Docker already installed"
+    # Ensure Docker Compose plugin is installed even if Docker exists
+    if ! docker compose version &> /dev/null 2>&1; then
+        log_info "Installing Docker Compose plugin..."
+        # Add Docker repo if not present
+        if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+            chmod a+r /etc/apt/keyrings/docker.gpg
+            echo \
+              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+              tee /etc/apt/sources.list.d/docker.list > /dev/null
+            apt-get update
+        fi
+        apt-get install -y docker-compose-plugin
+    fi
 fi
 
-# Install Docker Compose plugin if not present
-if ! docker compose version &> /dev/null; then
-    log_info "Installing Docker Compose..."
-    apt-get install -y docker-compose-plugin
+# Verify Docker Compose is working
+if docker compose version &> /dev/null; then
+    log_info "Docker Compose $(docker compose version --short) installed"
+else
+    log_error "Docker Compose installation failed"
+    exit 1
 fi
 
 # ===========================================
@@ -278,13 +313,17 @@ EOF
 chmod 600 "$CREDS_FILE"
 
 # ===========================================
-# Update Nginx config with domain
+# Copy original SSL config for later
 # ===========================================
-log_info "Updating Nginx configuration..."
+cp "$INSTALL_DIR/nginx/sites/default.conf" "$INSTALL_DIR/nginx/sites/default.conf.original"
 
-if [[ -f "$INSTALL_DIR/nginx/sites/default.conf" ]]; then
-    sed -i "s/mirror.example.com/$DOMAIN/g" "$INSTALL_DIR/nginx/sites/default.conf"
+# Update domain in SSL config (for later use)
+if [[ -f "$INSTALL_DIR/nginx/sites/default.conf.original" ]]; then
+    sed -i "s/mirror.example.com/$DOMAIN/g" "$INSTALL_DIR/nginx/sites/default.conf.original"
 fi
+
+# Make scripts executable
+chmod +x "$INSTALL_DIR/scripts/"*.sh 2>/dev/null || true
 
 # ===========================================
 # Summary
@@ -305,12 +344,24 @@ echo "Admin Credentials:"
 echo "  Username: admin"
 echo "  Password: $ADMIN_PASSWORD"
 echo
-echo "Next steps:"
-echo "  1. Copy your application files to $INSTALL_DIR"
-echo "  2. cd $INSTALL_DIR"
-echo "  3. docker compose up -d"
-echo "  4. Visit https://$DOMAIN/admin to access admin panel"
+echo "========================================="
+echo "  NEXT STEPS (in order):"
+echo "========================================="
 echo
-echo "For SSL certificates, after starting services:"
-echo "  docker compose --profile ssl up -d certbot"
+echo "Step 1: Start the database and backend services (HTTP only):"
+echo "  cd $INSTALL_DIR"
+echo "  docker compose up -d postgres redis backend sync"
 echo
+echo "Step 2: Obtain SSL certificate and start nginx:"
+echo "  ./scripts/ssl-setup.sh"
+echo
+echo "Step 3: (Optional) Enable rsync server for other mirrors:"
+echo "  docker compose --profile rsync up -d"
+echo
+echo "After SSL setup, access:"
+echo "  - Website: https://$DOMAIN"
+echo "  - Admin Panel: https://$DOMAIN/admin"
+echo
+log_warn "Make sure your domain $DOMAIN points to this server's IP before running ssl-setup.sh!"
+echo
+
