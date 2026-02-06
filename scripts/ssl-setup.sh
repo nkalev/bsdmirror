@@ -16,15 +16,27 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/opt/bsdmirror}"
+ENV_FILE="$INSTALL_DIR/.env"
 COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 
+# Load specific variables from .env file safely (handles special chars like cron)
+load_env_var() {
+    local var_name="$1"
+    local value
+    value=$(grep "^${var_name}=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2- | head -1)
+    echo "$value"
+}
+
 # Load environment
-if [[ -f "$INSTALL_DIR/.env" ]]; then
-    source "$INSTALL_DIR/.env"
-else
-    log_error ".env file not found at $INSTALL_DIR/.env"
+if [[ ! -f "$ENV_FILE" ]]; then
+    log_error ".env file not found at $ENV_FILE"
     exit 1
 fi
+
+DOMAIN=$(load_env_var "DOMAIN")
+LETSENCRYPT_EMAIL=$(load_env_var "LETSENCRYPT_EMAIL")
+ADMIN_EMAIL=$(load_env_var "ADMIN_EMAIL")
+LETSENCRYPT_ENV=$(load_env_var "LETSENCRYPT_ENV")
 
 # Validate required variables
 if [[ -z "${DOMAIN:-}" ]]; then
