@@ -18,6 +18,7 @@ from app.core.database import init_db, close_db, async_session_maker
 from app.core.redis import init_redis, close_redis
 from app.core.security import hash_password
 from app.models.user import User, UserRole
+from app.models.mirror import Mirror, MirrorType, MirrorStatus
 from app.api import health, auth, mirrors, admin, stats
 
 # Configure structured logging
@@ -51,8 +52,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_redis()
     logger.info("Database and Redis connections established")
 
-    # Seed admin user if it doesn't exist
+    # Seed admin user and default mirrors if they don't exist
     async with async_session_maker() as session:
+        # Admin user
         result = await session.execute(
             select(User).where(User.username == settings.ADMIN_USERNAME)
         )
@@ -65,10 +67,44 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 is_active=True,
             )
             session.add(admin_user)
-            await session.commit()
             logger.info("Admin user created", username=settings.ADMIN_USERNAME)
         else:
             logger.info("Admin user already exists", username=settings.ADMIN_USERNAME)
+
+        # Default mirrors
+        default_mirrors = [
+            {
+                "name": "FreeBSD",
+                "mirror_type": MirrorType.FREEBSD,
+                "upstream_url": "rsync://ftp.freebsd.org/FreeBSD/",
+                "local_path": "/data/mirrors/freebsd/pub/FreeBSD",
+            },
+            {
+                "name": "NetBSD",
+                "mirror_type": MirrorType.NETBSD,
+                "upstream_url": "rsync://ftp.netbsd.org/pub/NetBSD/",
+                "local_path": "/data/mirrors/netbsd/pub/NetBSD",
+            },
+            {
+                "name": "OpenBSD",
+                "mirror_type": MirrorType.OPENBSD,
+                "upstream_url": "rsync://ftp.openbsd.org/pub/OpenBSD/",
+                "local_path": "/data/mirrors/openbsd/pub/OpenBSD",
+            },
+        ]
+        for mirror_data in default_mirrors:
+            result = await session.execute(
+                select(Mirror).where(Mirror.name == mirror_data["name"])
+            )
+            if result.scalar_one_or_none() is None:
+                session.add(Mirror(
+                    **mirror_data,
+                    enabled=True,
+                    status=MirrorStatus.ACTIVE,
+                ))
+                logger.info("Default mirror created", name=mirror_data["name"])
+
+        await session.commit()
 
     yield
     
