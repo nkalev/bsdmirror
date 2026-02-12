@@ -1,11 +1,12 @@
 """
 Admin API endpoints.
 """
+import re
 from datetime import datetime, timezone
 from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, Request
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
@@ -24,9 +25,9 @@ router = APIRouter()
 
 # Pydantic models
 class UserCreateRequest(BaseModel):
-    username: str
+    username: str = Field(min_length=3, max_length=50)
     email: Optional[str] = None
-    password: str
+    password: str = Field(min_length=12, max_length=128)
     role: UserRole = UserRole.READONLY
 
 
@@ -52,6 +53,17 @@ class UserResponse(BaseModel):
 class MirrorUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
     upstream_url: Optional[str] = None
+
+    @field_validator("upstream_url")
+    @classmethod
+    def validate_upstream_url(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return v
+        if not re.match(r"^(rsync|https?)://", v):
+            raise ValueError("upstream_url must start with rsync://, http://, or https://")
+        if len(v) > 500:
+            raise ValueError("upstream_url must be 500 characters or fewer")
+        return v
 
 
 class TriggerSyncRequest(BaseModel):
@@ -101,7 +113,7 @@ async def create_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Username already exists"
         )
-    
+
     # Create user
     user = User(
         username=user_data.username,
@@ -112,7 +124,7 @@ async def create_user(
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    
+
     logger.info("User created", user_id=user.id, created_by=current_user.id)
     await create_audit_log(
         db=db,
@@ -123,14 +135,14 @@ async def create_user(
         details={"username": user.username, "role": user.role.value},
         request=request
     )
-    
+
     return user
 
 
 @router.patch("/users/{user_id}", response_model=UserResponse)
 async def update_user(
     request: Request,
-    user_id: int,
+    user_id: Annotated[int, Path(gt=0)],
     user_data: UserUpdateRequest,
     current_user: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db)
@@ -138,20 +150,20 @@ async def update_user(
     """Update a user (admin only)."""
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     # Prevent self-demotion
     if user_id == current_user.id and user_data.role and user_data.role != UserRole.ADMIN:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot demote yourself"
         )
-    
+
     changes = {}
     if user_data.email is not None:
         user.email = user_data.email
@@ -162,10 +174,10 @@ async def update_user(
     if user_data.is_active is not None:
         user.is_active = user_data.is_active
         changes["is_active"] = user_data.is_active
-    
+
     await db.commit()
     await db.refresh(user)
-    
+
     await create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -175,14 +187,14 @@ async def update_user(
         details=changes,
         request=request
     )
-    
+
     return user
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     request: Request,
-    user_id: int,
+    user_id: Annotated[int, Path(gt=0)],
     current_user: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db)
 ) -> None:
@@ -192,20 +204,20 @@ async def delete_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete yourself"
         )
-    
+
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    
+
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found"
         )
-    
+
     username = user.username
     await db.delete(user)
     await db.commit()
-    
+
     await create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -224,7 +236,7 @@ async def delete_user(
 @router.patch("/mirrors/{mirror_id}")
 async def update_mirror(
     request: Request,
-    mirror_id: int,
+    mirror_id: Annotated[int, Path(gt=0)],
     mirror_data: MirrorUpdateRequest,
     current_user: Annotated[User, Depends(require_operator)],
     db: AsyncSession = Depends(get_db)
@@ -232,13 +244,13 @@ async def update_mirror(
     """Update mirror configuration (operator+)."""
     result = await db.execute(select(Mirror).where(Mirror.id == mirror_id))
     mirror = result.scalar_one_or_none()
-    
+
     if not mirror:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mirror not found"
         )
-    
+
     changes = {}
     if mirror_data.enabled is not None:
         mirror.enabled = mirror_data.enabled
@@ -246,9 +258,9 @@ async def update_mirror(
     if mirror_data.upstream_url is not None:
         mirror.upstream_url = mirror_data.upstream_url
         changes["upstream_url"] = mirror_data.upstream_url
-    
+
     await db.commit()
-    
+
     await create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -258,39 +270,39 @@ async def update_mirror(
         details=changes,
         request=request
     )
-    
+
     return {"message": "Mirror updated", "changes": changes}
 
 
 @router.post("/mirrors/{mirror_id}/sync")
 async def trigger_sync(
     request: Request,
-    mirror_id: int,
+    mirror_id: Annotated[int, Path(gt=0)],
     current_user: Annotated[User, Depends(require_operator)],
     db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Trigger a manual sync for a mirror (operator+)."""
     result = await db.execute(select(Mirror).where(Mirror.id == mirror_id))
     mirror = result.scalar_one_or_none()
-    
+
     if not mirror:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mirror not found"
         )
-    
+
     if not mirror.enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mirror is disabled"
         )
-    
+
     if mirror.status == MirrorStatus.SYNCING:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Mirror is already syncing"
         )
-    
+
     # Create sync job
     sync_job = SyncJob(
         mirror_id=mirror_id,
@@ -300,7 +312,7 @@ async def trigger_sync(
     db.add(sync_job)
     await db.commit()
     await db.refresh(sync_job)
-    
+
     await create_audit_log(
         db=db,
         user_id=current_user.id,
@@ -310,7 +322,7 @@ async def trigger_sync(
         details={"sync_job_id": sync_job.id},
         request=request
     )
-    
+
     return {"message": "Sync job created", "job_id": sync_job.id}
 
 
@@ -321,20 +333,20 @@ async def trigger_sync(
 @router.get("/audit-logs", response_model=List[AuditLogResponse])
 async def get_audit_logs(
     current_user: Annotated[User, Depends(require_admin)],
-    limit: int = 100,
-    offset: int = 0,
+    limit: Annotated[int, Query(ge=1, le=1000)] = 100,
+    offset: Annotated[int, Query(ge=0)] = 0,
     action: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ) -> List[AuditLogResponse]:
     """Get audit logs (admin only)."""
     query = select(AuditLog, User.username).outerjoin(User).order_by(AuditLog.created_at.desc())
-    
+
     if action:
         query = query.where(AuditLog.action == action)
-    
+
     query = query.offset(offset).limit(limit)
     result = await db.execute(query)
-    
+
     return [
         AuditLogResponse(
             id=log.id,
@@ -364,27 +376,27 @@ async def get_dashboard(
     # Get mirror stats
     mirrors_result = await db.execute(select(Mirror))
     mirrors = mirrors_result.scalars().all()
-    
+
     # Get user count
     user_count_result = await db.execute(select(func.count(User.id)))
     user_count = user_count_result.scalar()
-    
+
     # Get recent sync jobs
     recent_syncs = await db.execute(
         select(SyncJob)
         .order_by(SyncJob.created_at.desc())
         .limit(5)
     )
-    
+
     # Get recent audit logs
     recent_logs = await db.execute(
         select(AuditLog)
         .order_by(AuditLog.created_at.desc())
         .limit(10)
     )
-    
+
     total_size = sum(m.total_size_bytes or 0 for m in mirrors)
-    
+
     return {
         "mirrors": {
             "total": len(mirrors),

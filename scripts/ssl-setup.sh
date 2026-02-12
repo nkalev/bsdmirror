@@ -73,8 +73,11 @@ docker compose stop nginx 2>/dev/null || true
 cp nginx/sites/bootstrap.conf nginx/sites/default.conf.bak 2>/dev/null || true
 cp nginx/sites/bootstrap.conf nginx/sites/active.conf
 
+# Escape domain for safe use in sed
+ESCAPED_DOMAIN=$(printf '%s\n' "$DOMAIN" | sed 's/[&/\]/\\&/g')
+
 # Update domain in bootstrap config
-sed -i "s/server_name _;/server_name $DOMAIN;/g" nginx/sites/active.conf
+sed -i "s/server_name _;/server_name $ESCAPED_DOMAIN;/g" nginx/sites/active.conf
 
 # Create docker-compose override for bootstrap
 cat > docker-compose.bootstrap.yml << EOF
@@ -144,8 +147,8 @@ else
     cp nginx/sites/default.conf nginx/sites/active.conf
 fi
 
-# Update domain in config
-sed -i "s/mirror.example.com/$DOMAIN/g" nginx/sites/active.conf
+# Update domain in config (escape for sed safety)
+sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" nginx/sites/active.conf
 
 # Stop bootstrap mode
 docker compose -f docker-compose.yml -f docker-compose.bootstrap.yml down nginx

@@ -9,6 +9,9 @@ BACKUP_DIR="${BACKUP_DIR:-/opt/bsdmirror/backups}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/bsdmirror}"
 KEEP_DAYS="${KEEP_DAYS:-7}"
 
+# Restrict file permissions for all created files
+umask 077
+
 # Ensure backup directory exists
 mkdir -p "$BACKUP_DIR"
 

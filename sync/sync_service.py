@@ -47,6 +47,7 @@ class SyncConfig:
     
     SYNC_SCHEDULE = os.getenv("SYNC_SCHEDULE", "0 4 * * *")
     SYNC_BANDWIDTH_LIMIT = int(os.getenv("SYNC_BANDWIDTH_LIMIT", "0"))
+    SYNC_TIMEOUT = int(os.getenv("SYNC_TIMEOUT", "600"))
     
     FREEBSD_ENABLED = os.getenv("FREEBSD_ENABLED", "true").lower() == "true"
     FREEBSD_UPSTREAM = os.getenv("FREEBSD_UPSTREAM", "rsync://ftp.freebsd.org/FreeBSD/")
@@ -90,7 +91,7 @@ class SyncService:
             "--delete-delay",
             "--delay-updates",
             "--stats",
-            "--timeout=600",
+            f"--timeout={config.SYNC_TIMEOUT}",
         ]
         
         if config.SYNC_BANDWIDTH_LIMIT > 0:
@@ -138,25 +139,25 @@ class SyncService:
             if "Number of files:" in line:
                 try:
                     stats["total_files"] = int(line.split(":")[1].strip().split()[0].replace(",", ""))
-                except (IndexError, ValueError):
-                    pass
+                except (IndexError, ValueError) as e:
+                    logger.debug("Failed to parse rsync total_files", line=line.strip(), error=str(e))
             elif "Number of regular files transferred:" in line:
                 try:
                     stats["files_transferred"] = int(line.split(":")[1].strip().replace(",", ""))
-                except (IndexError, ValueError):
-                    pass
+                except (IndexError, ValueError) as e:
+                    logger.debug("Failed to parse rsync files_transferred", line=line.strip(), error=str(e))
             elif "Total file size:" in line:
                 try:
                     size_str = line.split(":")[1].strip().split()[0].replace(",", "")
                     stats["total_size"] = int(size_str)
-                except (IndexError, ValueError):
-                    pass
+                except (IndexError, ValueError) as e:
+                    logger.debug("Failed to parse rsync total_size", line=line.strip(), error=str(e))
             elif "Total transferred file size:" in line:
                 try:
                     size_str = line.split(":")[1].strip().split()[0].replace(",", "")
                     stats["bytes_transferred"] = int(size_str)
-                except (IndexError, ValueError):
-                    pass
+                except (IndexError, ValueError) as e:
+                    logger.debug("Failed to parse rsync bytes_transferred", line=line.strip(), error=str(e))
         
         return stats
     

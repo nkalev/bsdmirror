@@ -78,11 +78,21 @@ check_containers() {
 send_alert() {
     local message="$1"
     
-    # Slack webhook
+    # Slack webhook (use jq for safe JSON encoding if available, fallback to basic sanitization)
     if [[ -n "$SLACK_WEBHOOK" ]]; then
-        curl -s -X POST -H 'Content-type: application/json' \
-            --data "{\"text\":\"🚨 BSD Mirror Alert: $message\"}" \
-            "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
+        if command -v jq &>/dev/null; then
+            local payload
+            payload=$(jq -n --arg text "BSD Mirror Alert: $message" '{text: $text}')
+            curl -s -X POST -H 'Content-type: application/json' \
+                --data "$payload" \
+                "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
+        else
+            local safe_message
+            safe_message=$(printf '%s' "$message" | sed 's/["\]/\\&/g')
+            curl -s -X POST -H 'Content-type: application/json' \
+                --data "{\"text\":\"BSD Mirror Alert: $safe_message\"}" \
+                "$SLACK_WEBHOOK" >/dev/null 2>&1 || true
+        fi
     fi
     
     # Email (requires mailx)

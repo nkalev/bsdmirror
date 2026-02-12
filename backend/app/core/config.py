@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # Security
     SECRET_KEY: str = Field(...)
     JWT_ALGORITHM: str = Field(default="HS256")
-    JWT_EXPIRY_HOURS: int = Field(default=24)
+    JWT_EXPIRY_HOURS: int = Field(default=8)
     
     # Admin user (created on first run)
     ADMIN_USERNAME: str = Field(default="admin")
@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # Mirror paths
     MIRROR_DATA_PATH: str = Field(default="/data/mirrors")
     
+    # Database pool
+    DB_POOL_SIZE: int = Field(default=10)
+    DB_MAX_OVERFLOW: int = Field(default=20)
+
     # Rate limiting
     API_RATE_LIMIT: int = Field(default=10)
     API_RATE_BURST: int = Field(default=20)

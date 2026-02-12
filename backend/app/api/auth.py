@@ -7,16 +7,20 @@ from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel
+import redis.asyncio as aioredis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
 from app.core.database import get_db
+from app.core.redis import get_redis
 from app.core.security import (
     verify_password,
     hash_password,
     create_access_token,
     decode_access_token,
+    blacklist_token,
+    is_token_blacklisted,
     TokenData
 )
 from app.models.user import User, UserRole
@@ -57,7 +61,8 @@ class UserCreate(BaseModel):
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    redis_client: aioredis.Redis = Depends(get_redis)
 ) -> User:
     """Dependency to get the current authenticated user."""
     credentials_exception = HTTPException(
@@ -65,21 +70,39 @@ async def get_current_user(
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
-    
+
     token_data = decode_access_token(token)
     if token_data is None:
         raise credentials_exception
-    
+
+    # Check if token has been revoked
+    if token_data.jti and await is_token_blacklisted(redis_client, token_data.jti):
+        raise credentials_exception
+
     # Get user from database
     result = await db.execute(
         select(User).where(User.username == token_data.username)
     )
     user = result.scalar_one_or_none()
-    
+
     if user is None or not user.is_active:
         raise credentials_exception
-    
+
     return user
+
+
+async def get_current_token_data(
+    token: Annotated[str, Depends(oauth2_scheme)],
+) -> TokenData:
+    """Dependency to get the current token data (for logout/blacklist)."""
+    token_data = decode_access_token(token)
+    if token_data is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return token_data
 
 
 async def require_admin(
@@ -141,7 +164,7 @@ async def login(
         select(User).where(User.username == form_data.username)
     )
     user = result.scalar_one_or_none()
-    
+
     # Verify credentials
     if user is None or not verify_password(form_data.password, user.password_hash):
         logger.warning("Failed login attempt", username=form_data.username)
@@ -158,17 +181,17 @@ async def login(
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
+
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User account is disabled"
         )
-    
+
     # Update last login
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
-    
+
     # Create token
     access_token = create_access_token(
         data={
@@ -177,7 +200,7 @@ async def login(
             "role": user.role.value
         }
     )
-    
+
     logger.info("User logged in", user_id=user.id, username=user.username)
     await create_audit_log(
         db=db,
@@ -186,7 +209,7 @@ async def login(
         resource_type="auth",
         request=request
     )
-    
+
     return Token(access_token=access_token, token_type="bearer")
 
 
@@ -202,9 +225,15 @@ async def get_current_user_info(
 async def logout(
     request: Request,
     current_user: Annotated[User, Depends(get_current_user)],
+    token_data: Annotated[TokenData, Depends(get_current_token_data)],
+    redis_client: aioredis.Redis = Depends(get_redis),
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Logout current user (for audit logging)."""
+    """Logout current user and invalidate the token."""
+    # Blacklist the token in Redis so it can't be reused
+    if token_data.jti:
+        await blacklist_token(redis_client, token_data.jti, token_data.exp)
+
     await create_audit_log(
         db=db,
         user_id=current_user.id,
