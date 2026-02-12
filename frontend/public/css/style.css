@@ -151,6 +151,16 @@ body {
 .logo-icon {
     width: 32px;
     height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.logo-icon svg {
+    width: 32px;
+    height: 32px;
+    display: block;
 }
 
 .logo-text {
@@ -159,7 +169,9 @@ body {
 
 .nav {
     display: flex;
+    align-items: center;
     gap: 32px;
+    flex-shrink: 0;
 }
 
 .nav-link {
@@ -167,6 +179,7 @@ body {
     text-decoration: none;
     font-weight: 500;
     font-size: 0.9375rem;
+    white-space: nowrap;
     transition: color var(--transition-fast);
 }
 
