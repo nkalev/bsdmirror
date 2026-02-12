@@ -11,9 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import structlog
 
+from sqlalchemy import select
+
 from app.core.config import settings
-from app.core.database import init_db, close_db
+from app.core.database import init_db, close_db, async_session_maker
 from app.core.redis import init_redis, close_redis
+from app.core.security import hash_password
+from app.models.user import User, UserRole
 from app.api import health, auth, mirrors, admin, stats
 
 # Configure structured logging
@@ -46,7 +50,26 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await init_db()
     await init_redis()
     logger.info("Database and Redis connections established")
-    
+
+    # Seed admin user if it doesn't exist
+    async with async_session_maker() as session:
+        result = await session.execute(
+            select(User).where(User.username == settings.ADMIN_USERNAME)
+        )
+        admin_user = result.scalar_one_or_none()
+        if admin_user is None:
+            admin_user = User(
+                username=settings.ADMIN_USERNAME,
+                password_hash=hash_password(settings.ADMIN_PASSWORD),
+                role=UserRole.ADMIN,
+                is_active=True,
+            )
+            session.add(admin_user)
+            await session.commit()
+            logger.info("Admin user created", username=settings.ADMIN_USERNAME)
+        else:
+            logger.info("Admin user already exists", username=settings.ADMIN_USERNAME)
+
     yield
     
     # Shutdown
