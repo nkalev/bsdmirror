@@ -5,20 +5,28 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="BSD Mirror - Community mirror for FreeBSD, NetBSD, and OpenBSD distributions">
     <title>BSD Mirror</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/css/style.css">
     <link rel="icon" type="image/svg+xml" href="/img/favicon.svg">
 </head>
 <body>
     <div class="background-gradient"></div>
-    
+
     <header class="header">
         <div class="container">
             <div class="header-content">
                 <div class="logo">
-                    <span class="logo-icon">🔄</span>
+                    <span class="logo-icon">
+                        <svg viewBox="0 0 100 100" width="32" height="32">
+                            <defs><linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#E85D04"/><stop offset="100%" stop-color="#D62828"/></linearGradient></defs>
+                            <circle cx="50" cy="50" r="45" fill="url(#logo-grad)"/>
+                            <path d="M30 38 L25 20 L35 30 Z" fill="white" opacity="0.95"/>
+                            <path d="M70 38 L75 20 L65 30 Z" fill="white" opacity="0.95"/>
+                            <circle cx="50" cy="48" r="22" fill="white" opacity="0.95"/>
+                            <circle cx="42" cy="44" r="4" fill="#D62828"/>
+                            <circle cx="58" cy="44" r="4" fill="#D62828"/>
+                            <path d="M38 54 Q50 64 62 54" stroke="#D62828" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                        </svg>
+                    </span>
                     <span class="logo-text">BSD Mirror</span>
                 </div>
                 <nav class="nav">
@@ -28,7 +36,7 @@
                     <a href="/admin" class="nav-link nav-admin">Admin</a>
                 </nav>
                 <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-                    <span class="theme-icon">🌙</span>
+                    <span class="theme-icon">&#9790;</span>
                 </button>
             </div>
         </div>
@@ -47,17 +55,35 @@
                 </p>
                 <div class="hero-stats" id="heroStats">
                     <div class="stat-card loading">
-                        <div class="stat-icon">📦</div>
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                                <line x1="12" y1="22.08" x2="12" y2="12"/>
+                            </svg>
+                        </div>
                         <div class="stat-value" id="statMirrors">3</div>
                         <div class="stat-label">BSD Distributions</div>
                     </div>
                     <div class="stat-card loading">
-                        <div class="stat-icon">💾</div>
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <ellipse cx="12" cy="5" rx="9" ry="3"/>
+                                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+                                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+                            </svg>
+                        </div>
                         <div class="stat-value" id="statSize">Loading...</div>
                         <div class="stat-label">Total Size</div>
                     </div>
                     <div class="stat-card loading">
-                        <div class="stat-icon">🔄</div>
+                        <div class="stat-icon">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="23 4 23 10 17 10"/>
+                                <polyline points="1 20 1 14 7 14"/>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                            </svg>
+                        </div>
                         <div class="stat-value" id="statLastSync">Loading...</div>
                         <div class="stat-label">Last Updated</div>
                     </div>
@@ -69,6 +95,7 @@
         <section class="mirrors" id="mirrors">
             <div class="container">
                 <h2 class="section-title">Available Mirrors</h2>
+                <p class="section-subtitle">Browse and sync from our high-speed BSD distribution mirrors</p>
                 <div class="mirrors-grid">
                     <!-- FreeBSD -->
                     <div class="mirror-card" data-mirror="freebsd">
@@ -98,7 +125,7 @@
                         <div class="mirror-actions">
                             <a href="/FreeBSD/" class="btn btn-primary">
                                 <span>Browse Files</span>
-                                <span class="btn-arrow">→</span>
+                                <span class="btn-arrow">&rarr;</span>
                             </a>
                             <button class="btn btn-secondary" onclick="copyRsync('FreeBSD')">
                                 <span>Copy rsync URL</span>
@@ -134,7 +161,7 @@
                         <div class="mirror-actions">
                             <a href="/NetBSD/" class="btn btn-primary">
                                 <span>Browse Files</span>
-                                <span class="btn-arrow">→</span>
+                                <span class="btn-arrow">&rarr;</span>
                             </a>
                             <button class="btn btn-secondary" onclick="copyRsync('NetBSD')">
                                 <span>Copy rsync URL</span>
@@ -170,7 +197,7 @@
                         <div class="mirror-actions">
                             <a href="/OpenBSD/" class="btn btn-primary">
                                 <span>Browse Files</span>
-                                <span class="btn-arrow">→</span>
+                                <span class="btn-arrow">&rarr;</span>
                             </a>
                             <button class="btn btn-secondary" onclick="copyRsync('OpenBSD')">
                                 <span>Copy rsync URL</span>
@@ -185,6 +212,7 @@
         <section class="status" id="status">
             <div class="container">
                 <h2 class="section-title">Mirror Status</h2>
+                <p class="section-subtitle">Real-time synchronization and availability overview</p>
                 <div class="status-overview">
                     <div class="status-card" id="overallStatus">
                         <div class="status-indicator healthy">
@@ -196,18 +224,30 @@
                         </div>
                     </div>
                 </div>
-                
+
                 <div class="access-methods">
                     <h3>Access Methods</h3>
                     <div class="method-grid">
                         <div class="method-card">
-                            <div class="method-icon">🌐</div>
+                            <div class="method-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="2" y1="12" x2="22" y2="12"/>
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                                </svg>
+                            </div>
                             <h4>HTTP/HTTPS</h4>
                             <code class="method-url">https://<span id="hostname">mirror.example.com</span>/</code>
                             <p>Direct browser access and package managers</p>
                         </div>
                         <div class="method-card">
-                            <div class="method-icon">🔄</div>
+                            <div class="method-icon">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <polyline points="23 4 23 10 17 10"/>
+                                    <polyline points="1 20 1 14 7 14"/>
+                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+                                </svg>
+                            </div>
                             <h4>rsync</h4>
                             <code class="method-url">rsync://<span id="rsynchost">mirror.example.com</span>/</code>
                             <p>For efficient synchronization and other mirrors</p>
@@ -221,19 +261,20 @@
         <section class="about" id="about">
             <div class="container">
                 <h2 class="section-title">About This Mirror</h2>
+                <p class="section-subtitle">Community-operated, open source infrastructure</p>
                 <div class="about-content">
                     <div class="about-text">
                         <p>
-                            This is a community-operated mirror providing fast and reliable access to BSD operating system 
-                            distributions. We synchronize regularly with the official upstream mirrors to ensure you always 
+                            This is a community-operated mirror providing fast and reliable access to BSD operating system
+                            distributions. We synchronize regularly with the official upstream mirrors to ensure you always
                             have access to the latest releases, packages, and security updates.
                         </p>
                         <h4>Maintained by</h4>
                         <p>BSD Community Volunteers</p>
-                        
+
                         <h4>Sync Schedule</h4>
                         <p>Daily at 04:00 UTC</p>
-                        
+
                         <h4>Contact</h4>
                         <p>For issues or questions, please open an issue on our GitHub repository.</p>
                     </div>
@@ -245,7 +286,7 @@
     <footer class="footer">
         <div class="container">
             <div class="footer-content">
-                <p>&copy; 2024 BSD Mirror. Open source and community-driven.</p>
+                <p>&copy; 2025 BSD Mirror. Open source and community-driven.</p>
                 <div class="footer-links">
                     <a href="https://github.com" target="_blank" rel="noopener">GitHub</a>
                     <a href="/api/docs" target="_blank">API</a>

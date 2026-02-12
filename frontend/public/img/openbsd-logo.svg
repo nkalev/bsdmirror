@@ -1,4 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="48" height="48">
+  <!-- OpenBSD Yellow circle -->
   <circle cx="50" cy="50" r="45" fill="#F2CA30"/>
-  <text x="50" y="60" font-family="Arial, sans-serif" font-size="36" font-weight="bold" fill="#000" text-anchor="middle">O</text>
+  <!-- Puffy body -->
+  <ellipse cx="50" cy="55" rx="22" ry="18" fill="white" opacity="0.9"/>
+  <!-- Head -->
+  <circle cx="50" cy="38" r="14" fill="white" opacity="0.9"/>
+  <!-- Eyes -->
+  <circle cx="45" cy="36" r="4" fill="none" stroke="#333" stroke-width="1.5"/>
+  <circle cx="55" cy="36" r="4" fill="none" stroke="#333" stroke-width="1.5"/>
+  <circle cx="45" cy="36" r="2" fill="#333"/>
+  <circle cx="55" cy="36" r="2" fill="#333"/>
+  <!-- Halo -->
+  <ellipse cx="50" cy="24" rx="12" ry="4" fill="none" stroke="#F2CA30" stroke-width="2"/>
+  <ellipse cx="50" cy="24" rx="12" ry="4" fill="none" stroke="white" stroke-width="1.5" opacity="0.7"/>
+  <!-- Beak -->
+  <path d="M47 41 L50 46 L53 41" fill="#F2CA30" stroke="#333" stroke-width="1"/>
+  <!-- Spines/quills on back -->
+  <path d="M30 50 L26 42" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
+  <path d="M70 50 L74 42" stroke="white" stroke-width="2" stroke-linecap="round" opacity="0.8"/>
 </svg>

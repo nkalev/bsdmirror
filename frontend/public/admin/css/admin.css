@@ -1,22 +1,30 @@
 /* BSD Mirror Admin Panel - Styles */
+/* BSD-themed dark palette: Orange / Red / Dark Navy */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 :root {
     /* Colors - Dark theme (default for admin) */
-    --bg-primary: #0f172a;
-    --bg-secondary: #1e293b;
-    --bg-tertiary: #334155;
-    --bg-card: #1e293b;
-    --text-primary: #f8fafc;
-    --text-secondary: #cbd5e1;
-    --text-muted: #64748b;
-    --accent-primary: #3b82f6;
-    --accent-secondary: #8b5cf6;
-    --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
-    --border-color: #334155;
+    --bg-primary: #0D0D1A;
+    --bg-secondary: #1A1A2E;
+    --bg-tertiary: #2A2A40;
+    --bg-card: #1A1A2E;
+    --text-primary: #E8E8F0;
+    --text-secondary: #A0A0B8;
+    --text-muted: #606078;
+    --accent-primary: #F48C06;
+    --accent-secondary: #E85D04;
+    --accent-gradient: linear-gradient(135deg, #F48C06 0%, #E85D04 100%);
+    --border-color: #2A2A40;
     --success: #22c55e;
     --warning: #f59e0b;
     --error: #ef4444;
     --info: #0ea5e9;
+
+    /* BSD identity colors */
+    --freebsd-color: #AB2B28;
+    --netbsd-color: #FF6600;
+    --openbsd-color: #F2CA30;
 
     /* Layout */
     --sidebar-width: 260px;
@@ -187,6 +195,7 @@ body {
     justify-content: center;
     font-weight: 600;
     font-size: 0.875rem;
+    color: white;
 }
 
 .user-details {
@@ -272,6 +281,11 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
     padding: 20px;
+    transition: border-color var(--transition-fast);
+}
+
+.stat-card:hover {
+    border-color: var(--accent-primary);
 }
 
 .stat-card-header {
@@ -305,6 +319,7 @@ body {
     font-size: 1.75rem;
     font-weight: 700;
     margin-bottom: 4px;
+    font-family: var(--font-mono);
 }
 
 .stat-card-label {
@@ -410,7 +425,7 @@ tr:hover td {
 .form-input:focus {
     outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+    box-shadow: 0 0 0 3px rgba(244, 140, 6, 0.2);
 }
 
 .form-input::placeholder {
@@ -434,12 +449,13 @@ tr:hover td {
 }
 
 .btn-primary {
-    background: var(--accent-primary);
+    background: var(--accent-gradient);
     color: white;
 }
 
 .btn-primary:hover {
-    background: #2563eb;
+    box-shadow: 0 4px 12px rgba(244, 140, 6, 0.4);
+    transform: translateY(-1px);
 }
 
 .btn-secondary {
@@ -450,6 +466,7 @@ tr:hover td {
 
 .btn-secondary:hover {
     background: var(--border-color);
+    border-color: var(--accent-primary);
 }
 
 .btn-danger {
