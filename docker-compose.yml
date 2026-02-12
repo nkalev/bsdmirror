@@ -191,6 +191,7 @@ services:
     cap_add:
       - SETGID
       - SETUID
+      - DAC_OVERRIDE
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes
     volumes:
       - redis-data:/data
