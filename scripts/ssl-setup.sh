@@ -93,6 +93,11 @@ if [[ "$STAGING" == "staging" ]]; then
     STAGING_FLAG="--staging"
 fi
 
+# Delete any existing certificate for this domain to avoid conflicts
+# (e.g., switching from staging to production requires removing old cert)
+log_info "Removing any existing certificates for $DOMAIN..."
+docker compose --profile ssl run --rm certbot delete --cert-name "$DOMAIN" 2>/dev/null || true
+
 # Run certbot
 docker compose --profile ssl run --rm certbot certonly \
     --webroot \
@@ -100,6 +105,7 @@ docker compose --profile ssl run --rm certbot certonly \
     --email "$EMAIL" \
     --agree-tos \
     --no-eff-email \
+    --force-renewal \
     $STAGING_FLAG \
     -d "$DOMAIN"
 
