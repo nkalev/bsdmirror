@@ -315,7 +315,7 @@ log_info "Generating secrets..."
 SECRET_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 REDIS_PASSWORD=$(openssl rand -hex 24)
-ADMIN_PASSWORD=$(openssl rand -base64 16)
+ADMIN_PASSWORD=$(openssl rand -hex 12)
 
 # ===========================================
 # Create Environment File
