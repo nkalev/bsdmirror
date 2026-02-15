@@ -200,13 +200,13 @@ class SyncService:
             await session.execute(
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
-                .values(status="running", started_at=datetime.now(timezone.utc))
+                .values(status=SyncStatus.RUNNING, started_at=datetime.now(timezone.utc))
             )
             # Update mirror status to syncing
             await session.execute(
                 update(Mirror)
                 .where(Mirror.id == mirror_id)
-                .values(status="syncing", last_sync_started=datetime.now(timezone.utc))
+                .values(status=MirrorStatus.SYNCING, last_sync_started=datetime.now(timezone.utc))
             )
             await session.commit()
 
@@ -224,7 +224,7 @@ class SyncService:
                 update(SyncJob)
                 .where(SyncJob.id == job_id)
                 .values(
-                    status="completed" if success else "failed",
+                    status=SyncStatus.COMPLETED if success else SyncStatus.FAILED,
                     completed_at=now,
                     files_transferred=stats.get("files_transferred"),
                     bytes_transferred=stats.get("bytes_transferred"),
@@ -235,7 +235,7 @@ class SyncService:
 
             # Update mirror status
             mirror_update = {
-                "status": "active" if success else "error",
+                "status": MirrorStatus.ACTIVE if success else MirrorStatus.ERROR,
                 "last_sync_completed": now if success else None,
                 "last_sync_error": None if success else output[-500:]
             }
@@ -259,7 +259,7 @@ class SyncService:
         async with self.session_maker() as session:
             sync_job = SyncJob(
                 mirror_id=mirror_id,
-                status="pending",
+                status=SyncStatus.PENDING,
                 triggered_by="scheduled"
             )
             session.add(sync_job)
@@ -277,7 +277,7 @@ class SyncService:
             result = await session.execute(
                 select(SyncJob, Mirror)
                 .join(Mirror, SyncJob.mirror_id == Mirror.id)
-                .where(SyncJob.status == "pending")
+                .where(SyncJob.status == SyncStatus.PENDING)
                 .order_by(SyncJob.id.asc())
             )
             pending_jobs = result.all()
@@ -414,9 +414,12 @@ class SyncService:
         await self.reload_settings()
 
         # Process any pending jobs on startup
-        pending = await self.poll_pending_jobs()
-        if pending > 0:
-            logger.info("Processed pending jobs on startup", count=pending)
+        try:
+            pending = await self.poll_pending_jobs()
+            if pending > 0:
+                logger.info("Processed pending jobs on startup", count=pending)
+        except Exception as e:
+            logger.warning("Could not poll pending jobs on startup (tables may not exist yet)", error=str(e))
 
         # Run initial sync on startup (optional)
         if os.getenv("SYNC_ON_STARTUP", "false").lower() == "true":
@@ -430,10 +433,29 @@ class SyncService:
 
 
 # Import models (for SQLAlchemy metadata)
+# NOTE: These must match the backend's model definitions exactly,
+# including using the same PostgreSQL enum types.
+import enum as python_enum
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, BigInteger, Enum, ForeignKey
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
+
+
+class MirrorStatus(str, python_enum.Enum):
+    ACTIVE = "active"
+    SYNCING = "syncing"
+    ERROR = "error"
+    DISABLED = "disabled"
+
+
+class SyncStatus(str, python_enum.Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
 
 class Mirror(Base):
     __tablename__ = "mirrors"
@@ -443,7 +465,7 @@ class Mirror(Base):
     upstream_url = Column(String(500))
     local_path = Column(String(500))
     enabled = Column(Boolean, default=True)
-    status = Column(String(20), default="active")
+    status = Column(Enum(MirrorStatus, name="mirror_status"), default=MirrorStatus.ACTIVE)
     last_sync_started = Column(DateTime(timezone=True))
     last_sync_completed = Column(DateTime(timezone=True))
     last_sync_error = Column(Text)
@@ -454,7 +476,7 @@ class SyncJob(Base):
     __tablename__ = "sync_jobs"
     id = Column(Integer, primary_key=True)
     mirror_id = Column(Integer, ForeignKey("mirrors.id"))
-    status = Column(String(20), default="pending")
+    status = Column(Enum(SyncStatus, name="sync_status"), default=SyncStatus.PENDING)
     started_at = Column(DateTime(timezone=True))
     completed_at = Column(DateTime(timezone=True))
     files_transferred = Column(BigInteger)
