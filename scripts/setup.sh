@@ -328,13 +328,13 @@ if [[ "$MODE" == "dev" ]]; then
     JWT_EXPIRY_HOURS=24
     LETSENCRYPT_ENV="staging"
     DEBUG="true"
-    CORS_ORIGINS="http://localhost:3000,http://localhost:8080,http://localhost"
+    CORS_ORIGINS='["http://localhost:3000","http://localhost:8080","http://localhost"]'
 else
     NGINX_SITE_CONF="dev.conf"  # ssl-setup.sh will change this to production.conf
     JWT_EXPIRY_HOURS=8
     LETSENCRYPT_ENV="production"
     DEBUG="false"
-    CORS_ORIGINS="https://$DOMAIN"
+    CORS_ORIGINS="[\"https://$DOMAIN\"]"
 fi
 
 cat > "$INSTALL_DIR/.env" << EOF

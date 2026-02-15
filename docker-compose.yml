@@ -26,8 +26,6 @@ services:
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
       - certbot-webroot:/var/www/certbot:ro
       - certbot-certs:/etc/letsencrypt:ro
-    depends_on:
-      - backend
     networks:
       - frontend
       - backend
@@ -67,6 +65,8 @@ services:
       - JWT_EXPIRY_HOURS=${JWT_EXPIRY_HOURS:-8}
       - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - DEBUG=${DEBUG:-false}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost"]}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
