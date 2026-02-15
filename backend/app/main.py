@@ -19,6 +19,7 @@ from app.core.redis import init_redis, close_redis
 from app.core.security import hash_password
 from app.models.user import User, UserRole
 from app.models.mirror import Mirror, MirrorType, MirrorStatus
+from app.models.setting import Setting
 from app.api import health, auth, mirrors, admin, stats
 
 # Configure structured logging
@@ -103,6 +104,37 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                     status=MirrorStatus.ACTIVE,
                 ))
                 logger.info("Default mirror created", name=mirror_data["name"])
+
+        # Default settings
+        default_settings = [
+            {
+                "key": "sync_schedule",
+                "value": "0 4 * * *",
+                "description": "Cron schedule for automatic mirror synchronization",
+            },
+            {
+                "key": "sync_bandwidth_limit",
+                "value": "0",
+                "description": "Rsync bandwidth limit in KB/s (0 = unlimited)",
+            },
+            {
+                "key": "sync_timeout",
+                "value": "600",
+                "description": "Rsync timeout in seconds",
+            },
+            {
+                "key": "sync_on_startup",
+                "value": "false",
+                "description": "Run full sync when sync service starts",
+            },
+        ]
+        for setting_data in default_settings:
+            result = await session.execute(
+                select(Setting).where(Setting.key == setting_data["key"])
+            )
+            if result.scalar_one_or_none() is None:
+                session.add(Setting(**setting_data))
+                logger.info("Default setting created", key=setting_data["key"])
 
         await session.commit()
 

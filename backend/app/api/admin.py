@@ -17,6 +17,7 @@ from app.models.user import User, UserRole
 from app.models.mirror import Mirror, MirrorType, MirrorStatus
 from app.models.sync_job import SyncJob, SyncStatus
 from app.models.audit_log import AuditLog
+from app.models.setting import Setting
 from app.api.auth import require_admin, require_operator, get_current_user, create_audit_log
 
 logger = structlog.get_logger(__name__)
@@ -327,6 +328,55 @@ async def trigger_sync(
 
 
 # ===========================================
+# Sync Job Logs
+# ===========================================
+
+class SyncJobLogResponse(BaseModel):
+    id: int
+    mirror_id: int
+    status: str
+    started_at: Optional[datetime]
+    completed_at: Optional[datetime]
+    files_transferred: Optional[int]
+    bytes_transferred: Optional[int]
+    rsync_output: Optional[str]
+    error_message: Optional[str]
+    triggered_by: Optional[str]
+    created_at: datetime
+
+
+@router.get("/sync-jobs/{job_id}/logs", response_model=SyncJobLogResponse)
+async def get_sync_job_logs(
+    job_id: Annotated[int, Path(gt=0)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    db: AsyncSession = Depends(get_db)
+) -> SyncJobLogResponse:
+    """Get sync job details including rsync output logs."""
+    result = await db.execute(select(SyncJob).where(SyncJob.id == job_id))
+    job = result.scalar_one_or_none()
+
+    if not job:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Sync job not found"
+        )
+
+    return SyncJobLogResponse(
+        id=job.id,
+        mirror_id=job.mirror_id,
+        status=job.status.value if hasattr(job.status, 'value') else str(job.status),
+        started_at=job.started_at,
+        completed_at=job.completed_at,
+        files_transferred=job.files_transferred,
+        bytes_transferred=job.bytes_transferred,
+        rsync_output=job.rsync_output,
+        error_message=job.error_message,
+        triggered_by=job.triggered_by,
+        created_at=job.created_at,
+    )
+
+
+# ===========================================
 # Audit Logs
 # ===========================================
 
@@ -426,3 +476,76 @@ async def get_dashboard(
             for log in recent_logs.scalars().all()
         ]
     }
+
+
+# ===========================================
+# Settings
+# ===========================================
+
+class SettingResponse(BaseModel):
+    id: int
+    key: str
+    value: Optional[str]
+    description: Optional[str]
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class SettingsUpdateRequest(BaseModel):
+    settings: dict[str, str] = Field(
+        ...,
+        description="Key-value pairs of settings to update"
+    )
+
+
+@router.get("/settings", response_model=List[SettingResponse])
+async def get_settings(
+    current_user: Annotated[User, Depends(require_admin)],
+    db: AsyncSession = Depends(get_db)
+) -> List[SettingResponse]:
+    """Get all settings (admin only)."""
+    result = await db.execute(select(Setting).order_by(Setting.key))
+    return result.scalars().all()
+
+
+@router.patch("/settings")
+async def update_settings(
+    request: Request,
+    data: SettingsUpdateRequest,
+    current_user: Annotated[User, Depends(require_admin)],
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Update settings (admin only)."""
+    changes = {}
+
+    for key, value in data.settings.items():
+        result = await db.execute(select(Setting).where(Setting.key == key))
+        setting = result.scalar_one_or_none()
+
+        if setting is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Setting '{key}' not found"
+            )
+
+        old_value = setting.value
+        setting.value = value
+        setting.updated_at = datetime.now(timezone.utc)
+        changes[key] = {"old": old_value, "new": value}
+
+    await db.commit()
+
+    await create_audit_log(
+        db=db,
+        user_id=current_user.id,
+        action="settings_updated",
+        resource_type="settings",
+        resource_id=None,
+        details=changes,
+        request=request
+    )
+
+    logger.info("Settings updated", changes=changes, updated_by=current_user.username)
+    return {"message": "Settings updated", "changes": changes}

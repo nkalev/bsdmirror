@@ -3,7 +3,7 @@ services:
   # Nginx Reverse Proxy & File Server
   # ===========================================
   nginx:
-    image: nginx:1.25-alpine
+    image: nginx:1.25-bookworm
     container_name: bsdmirrors-nginx
     restart: unless-stopped
     security_opt:
@@ -113,6 +113,8 @@ services:
       - OPENBSD_UPSTREAM=${OPENBSD_UPSTREAM}
       - SYNC_SCHEDULE=${SYNC_SCHEDULE:-0 4 * * *}
       - SYNC_BANDWIDTH_LIMIT=${SYNC_BANDWIDTH_LIMIT:-0}
+      - SYNC_TIMEOUT=${SYNC_TIMEOUT:-600}
+      - SYNC_ON_STARTUP=${SYNC_ON_STARTUP:-false}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors
@@ -149,7 +151,7 @@ services:
   # PostgreSQL Database
   # ===========================================
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-bookworm
     container_name: bsdmirrors-postgres
     restart: unless-stopped
     security_opt:
@@ -181,7 +183,7 @@ services:
   # Redis Cache
   # ===========================================
   redis:
-    image: redis:7-alpine
+    image: redis:7-bookworm
     container_name: bsdmirrors-redis
     restart: unless-stopped
     security_opt:

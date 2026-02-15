@@ -1,12 +1,13 @@
 # Rsync Server for BSD Mirrors
 
-FROM alpine:3.19
+FROM debian:bookworm-slim
 
 # Install rsync
-RUN apk add --no-cache rsync
+RUN apt-get update && apt-get install -y --no-install-recommends rsync && \
+    rm -rf /var/lib/apt/lists/*
 
 # Create rsync user
-RUN adduser -D -H rsync
+RUN useradd --system --no-create-home rsync
 
 # Create directories
 RUN mkdir -p /data/mirrors && chown rsync:rsync /data/mirrors

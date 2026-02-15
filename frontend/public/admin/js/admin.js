@@ -21,7 +21,8 @@ const state = {
         dashboard: null,
         mirrors: null,
         users: null,
-        auditLogs: null
+        auditLogs: null,
+        settings: null
     }
 };
 
@@ -595,13 +596,88 @@ async function renderAuditLogs() {
     `;
 }
 
-function renderSettings() {
+async function renderSettings() {
+    try {
+        state.data.settings = await api.get('/admin/settings');
+    } catch (error) {
+        return `<div class="card"><p>Error loading settings: ${error.message}</p></div>`;
+    }
+
+    const settings = {};
+    for (const s of state.data.settings) {
+        settings[s.key] = s;
+    }
+
     return `
         <div class="card">
             <div class="card-header">
-                <h3 class="card-title">Settings</h3>
+                <h3 class="card-title">Sync Settings</h3>
             </div>
-            <p>Settings configuration coming soon.</p>
+            <form id="settingsForm" style="padding: 0 24px 24px;">
+                <div class="form-group">
+                    <label class="form-label" for="setting_sync_schedule">Sync Schedule (Cron)</label>
+                    <input type="text" id="setting_sync_schedule" class="form-input"
+                        value="${escapeHtml(settings.sync_schedule?.value || '0 4 * * *')}"
+                        placeholder="0 4 * * *">
+                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_schedule?.description || '')}</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="setting_sync_bandwidth_limit">Bandwidth Limit (KB/s)</label>
+                    <input type="number" id="setting_sync_bandwidth_limit" class="form-input"
+                        value="${escapeHtml(settings.sync_bandwidth_limit?.value || '0')}"
+                        min="0" placeholder="0">
+                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_bandwidth_limit?.description || '')}</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="setting_sync_timeout">Sync Timeout (seconds)</label>
+                    <input type="number" id="setting_sync_timeout" class="form-input"
+                        value="${escapeHtml(settings.sync_timeout?.value || '600')}"
+                        min="60" placeholder="600">
+                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_timeout?.description || '')}</small>
+                </div>
+                <div class="form-group">
+                    <label class="form-label" for="setting_sync_on_startup">Sync on Startup</label>
+                    <select id="setting_sync_on_startup" class="form-input">
+                        <option value="false" ${(settings.sync_on_startup?.value || 'false') === 'false' ? 'selected' : ''}>Disabled</option>
+                        <option value="true" ${settings.sync_on_startup?.value === 'true' ? 'selected' : ''}>Enabled</option>
+                    </select>
+                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_on_startup?.description || '')}</small>
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 24px;">
+                    <button type="button" class="btn btn-primary" data-action="saveSettings">Save Settings</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top: 24px;">
+            <div class="card-header">
+                <h3 class="card-title">Settings Info</h3>
+            </div>
+            <div style="padding: 0 24px 24px;">
+                <p style="color: var(--text-muted); font-size: 14px;">
+                    Settings are stored in the database and applied by the sync service.
+                    Changes to the sync schedule will take effect at the next scheduler iteration (within ~10 seconds).
+                    Some settings may require a service restart to fully apply.
+                </p>
+                ${state.data.settings.length ? `
+                <table style="margin-top: 12px; width: 100%;">
+                    <thead>
+                        <tr>
+                            <th>Key</th>
+                            <th>Last Updated</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${state.data.settings.map(s => `
+                            <tr>
+                                <td><code>${escapeHtml(s.key)}</code></td>
+                                <td>${formatDate(s.updated_at)}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+                ` : ''}
+            </div>
         </div>
     `;
 }
@@ -655,13 +731,13 @@ const actions = {
                 <div class="form-group">
                     <label class="form-label">Upstream URL</label>
                     <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                        ${mirror.upstream_url}
+                        ${escapeHtml(mirror.upstream_url)}
                     </code>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Local Path</label>
                     <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                        ${mirror.local_path}
+                        ${escapeHtml(mirror.local_path)}
                     </code>
                 </div>
                 <div class="form-group">
@@ -673,16 +749,77 @@ const actions = {
                     <ul class="activity-list">
                         ${history.map(h => `
                             <li class="activity-item">
-                                <div class="activity-icon">${h.status === 'completed' ? '✅' : h.status === 'failed' ? '❌' : '🔄'}</div>
+                                <div class="activity-icon">${h.status === 'completed' ? '✅' : h.status === 'failed' ? '❌' : h.status === 'running' ? '🔄' : '⏳'}</div>
                                 <div class="activity-content">
-                                    <div class="activity-text">${h.status} - ${h.bytes_transferred_human || '--'}</div>
-                                    <div class="activity-time">${formatDate(h.completed_at || h.started_at)}</div>
+                                    <div class="activity-text">
+                                        ${escapeHtml(h.status)}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
+                                        ${h.triggered_by ? ' <small>(by ' + escapeHtml(h.triggered_by) + ')</small>' : ''}
+                                    </div>
+                                    <div class="activity-time">${formatDate(h.completed_at || h.started_at || h.created_at)}</div>
+                                </div>
+                                <div style="margin-left: auto;">
+                                    <button class="btn btn-secondary btn-sm" data-action="viewSyncLogs" data-id="${h.id}">
+                                        View Logs
+                                    </button>
                                 </div>
                             </li>
                         `).join('') || '<li>No history</li>'}
                     </ul>
                 </div>
             `, `<button class="btn btn-secondary" data-action="closeModal">Close</button>`);
+        } catch (error) {
+            Toast.show(error.message, 'error');
+        }
+    },
+
+    async viewSyncLogs(jobId) {
+        try {
+            const job = await api.get(`/admin/sync-jobs/${jobId}/logs`);
+            const statusIcon = job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : job.status === 'running' ? '🔄' : '⏳';
+            const isRunning = job.status === 'running' || job.status === 'pending';
+
+            Modal.show(`${statusIcon} Sync Job #${job.id}`, `
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                    <div>
+                        <label class="form-label">Status</label>
+                        <span class="status-badge ${job.status}">${escapeHtml(job.status)}</span>
+                    </div>
+                    <div>
+                        <label class="form-label">Triggered By</label>
+                        <p>${escapeHtml(job.triggered_by || 'unknown')}</p>
+                    </div>
+                    <div>
+                        <label class="form-label">Started</label>
+                        <p>${job.started_at ? formatDate(job.started_at) : 'Not started'}</p>
+                    </div>
+                    <div>
+                        <label class="form-label">Completed</label>
+                        <p>${job.completed_at ? formatDate(job.completed_at) : '--'}</p>
+                    </div>
+                    ${job.files_transferred != null ? `
+                    <div>
+                        <label class="form-label">Files Transferred</label>
+                        <p>${job.files_transferred.toLocaleString()}</p>
+                    </div>` : ''}
+                    ${job.bytes_transferred != null ? `
+                    <div>
+                        <label class="form-label">Bytes Transferred</label>
+                        <p>${formatBytes(job.bytes_transferred)}</p>
+                    </div>` : ''}
+                </div>
+                ${job.error_message ? `
+                <div class="form-group">
+                    <label class="form-label" style="color: var(--danger);">Error</label>
+                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: var(--danger); max-height: 150px; overflow-y: auto;">${escapeHtml(job.error_message)}</pre>
+                </div>` : ''}
+                <div class="form-group">
+                    <label class="form-label">Rsync Output</label>
+                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">${escapeHtml(job.rsync_output || (isRunning ? 'Sync is in progress... click Refresh to update.' : 'No output available.'))}</pre>
+                </div>
+            `, `
+                ${isRunning ? `<button class="btn btn-primary btn-sm" data-action="viewSyncLogs" data-id="${job.id}">Refresh</button>` : ''}
+                <button class="btn btn-secondary" data-action="closeModal">Close</button>
+            `);
         } catch (error) {
             Toast.show(error.message, 'error');
         }
@@ -750,6 +887,85 @@ const actions = {
         }
     },
 
+    async saveSettings() {
+        const settingsPayload = {};
+        const keys = ['sync_schedule', 'sync_bandwidth_limit', 'sync_timeout', 'sync_on_startup'];
+
+        for (const key of keys) {
+            const el = document.getElementById(`setting_${key}`);
+            if (el) {
+                settingsPayload[key] = el.value;
+            }
+        }
+
+        try {
+            await api.patch('/admin/settings', { settings: settingsPayload });
+            Toast.show('Settings saved', 'success');
+            router.render();
+        } catch (error) {
+            Toast.show(error.message, 'error');
+        }
+    },
+
+    async editUser(userId) {
+        const user = state.data.users?.find(u => u.id === parseInt(userId));
+        if (!user) {
+            Toast.show('User not found', 'error');
+            return;
+        }
+
+        Modal.show('Edit User', `
+            <form id="editUserForm">
+                <div class="form-group">
+                    <label class="form-label">Username</label>
+                    <input type="text" class="form-input" value="${escapeHtml(user.username)}" disabled>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Email</label>
+                    <input type="email" class="form-input" name="email" value="${escapeHtml(user.email || '')}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Role</label>
+                    <select class="form-input" name="role">
+                        <option value="readonly" ${user.role === 'readonly' ? 'selected' : ''}>Read Only</option>
+                        <option value="operator" ${user.role === 'operator' ? 'selected' : ''}>Operator</option>
+                        <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Status</label>
+                    <select class="form-input" name="is_active">
+                        <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
+                        <option value="false" ${!user.is_active ? 'selected' : ''}>Disabled</option>
+                    </select>
+                </div>
+                <input type="hidden" name="user_id" value="${user.id}">
+            </form>
+        `, `
+            <button class="btn btn-secondary" data-action="closeModal">Cancel</button>
+            <button class="btn btn-primary" data-action="submitEditUser" data-id="${user.id}">Save Changes</button>
+        `);
+    },
+
+    async submitEditUser(userId) {
+        const form = document.getElementById('editUserForm');
+        const formData = new FormData(form);
+
+        try {
+            await api.patch(`/admin/users/${userId}`, {
+                email: formData.get('email') || null,
+                role: formData.get('role'),
+                is_active: formData.get('is_active') === 'true'
+            });
+
+            Modal.close();
+            Toast.show('User updated', 'success');
+            router.render();
+        } catch (error) {
+            Toast.show(error.message, 'error');
+        }
+    },
+
     closeModal() {
         Modal.close();
     }
@@ -760,33 +976,66 @@ const actions = {
 // ===========================================
 
 function attachEventListeners() {
-    // Login form
+    // Login form — must be re-bound after each render since form is re-created
     document.getElementById('loginForm')?.addEventListener('submit', actions.login);
+}
 
-    // Navigation
-    document.querySelectorAll('[data-nav]').forEach(el => {
-        el.addEventListener('click', (e) => {
-            e.preventDefault();
-            router.navigate(el.dataset.nav);
-        });
+/**
+ * Set up document-level event delegation for all [data-action] and [data-nav] clicks.
+ * This runs once in init() and catches clicks on dynamically injected elements (modals, etc.).
+ */
+function setupGlobalEventDelegation() {
+    // Close modal on Escape key
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            Modal.close();
+        }
     });
 
-    // Action buttons
-    document.querySelectorAll('[data-action]').forEach(el => {
-        el.addEventListener('click', (e) => {
-            const action = el.dataset.action;
-            const id = el.dataset.id;
+    document.addEventListener('click', (e) => {
+        // Handle navigation links
+        const navEl = e.target.closest('[data-nav]');
+        if (navEl) {
+            e.preventDefault();
+            router.navigate(navEl.dataset.nav);
+            return;
+        }
 
+        // Handle action buttons
+        const actionEl = e.target.closest('[data-action]');
+        if (actionEl) {
+            const action = actionEl.dataset.action;
+            const id = actionEl.dataset.id;
             if (actions[action]) {
                 actions[action](id);
             }
-        });
+            return;
+        }
+
+        // Click on modal overlay background closes modal
+        if (e.target.id === 'modalOverlay') {
+            Modal.close();
+        }
     });
 }
 
 // ===========================================
 // Utilities
 // ===========================================
+
+function escapeHtml(str) {
+    if (!str) return '';
+    const div = document.createElement('div');
+    div.textContent = str;
+    return div.innerHTML;
+}
+
+function formatBytes(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
 
 function formatDate(dateStr) {
     if (!dateStr) return '--';
@@ -816,7 +1065,8 @@ function formatAction(action) {
         'user_updated': 'Updated user',
         'user_deleted': 'Deleted user',
         'mirror_updated': 'Updated mirror',
-        'sync_triggered': 'Triggered sync'
+        'sync_triggered': 'Triggered sync',
+        'settings_updated': 'Updated settings'
     };
     return actions[action] || action.replace(/_/g, ' ');
 }
@@ -830,7 +1080,8 @@ function getActivityIcon(action) {
         'user_updated': '✏️',
         'user_deleted': '🗑️',
         'mirror_updated': '💾',
-        'sync_triggered': '🔄'
+        'sync_triggered': '🔄',
+        'settings_updated': '⚙️'
     };
     return icons[action] || '📋';
 }
@@ -840,6 +1091,10 @@ function getActivityIcon(action) {
 // ===========================================
 
 async function init() {
+    // Set up global event delegation once — catches all future clicks on
+    // [data-action] and [data-nav] elements, including those inside modals
+    setupGlobalEventDelegation();
+
     // Check for stored token
     const storedToken = localStorage.getItem(config.tokenKey);
 

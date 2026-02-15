@@ -417,6 +417,8 @@ OPENBSD_UPSTREAM=rsync://ftp.openbsd.org/pub/OpenBSD/
 # Sync
 SYNC_SCHEDULE=0 4 * * *
 SYNC_BANDWIDTH_LIMIT=0
+SYNC_TIMEOUT=600
+SYNC_ON_STARTUP=false
 
 # rsync server
 RSYNC_ENABLED=true
