@@ -17,7 +17,6 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/opt/bsdmirror}"
 ENV_FILE="$INSTALL_DIR/.env"
-COMPOSE_FILE="$INSTALL_DIR/docker-compose.yml"
 
 # Load specific variables from .env file safely (handles special chars like cron)
 load_env_var() {
@@ -61,7 +60,7 @@ log_info "Email: $EMAIL"
 log_info "Environment: $STAGING"
 echo
 
-# Step 1: Switch to bootstrap nginx config (HTTP only)
+# Step 1: Start nginx in HTTP-only bootstrap mode for certificate acquisition
 log_info "Step 1: Switching to HTTP-only mode for certificate acquisition..."
 
 cd "$INSTALL_DIR"
@@ -69,31 +68,9 @@ cd "$INSTALL_DIR"
 # Stop nginx if running
 docker compose stop nginx 2>/dev/null || true
 
-# Use bootstrap config
-cp nginx/sites/bootstrap.conf nginx/sites/default.conf.bak 2>/dev/null || true
-cp nginx/sites/bootstrap.conf nginx/sites/active.conf
-
-# Escape domain for safe use in sed
-ESCAPED_DOMAIN=$(printf '%s\n' "$DOMAIN" | sed 's/[&/\]/\\&/g')
-
-# Update domain in bootstrap config
-sed -i "s/server_name _;/server_name $ESCAPED_DOMAIN;/g" nginx/sites/active.conf
-
-# Create docker-compose override for bootstrap
-cat > docker-compose.bootstrap.yml << EOF
-services:
-  nginx:
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/sites/active.conf:/etc/nginx/sites-enabled/default.conf:ro
-      - ./frontend/public:/var/www/public:ro
-      - \${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
-      - certbot-webroot:/var/www/certbot:ro
-EOF
-
-# Start nginx in bootstrap mode
+# Start nginx with bootstrap config (HTTP only, no SSL certs needed)
 log_info "Starting nginx in HTTP-only mode..."
-docker compose -f docker-compose.yml -f docker-compose.bootstrap.yml up -d nginx
+NGINX_SITE_CONF=bootstrap.conf docker compose up -d nginx
 
 # Wait for nginx to be ready
 sleep 5
@@ -117,7 +94,7 @@ if [[ "$STAGING" == "staging" ]]; then
 fi
 
 # Run certbot
-docker compose run --rm certbot certonly \
+docker compose --profile ssl run --rm certbot certonly \
     --webroot \
     --webroot-path=/var/www/certbot \
     --email "$EMAIL" \
@@ -137,39 +114,31 @@ fi
 
 log_info "SSL certificate obtained successfully!"
 
-# Step 3: Update nginx config with your domain
+# Step 3: Create production SSL config with the correct domain
 log_info "Step 3: Configuring nginx with SSL..."
 
-# Restore the SSL-enabled config
-if [[ -f "nginx/sites/default.conf.original" ]]; then
-    cp nginx/sites/default.conf.original nginx/sites/active.conf
-else
-    cp nginx/sites/default.conf nginx/sites/active.conf
-fi
+# Escape domain for safe use in sed
+ESCAPED_DOMAIN=$(printf '%s\n' "$DOMAIN" | sed 's/[&/\]/\\&/g')
 
-# Update domain in config (escape for sed safety)
-sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" nginx/sites/active.conf
+# Copy default.conf to production.conf and substitute domain
+cp nginx/sites/default.conf nginx/sites/production.conf
+sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" nginx/sites/production.conf
 
-# Stop bootstrap mode
-docker compose -f docker-compose.yml -f docker-compose.bootstrap.yml down nginx
-
-# Step 4: Start with full SSL config
+# Step 4: Update .env to use production config and restart nginx with SSL
 log_info "Step 4: Starting nginx with SSL enabled..."
 
-# Create SSL compose override
-cat > docker-compose.ssl.yml << EOF
-services:
-  nginx:
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/sites/active.conf:/etc/nginx/sites-enabled/default.conf:ro
-      - ./frontend/public:/var/www/public:ro
-      - \${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
-      - certbot-webroot:/var/www/certbot:ro
-      - certbot-certs:/etc/letsencrypt:ro
-EOF
+# Stop bootstrap nginx
+docker compose stop nginx
 
-docker compose -f docker-compose.yml -f docker-compose.ssl.yml up -d nginx
+# Update NGINX_SITE_CONF in .env to use production config
+if grep -q "^NGINX_SITE_CONF=" "$ENV_FILE"; then
+    sed -i "s/^NGINX_SITE_CONF=.*/NGINX_SITE_CONF=production.conf/" "$ENV_FILE"
+else
+    echo "NGINX_SITE_CONF=production.conf" >> "$ENV_FILE"
+fi
+
+# Start with production SSL config
+docker compose up -d nginx
 
 sleep 5
 
@@ -186,17 +155,12 @@ fi
 # Step 5: Set up auto-renewal
 log_info "Step 5: Setting up certificate auto-renewal..."
 
-# Create renewal script
 cat > /etc/cron.d/certbot-renew << EOF
 # Renew Let's Encrypt certificates twice daily
-0 0,12 * * * root cd $INSTALL_DIR && docker compose run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload
+0 0,12 * * * root cd $INSTALL_DIR && docker compose --profile ssl run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload
 EOF
 
 log_info "Certificate auto-renewal configured"
-
-# Cleanup
-rm -f docker-compose.bootstrap.yml
-rm -f nginx/sites/default.conf.bak
 
 echo
 echo "========================================="
@@ -210,7 +174,7 @@ if [[ "$STAGING" == "staging" ]]; then
     log_warn "You are using staging certificates (not trusted)."
     log_warn "To switch to production certificates:"
     log_warn "  1. Edit .env and set LETSENCRYPT_ENV=production"
-    log_warn "  2. Run: docker compose run --rm certbot delete --cert-name $DOMAIN"
+    log_warn "  2. Run: docker compose --profile ssl run --rm certbot delete --cert-name $DOMAIN"
     log_warn "  3. Run this script again: ./scripts/ssl-setup.sh"
 fi
 echo
