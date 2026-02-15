@@ -170,7 +170,7 @@ body {
 .nav {
     display: flex;
     align-items: center;
-    gap: 32px;
+    gap: 8px;
     flex-shrink: 0;
 }
 
@@ -180,11 +180,14 @@ body {
     font-weight: 500;
     font-size: 0.9375rem;
     white-space: nowrap;
-    transition: color var(--transition-fast);
+    padding: 8px 16px;
+    border-radius: var(--radius-sm);
+    transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .nav-link:hover {
     color: var(--accent-primary);
+    background-color: var(--bg-tertiary);
 }
 
 .nav-admin {
