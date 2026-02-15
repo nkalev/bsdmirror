@@ -20,19 +20,22 @@ log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 MODE=""
 DOMAIN="${DOMAIN:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+CLEAN=false
 
 usage() {
-    echo "Usage: $0 --mode <dev|production> [--domain DOMAIN] [--email EMAIL]"
+    echo "Usage: $0 --mode <dev|production> [--domain DOMAIN] [--email EMAIL] [--clean]"
     echo
     echo "Arguments:"
     echo "  --mode dev          Development setup (HTTP only, no SSL, no firewall)"
     echo "  --mode production   Production setup (SSL, firewall, fail2ban)"
     echo "  --domain DOMAIN     Domain name (required for production, optional for dev)"
     echo "  --email EMAIL       Admin email (required for production SSL)"
+    echo "  --clean             Remove existing Docker volumes (fresh database/redis)"
     echo
     echo "Examples:"
     echo "  $0 --mode dev"
     echo "  $0 --mode production --domain mirror.example.com --email admin@example.com"
+    echo "  $0 --mode production --domain mirror.example.com --email admin@example.com --clean"
     exit 1
 }
 
@@ -49,6 +52,10 @@ while [[ $# -gt 0 ]]; do
         --email)
             ADMIN_EMAIL="$2"
             shift 2
+            ;;
+        --clean)
+            CLEAN=true
+            shift
             ;;
         --help|-h)
             usage
@@ -305,6 +312,26 @@ EOF
     systemctl restart fail2ban
 
     log_info "Fail2Ban configured"
+fi
+
+# ===========================================
+# Clean existing Docker data (if --clean)
+# ===========================================
+if [[ "$CLEAN" == true ]]; then
+    log_warn "Cleaning existing Docker data..."
+    cd "$INSTALL_DIR"
+    docker compose down -v 2>/dev/null || true
+    log_info "Docker volumes removed (fresh database and redis)"
+else
+    # Warn if volumes already exist with old credentials
+    if command -v docker &> /dev/null && docker volume ls -q 2>/dev/null | grep -q "bsdmirrors_postgres-data"; then
+        echo
+        log_warn "Existing database volume detected!"
+        log_warn "If you are re-running setup, the new database password will NOT"
+        log_warn "match the password stored in the existing Postgres volume."
+        log_warn "Run with --clean to remove old volumes: $0 --mode $MODE --clean"
+        echo
+    fi
 fi
 
 # ===========================================
