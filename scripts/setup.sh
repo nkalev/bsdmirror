@@ -1,6 +1,6 @@
 #!/bin/bash
 # BSD Mirrors - Setup Script
-# Run this script on a fresh Ubuntu 22.04+ server
+# Usage: ./setup.sh [--mode dev|production] [--domain DOMAIN] [--email EMAIL]
 
 set -euo pipefail
 
@@ -14,57 +14,137 @@ log_info() { echo -e "${GREEN}[INFO]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
-# Check if running as root
-if [[ $EUID -ne 0 ]]; then
-    log_error "This script must be run as root"
+# ===========================================
+# Parse Arguments
+# ===========================================
+MODE=""
+DOMAIN="${DOMAIN:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+
+usage() {
+    echo "Usage: $0 --mode <dev|production> [--domain DOMAIN] [--email EMAIL]"
+    echo
+    echo "Arguments:"
+    echo "  --mode dev          Development setup (HTTP only, no SSL, no firewall)"
+    echo "  --mode production   Production setup (SSL, firewall, fail2ban)"
+    echo "  --domain DOMAIN     Domain name (required for production, optional for dev)"
+    echo "  --email EMAIL       Admin email (required for production SSL)"
+    echo
+    echo "Examples:"
+    echo "  $0 --mode dev"
+    echo "  $0 --mode production --domain mirror.example.com --email admin@example.com"
+    exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --mode)
+            MODE="$2"
+            shift 2
+            ;;
+        --domain)
+            DOMAIN="$2"
+            shift 2
+            ;;
+        --email)
+            ADMIN_EMAIL="$2"
+            shift 2
+            ;;
+        --help|-h)
+            usage
+            ;;
+        *)
+            log_error "Unknown argument: $1"
+            usage
+            ;;
+    esac
+done
+
+# Validate mode
+if [[ -z "$MODE" ]]; then
+    log_error "Missing required --mode argument"
+    usage
+fi
+
+if [[ "$MODE" != "dev" && "$MODE" != "production" ]]; then
+    log_error "Invalid mode: $MODE (must be 'dev' or 'production')"
+    usage
+fi
+
+# Production requires domain and email
+if [[ "$MODE" == "production" ]]; then
+    if [[ -z "$DOMAIN" ]]; then
+        read -p "Enter your domain name (e.g., mirror.example.com): " DOMAIN
+    fi
+    if [[ -z "$ADMIN_EMAIL" ]]; then
+        read -p "Enter admin email for SSL certificates: " ADMIN_EMAIL
+    fi
+    if [[ -z "$DOMAIN" || -z "$ADMIN_EMAIL" ]]; then
+        log_error "Domain and email are required for production mode"
+        exit 1
+    fi
+fi
+
+# Dev defaults
+if [[ "$MODE" == "dev" ]]; then
+    DOMAIN="${DOMAIN:-localhost}"
+    ADMIN_EMAIL="${ADMIN_EMAIL:-admin@localhost}"
+fi
+
+# Check if running as root (required for production, optional for dev)
+if [[ "$MODE" == "production" && $EUID -ne 0 ]]; then
+    log_error "Production setup must be run as root"
     exit 1
 fi
 
 echo "========================================="
-echo "  BSD Mirrors Server Setup"
+echo "  BSD Mirrors Server Setup ($MODE)"
 echo "========================================="
 echo
 
+log_info "Mode: $MODE"
+log_info "Domain: $DOMAIN"
+if [[ "$MODE" == "production" ]]; then
+    log_info "Email: $ADMIN_EMAIL"
+fi
+echo
+
 # Variables
-INSTALL_DIR="/opt/bsdmirror"
-DATA_DIR="/data/mirrors"
-DOMAIN="${DOMAIN:-}"
-ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/bsdmirror}"
+DATA_DIR="${DATA_DIR:-/data/mirrors}"
 
-# Prompt for required variables if not set
-if [[ -z "$DOMAIN" ]]; then
-    read -p "Enter your domain name (e.g., mirror.example.com): " DOMAIN
+if [[ "$MODE" == "dev" ]]; then
+    INSTALL_DIR="${INSTALL_DIR:-$(pwd)}"
+    DATA_DIR="${DATA_DIR:-$(pwd)/data/mirrors}"
 fi
 
-if [[ -z "$ADMIN_EMAIL" ]]; then
-    read -p "Enter admin email for SSL certificates: " ADMIN_EMAIL
+# ===========================================
+# System Updates (production only)
+# ===========================================
+if [[ "$MODE" == "production" ]]; then
+    log_info "Updating system packages..."
+    apt-get update
+    apt-get upgrade -y
 fi
 
-log_info "Starting setup for domain: $DOMAIN"
-
 # ===========================================
-# System Updates
+# Install Dependencies (production only)
 # ===========================================
-log_info "Updating system packages..."
-apt-get update
-apt-get upgrade -y
-
-# ===========================================
-# Install Dependencies
-# ===========================================
-log_info "Installing required packages..."
-apt-get install -y \
-    apt-transport-https \
-    ca-certificates \
-    curl \
-    gnupg \
-    lsb-release \
-    ufw \
-    fail2ban \
-    rsync \
-    htop \
-    iotop \
-    ncdu
+if [[ "$MODE" == "production" ]]; then
+    log_info "Installing required packages..."
+    apt-get install -y \
+        apt-transport-https \
+        ca-certificates \
+        curl \
+        gnupg \
+        lsb-release \
+        ufw \
+        fail2ban \
+        rsync \
+        htop \
+        iotop \
+        ncdu
+fi
 
 # ===========================================
 # Install Docker
@@ -93,25 +173,34 @@ install_docker() {
 }
 
 if ! command -v docker &> /dev/null; then
-    log_info "Installing Docker..."
-    install_docker
+    if [[ "$MODE" == "production" ]]; then
+        log_info "Installing Docker..."
+        install_docker
+    else
+        log_error "Docker is not installed. Please install Docker and Docker Compose first."
+        exit 1
+    fi
 else
     log_info "Docker already installed"
     # Ensure Docker Compose plugin is installed even if Docker exists
     if ! docker compose version &> /dev/null 2>&1; then
-        log_info "Installing Docker Compose plugin..."
-        # Add Docker repo if not present
-        if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
-            install -m 0755 -d /etc/apt/keyrings
-            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-            chmod a+r /etc/apt/keyrings/docker.gpg
-            echo \
-              "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-              $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
-              tee /etc/apt/sources.list.d/docker.list > /dev/null
-            apt-get update
+        if [[ "$MODE" == "production" ]]; then
+            log_info "Installing Docker Compose plugin..."
+            if [[ ! -f /etc/apt/sources.list.d/docker.list ]]; then
+                install -m 0755 -d /etc/apt/keyrings
+                curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+                chmod a+r /etc/apt/keyrings/docker.gpg
+                echo \
+                  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+                  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+                  tee /etc/apt/sources.list.d/docker.list > /dev/null
+                apt-get update
+            fi
+            apt-get install -y docker-compose-plugin
+        else
+            log_error "Docker Compose is not installed. Please install the Docker Compose plugin."
+            exit 1
         fi
-        apt-get install -y docker-compose-plugin
     fi
 fi
 
@@ -134,38 +223,41 @@ mkdir -p "$DATA_DIR/openbsd/pub/OpenBSD"
 mkdir -p "$INSTALL_DIR/nginx/ssl"
 
 # ===========================================
-# Configure Firewall (UFW)
+# Configure Firewall (production only)
 # ===========================================
-log_info "Configuring firewall..."
+if [[ "$MODE" == "production" ]]; then
+    log_info "Configuring firewall..."
 
-# Reset UFW
-ufw --force reset
+    # Reset UFW
+    ufw --force reset
 
-# Default policies
-ufw default deny incoming
-ufw default allow outgoing
+    # Default policies
+    ufw default deny incoming
+    ufw default allow outgoing
 
-# Allow SSH (with rate limiting)
-ufw limit ssh
+    # Allow SSH (with rate limiting)
+    ufw limit ssh
 
-# Allow HTTP and HTTPS
-ufw allow 80/tcp
-ufw allow 443/tcp
+    # Allow HTTP and HTTPS
+    ufw allow 80/tcp
+    ufw allow 443/tcp
 
-# Allow rsync (optional, comment out if not needed)
-ufw allow 873/tcp
+    # Allow rsync (optional, comment out if not needed)
+    ufw allow 873/tcp
 
-# Enable UFW
-ufw --force enable
+    # Enable UFW
+    ufw --force enable
 
-log_info "Firewall configured"
+    log_info "Firewall configured"
+fi
 
 # ===========================================
-# Configure Fail2Ban
+# Configure Fail2Ban (production only)
 # ===========================================
-log_info "Configuring Fail2Ban..."
+if [[ "$MODE" == "production" ]]; then
+    log_info "Configuring Fail2Ban..."
 
-cat > /etc/fail2ban/jail.local << 'EOF'
+    cat > /etc/fail2ban/jail.local << 'EOF'
 [DEFAULT]
 bantime = 3600
 findtime = 600
@@ -201,18 +293,19 @@ logpath = /var/log/nginx/access.log
 maxretry = 2
 EOF
 
-# Create nginx-limit-req filter if not exists
-cat > /etc/fail2ban/filter.d/nginx-limit-req.conf << 'EOF'
+    # Create nginx-limit-req filter if not exists
+    cat > /etc/fail2ban/filter.d/nginx-limit-req.conf << 'EOF'
 [Definition]
 failregex = limiting requests, excess:.* by zone.*client: <HOST>
 ignoreregex =
 EOF
 
-# Restart Fail2Ban
-systemctl enable fail2ban
-systemctl restart fail2ban
+    # Restart Fail2Ban
+    systemctl enable fail2ban
+    systemctl restart fail2ban
 
-log_info "Fail2Ban configured"
+    log_info "Fail2Ban configured"
+fi
 
 # ===========================================
 # Generate Secrets
@@ -229,13 +322,32 @@ ADMIN_PASSWORD=$(openssl rand -base64 16)
 # ===========================================
 log_info "Creating environment file..."
 
+# Set mode-specific values
+if [[ "$MODE" == "dev" ]]; then
+    NGINX_SITE_CONF="dev.conf"
+    JWT_EXPIRY_HOURS=24
+    LETSENCRYPT_ENV="staging"
+    DEBUG="true"
+    CORS_ORIGINS="http://localhost:3000,http://localhost:8080,http://localhost"
+else
+    NGINX_SITE_CONF="dev.conf"  # ssl-setup.sh will change this to production.conf
+    JWT_EXPIRY_HOURS=8
+    LETSENCRYPT_ENV="production"
+    DEBUG="false"
+    CORS_ORIGINS="https://$DOMAIN"
+fi
+
 cat > "$INSTALL_DIR/.env" << EOF
 # BSD Mirrors Configuration
 # Generated on $(date)
+# Mode: $MODE
 
 COMPOSE_PROJECT_NAME=bsdmirrors
 DOMAIN=$DOMAIN
 ADMIN_EMAIL=$ADMIN_EMAIL
+
+# Nginx
+NGINX_SITE_CONF=$NGINX_SITE_CONF
 
 # Database
 POSTGRES_HOST=postgres
@@ -254,9 +366,11 @@ API_HOST=0.0.0.0
 API_PORT=8000
 SECRET_KEY=$SECRET_KEY
 JWT_ALGORITHM=HS256
-JWT_EXPIRY_HOURS=24
+JWT_EXPIRY_HOURS=$JWT_EXPIRY_HOURS
 ADMIN_USERNAME=admin
 ADMIN_PASSWORD=$ADMIN_PASSWORD
+DEBUG=$DEBUG
+CORS_ORIGINS=$CORS_ORIGINS
 
 # Mirror paths
 MIRROR_DATA_PATH=$DATA_DIR
@@ -283,9 +397,8 @@ RSYNC_PORT=873
 RSYNC_MAX_CONNECTIONS=50
 
 # SSL
-SSL_ENABLED=true
 LETSENCRYPT_EMAIL=$ADMIN_EMAIL
-LETSENCRYPT_ENV=staging
+LETSENCRYPT_ENV=$LETSENCRYPT_ENV
 
 # Logging
 LOG_LEVEL=INFO
@@ -312,16 +425,6 @@ Generated: $(date)
 EOF
 chmod 600 "$CREDS_FILE"
 
-# ===========================================
-# Copy original SSL config for later
-# ===========================================
-cp "$INSTALL_DIR/nginx/sites/default.conf" "$INSTALL_DIR/nginx/sites/default.conf.original"
-
-# Update domain in SSL config (for later use)
-if [[ -f "$INSTALL_DIR/nginx/sites/default.conf.original" ]]; then
-    sed -i "s/mirror.example.com/$DOMAIN/g" "$INSTALL_DIR/nginx/sites/default.conf.original"
-fi
-
 # Make scripts executable
 chmod +x "$INSTALL_DIR/scripts/"*.sh 2>/dev/null || true
 
@@ -330,7 +433,7 @@ chmod +x "$INSTALL_DIR/scripts/"*.sh 2>/dev/null || true
 # ===========================================
 echo
 echo "========================================="
-echo "  Setup Complete!"
+echo "  Setup Complete! ($MODE mode)"
 echo "========================================="
 echo
 log_info "Installation directory: $INSTALL_DIR"
@@ -344,24 +447,40 @@ echo "Admin Credentials:"
 echo "  Username: admin"
 echo "  Password: $ADMIN_PASSWORD"
 echo
-echo "========================================="
-echo "  NEXT STEPS (in order):"
-echo "========================================="
-echo
-echo "Step 1: Start the database and backend services (HTTP only):"
-echo "  cd $INSTALL_DIR"
-echo "  docker compose up -d postgres redis backend sync"
-echo
-echo "Step 2: Obtain SSL certificate and start nginx:"
-echo "  ./scripts/ssl-setup.sh"
-echo
-echo "Step 3: (Optional) Enable rsync server for other mirrors:"
-echo "  docker compose --profile rsync up -d"
-echo
-echo "After SSL setup, access:"
-echo "  - Website: https://$DOMAIN"
-echo "  - Admin Panel: https://$DOMAIN/admin"
-echo
-log_warn "Make sure your domain $DOMAIN points to this server's IP before running ssl-setup.sh!"
-echo
 
+if [[ "$MODE" == "dev" ]]; then
+    echo "========================================="
+    echo "  NEXT STEPS (Development):"
+    echo "========================================="
+    echo
+    echo "Start all services:"
+    echo "  cd $INSTALL_DIR"
+    echo "  docker compose up -d"
+    echo
+    echo "Access:"
+    echo "  - Website: http://localhost"
+    echo "  - Admin Panel: http://localhost/admin"
+    echo "  - API Docs: http://localhost/api/docs"
+    echo
+else
+    echo "========================================="
+    echo "  NEXT STEPS (Production):"
+    echo "========================================="
+    echo
+    echo "Step 1: Start the database and backend services:"
+    echo "  cd $INSTALL_DIR"
+    echo "  docker compose up -d"
+    echo
+    echo "Step 2: Obtain SSL certificate and switch to production nginx:"
+    echo "  ./scripts/ssl-setup.sh"
+    echo
+    echo "Step 3: (Optional) Enable rsync server for other mirrors:"
+    echo "  docker compose --profile rsync up -d"
+    echo
+    echo "After SSL setup, access:"
+    echo "  - Website: https://$DOMAIN"
+    echo "  - Admin Panel: https://$DOMAIN/admin"
+    echo
+    log_warn "Make sure your domain $DOMAIN points to this server's IP before running ssl-setup.sh!"
+    echo
+fi
