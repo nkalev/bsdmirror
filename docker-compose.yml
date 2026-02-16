@@ -123,8 +123,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     networks:
-      - backend
+      frontend:
+        priority: 1000
+      backend:
+        priority: 500
 
   # ===========================================
   # Rsync Server
