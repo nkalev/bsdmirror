@@ -408,11 +408,11 @@ FREEBSD_UPSTREAM=rsync://ftp.freebsd.org/FreeBSD/
 
 # NetBSD
 NETBSD_ENABLED=true
-NETBSD_UPSTREAM=rsync://ftp.netbsd.org/NetBSD/
+NETBSD_UPSTREAM=rsync://rsync.NetBSD.org/NetBSD/
 
 # OpenBSD
 OPENBSD_ENABLED=true
-OPENBSD_UPSTREAM=rsync://ftp.openbsd.org/OpenBSD/
+OPENBSD_UPSTREAM=rsync://ftp2.eu.openbsd.org/OpenBSD/
 
 # Sync
 SYNC_SCHEDULE=0 4 * * *
