@@ -327,6 +327,8 @@ class SyncService:
         and runs scheduled syncs at the configured cron schedule."""
         cron = croniter(self.sync_schedule, datetime.now())
         next_run = cron.get_next(datetime)
+        settings_reload_interval = 30  # Reload settings every 30 cycles (~5 min)
+        poll_count = 0
 
         logger.info("Next scheduled sync", next_run=next_run.isoformat())
 
@@ -337,6 +339,19 @@ class SyncService:
 
                 if not self.running:
                     break
+
+                poll_count += 1
+
+                # Reload settings periodically to pick up admin panel changes
+                if poll_count % settings_reload_interval == 0:
+                    old_schedule = self.sync_schedule
+                    await self.reload_settings()
+                    # If schedule changed, recalculate next run
+                    if self.sync_schedule != old_schedule:
+                        logger.info("Sync schedule changed", old=old_schedule, new=self.sync_schedule)
+                        cron = croniter(self.sync_schedule, datetime.now())
+                        next_run = cron.get_next(datetime)
+                        logger.info("Next scheduled sync recalculated", next_run=next_run.isoformat())
 
                 # Poll for manually triggered pending jobs
                 processed = await self.poll_pending_jobs()

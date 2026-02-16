@@ -726,13 +726,22 @@ const actions = {
         try {
             const mirror = await api.get(`/mirrors/${mirrorId}`);
             const history = await api.get(`/mirrors/${mirrorId}/sync-history`);
+            const isOperator = ['admin', 'operator'].includes(state.user?.role);
 
             Modal.show(`Mirror: ${mirror.name}`, `
                 <div class="form-group">
                     <label class="form-label">Upstream URL</label>
+                    ${isOperator ? `
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="mirrorUpstreamUrl" class="form-input" value="${escapeHtml(mirror.upstream_url)}" style="flex: 1;">
+                        <button class="btn btn-primary btn-sm" data-action="saveMirrorUpstream" data-id="${mirror.id}">Save</button>
+                    </div>
+                    <small style="color: var(--text-muted);">Change the rsync upstream URL (e.g. rsync://mirror.example.com/FreeBSD/)</small>
+                    ` : `
                     <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
                         ${escapeHtml(mirror.upstream_url)}
                     </code>
+                    `}
                 </div>
                 <div class="form-group">
                     <label class="form-label">Local Path</label>
@@ -767,6 +776,29 @@ const actions = {
                     </ul>
                 </div>
             `, `<button class="btn btn-secondary" data-action="closeModal">Close</button>`);
+        } catch (error) {
+            Toast.show(error.message, 'error');
+        }
+    },
+
+    async saveMirrorUpstream(mirrorId) {
+        const urlInput = document.getElementById('mirrorUpstreamUrl');
+        if (!urlInput) return;
+
+        const newUrl = urlInput.value.trim();
+        if (!newUrl) {
+            Toast.show('Upstream URL cannot be empty', 'error');
+            return;
+        }
+
+        if (!newUrl.match(/^(rsync|https?):\/\//)) {
+            Toast.show('URL must start with rsync://, http://, or https://', 'error');
+            return;
+        }
+
+        try {
+            await api.patch(`/admin/mirrors/${mirrorId}`, { upstream_url: newUrl });
+            Toast.show('Upstream URL updated', 'success');
         } catch (error) {
             Toast.show(error.message, 'error');
         }
