@@ -52,7 +52,13 @@ const api = {
 
             if (!response.ok) {
                 const error = await response.json().catch(() => ({}));
-                throw new Error(error.detail || `HTTP ${response.status}`);
+                let message = `HTTP ${response.status}`;
+                if (typeof error.detail === 'string') {
+                    message = error.detail;
+                } else if (Array.isArray(error.detail) && error.detail.length > 0) {
+                    message = error.detail.map(e => e.msg || JSON.stringify(e)).join(', ');
+                }
+                throw new Error(message);
             }
 
             return response.status === 204 ? null : await response.json();
