@@ -3,6 +3,7 @@ BSD Mirrors Backend API
 
 FastAPI application for managing BSD mirror website.
 """
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -72,24 +73,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         else:
             logger.info("Admin user already exists", username=settings.ADMIN_USERNAME)
 
-        # Default mirrors
+        # Default mirrors — upstream_url is updated from env on each startup
         default_mirrors = [
             {
                 "name": "FreeBSD",
                 "mirror_type": MirrorType.FREEBSD,
-                "upstream_url": "rsync://ftp.freebsd.org/FreeBSD/",
+                "upstream_url": os.getenv("FREEBSD_UPSTREAM", "rsync://ftp.freebsd.org/FreeBSD/"),
                 "local_path": "/data/mirrors/freebsd/pub/FreeBSD",
             },
             {
                 "name": "NetBSD",
                 "mirror_type": MirrorType.NETBSD,
-                "upstream_url": "rsync://ftp.netbsd.org/pub/NetBSD/",
+                "upstream_url": os.getenv("NETBSD_UPSTREAM", "rsync://rsync.NetBSD.org/NetBSD/"),
                 "local_path": "/data/mirrors/netbsd/pub/NetBSD",
             },
             {
                 "name": "OpenBSD",
                 "mirror_type": MirrorType.OPENBSD,
-                "upstream_url": "rsync://ftp.openbsd.org/pub/OpenBSD/",
+                "upstream_url": os.getenv("OPENBSD_UPSTREAM", "rsync://ftp2.eu.openbsd.org/OpenBSD/"),
                 "local_path": "/data/mirrors/openbsd/pub/OpenBSD",
             },
         ]
@@ -97,13 +98,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             result = await session.execute(
                 select(Mirror).where(Mirror.name == mirror_data["name"])
             )
-            if result.scalar_one_or_none() is None:
+            existing = result.scalar_one_or_none()
+            if existing is None:
                 session.add(Mirror(
                     **mirror_data,
                     enabled=True,
                     status=MirrorStatus.ACTIVE,
                 ))
                 logger.info("Default mirror created", name=mirror_data["name"])
+            elif existing.upstream_url != mirror_data["upstream_url"]:
+                existing.upstream_url = mirror_data["upstream_url"]
+                logger.info("Mirror upstream updated", name=mirror_data["name"], upstream=mirror_data["upstream_url"])
 
         # Default settings
         default_settings = [

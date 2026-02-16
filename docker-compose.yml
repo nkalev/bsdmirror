@@ -68,6 +68,9 @@ services:
       - DEBUG=${DEBUG:-false}
       - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost"]}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - FREEBSD_UPSTREAM=${FREEBSD_UPSTREAM:-rsync://ftp.freebsd.org/FreeBSD/}
+      - NETBSD_UPSTREAM=${NETBSD_UPSTREAM:-rsync://rsync.NetBSD.org/NetBSD/}
+      - OPENBSD_UPSTREAM=${OPENBSD_UPSTREAM:-rsync://ftp2.eu.openbsd.org/OpenBSD/}
     volumes:
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
     depends_on:
