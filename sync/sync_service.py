@@ -57,10 +57,10 @@ class SyncConfig:
     FREEBSD_UPSTREAM = os.getenv("FREEBSD_UPSTREAM", "rsync://ftp.freebsd.org/FreeBSD/")
 
     NETBSD_ENABLED = os.getenv("NETBSD_ENABLED", "true").lower() == "true"
-    NETBSD_UPSTREAM = os.getenv("NETBSD_UPSTREAM", "rsync://ftp.netbsd.org/pub/NetBSD/")
+    NETBSD_UPSTREAM = os.getenv("NETBSD_UPSTREAM", "rsync://ftp.netbsd.org/NetBSD/")
 
     OPENBSD_ENABLED = os.getenv("OPENBSD_ENABLED", "true").lower() == "true"
-    OPENBSD_UPSTREAM = os.getenv("OPENBSD_UPSTREAM", "rsync://ftp.openbsd.org/pub/OpenBSD/")
+    OPENBSD_UPSTREAM = os.getenv("OPENBSD_UPSTREAM", "rsync://ftp.openbsd.org/OpenBSD/")
 
     @property
     def database_url(self) -> str:
