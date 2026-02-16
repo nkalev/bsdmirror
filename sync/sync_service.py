@@ -118,11 +118,13 @@ class SyncService:
         # Build rsync command
         cmd = [
             "rsync",
-            "-avHz",
+            "-rlptHz",
             "--delete",
             "--delete-delay",
             "--delay-updates",
             "--stats",
+            "--no-owner",
+            "--no-group",
             f"--timeout={self.sync_timeout}",
         ]
 
