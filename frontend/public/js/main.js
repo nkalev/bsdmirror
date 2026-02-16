@@ -53,6 +53,54 @@ const MirrorStatus = {
 
         // Update mirror cards
         this.updateMirrorCards(data.mirrors);
+
+        // Update overall status
+        this.updateOverallStatus(data.mirrors);
+    },
+
+    updateOverallStatus(mirrors) {
+        if (!mirrors) return;
+
+        const statusCard = document.getElementById('overallStatus');
+        if (!statusCard) return;
+
+        const statuses = Object.values(mirrors).map(m => m.status);
+        const anyError = statuses.includes('error');
+        const anySyncing = statuses.includes('syncing');
+        const allActive = statuses.every(s => s === 'active');
+
+        const indicator = statusCard.querySelector('.status-indicator');
+        const title = statusCard.querySelector('h3');
+        const desc = statusCard.querySelector('p');
+        const pulse = statusCard.querySelector('.pulse');
+
+        if (anyError) {
+            indicator.className = 'status-indicator degraded';
+            if (pulse) pulse.style.background = 'var(--status-error, #ef4444)';
+            title.textContent = 'Degraded Service';
+            const errorMirrors = Object.entries(mirrors)
+                .filter(([, m]) => m.status === 'error')
+                .map(([name]) => name);
+            desc.textContent = `${errorMirrors.join(', ')} ${errorMirrors.length === 1 ? 'is' : 'are'} experiencing issues.`;
+        } else if (anySyncing) {
+            indicator.className = 'status-indicator syncing';
+            if (pulse) pulse.style.background = 'var(--primary, #e85d04)';
+            title.textContent = 'Sync In Progress';
+            const syncingMirrors = Object.entries(mirrors)
+                .filter(([, m]) => m.status === 'syncing')
+                .map(([name]) => name);
+            desc.textContent = `${syncingMirrors.join(', ')} ${syncingMirrors.length === 1 ? 'is' : 'are'} currently syncing.`;
+        } else if (allActive) {
+            indicator.className = 'status-indicator healthy';
+            if (pulse) pulse.style.background = 'var(--status-healthy)';
+            title.textContent = 'All Systems Operational';
+            desc.textContent = 'All mirrors are synchronized and available.';
+        } else {
+            indicator.className = 'status-indicator healthy';
+            if (pulse) pulse.style.background = 'var(--status-healthy)';
+            title.textContent = 'Systems Operational';
+            desc.textContent = 'Mirrors are available.';
+        }
     },
 
     updateHeroStats(data) {
