@@ -688,10 +688,9 @@ body {
 
 .footer-content {
     display: flex;
-    justify-content: space-between;
+    flex-direction: column;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 16px;
+    gap: 8px;
 }
 
 .footer-content p {
@@ -699,20 +698,10 @@ body {
     font-size: 0.875rem;
 }
 
-.footer-links {
-    display: flex;
-    gap: 24px;
-}
-
-.footer-links a {
-    color: var(--text-secondary);
-    text-decoration: none;
-    font-size: 0.875rem;
-    transition: color var(--transition-fast);
-}
-
-.footer-links a:hover {
-    color: var(--accent-primary);
+.footer-version {
+    font-family: var(--font-mono);
+    font-size: 0.75rem !important;
+    opacity: 0.6;
 }
 
 /* Toast notification */
@@ -755,10 +744,5 @@ body {
 
     .mirror-actions {
         flex-direction: column;
-    }
-
-    .footer-content {
-        flex-direction: column;
-        text-align: center;
     }
 }
