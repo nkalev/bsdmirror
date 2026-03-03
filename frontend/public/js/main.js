@@ -141,7 +141,14 @@ const MirrorStatus = {
                 const text = statusEl.querySelector('.status-text');
 
                 if (dot) {
-                    dot.className = 'status-dot ' + mirror.status;
+                    const statusClassMap = {
+                        'active': 'healthy',
+                        'syncing': 'syncing',
+                        'error': 'error',
+                        'disabled': ''
+                    };
+                    const statusClass = statusClassMap[mirror.status] || '';
+                    dot.className = 'status-dot' + (statusClass ? ' ' + statusClass : '');
                 }
                 if (text) {
                     text.textContent = this.formatStatus(mirror.status);
