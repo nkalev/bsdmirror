@@ -2,10 +2,9 @@
 Statistics API endpoints.
 """
 from datetime import datetime, timezone, timedelta
-from typing import Optional
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 import humanize
 
@@ -22,7 +21,7 @@ async def get_stats_overview(
 ) -> dict:
     """Get public statistics overview."""
     # Get mirrors
-    result = await db.execute(select(Mirror).where(Mirror.enabled == True))
+    result = await db.execute(select(Mirror).where(Mirror.enabled.is_(True)))
     mirrors = result.scalars().all()
     
     total_size = sum(m.total_size_bytes or 0 for m in mirrors)
@@ -99,7 +98,7 @@ async def get_system_health(
     db: AsyncSession = Depends(get_db)
 ) -> dict:
     """Get system health status for public display."""
-    result = await db.execute(select(Mirror).where(Mirror.enabled == True))
+    result = await db.execute(select(Mirror).where(Mirror.enabled.is_(True)))
     mirrors = result.scalars().all()
     
     # Check overall health

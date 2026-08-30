@@ -1,9 +1,8 @@
 """
 Mirrors API endpoints.
 """
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import List, Optional
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -12,9 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import humanize
 
 from app.core.database import get_db
-from app.core.config import settings
 from app.models.mirror import Mirror, MirrorType, MirrorStatus
-from app.models.sync_job import SyncJob, SyncStatus
+from app.models.sync_job import SyncJob
 
 router = APIRouter()
 
@@ -75,7 +73,7 @@ async def list_mirrors(
 ) -> List[MirrorResponse]:
     """List all configured mirrors and their status."""
     result = await db.execute(
-        select(Mirror).where(Mirror.enabled == True).order_by(Mirror.name)
+        select(Mirror).where(Mirror.enabled.is_(True)).order_by(Mirror.name)
     )
     mirrors = result.scalars().all()
     

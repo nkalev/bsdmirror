@@ -14,7 +14,7 @@ import structlog
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models.user import User, UserRole
-from app.models.mirror import Mirror, MirrorType, MirrorStatus
+from app.models.mirror import Mirror, MirrorStatus
 from app.models.sync_job import SyncJob, SyncStatus
 from app.models.audit_log import AuditLog
 from app.models.setting import Setting

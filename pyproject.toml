@@ -1,0 +1,106 @@
+# Tooling configuration for bsdmirror.
+#
+# This file configures ruff, pytest, coverage and bandit only. There is no
+# [project] table on purpose: neither backend/ nor sync/ is installed as a
+# package, both run straight from source inside their containers, and
+# dependencies stay in backend/requirements.txt and sync/requirements.txt.
+#
+# Everything here is expected to work from a bare checkout with:
+#     pip install -r backend/requirements.txt
+#     ruff check .
+#     pytest
+# No Docker, no Postgres, no Redis.
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+# The containers run python:3.12-slim (backend/Dockerfile, sync/Dockerfile).
+# Local developer machines are often older; target the deployed interpreter.
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# Deliberately modest. Every rule here reports zero findings once the dead code
+# in this change is removed, so `ruff check .` is green from the first CI run.
+#
+#   E4/E7/E9, F  ruff's default set: imports, statement-level errors, pyflakes.
+#   ASYNC        flake8-async. This codebase is async top to bottom and has a
+#                known history of blocking calls in async paths.
+#   B            flake8-bugbear: mutable defaults, silent except, loop-var
+#                closures.
+#   C4           flake8-comprehensions.
+#   RUF          ruff's own rules, notably RUF100, which fails the build when a
+#                `# noqa` stops being necessary. That is what keeps the two
+#                suppressions below from outliving their reason.
+select = ["E4", "E7", "E9", "F", "ASYNC", "B", "C4", "RUF"]
+
+ignore = [
+    # B008 "function call in argument default". FastAPI's documented dependency
+    # syntax is `db: AsyncSession = Depends(get_db)`; every route in this repo
+    # uses it. The rule is a false positive for this framework, not a finding
+    # we are deferring.
+    "B008",
+]
+
+# NOT enabled, with reasons, so the next person does not have to re-derive them:
+#   I    (isort)     20 files would be reordered. Worth doing, but as its own
+#                    commit -- backend/app/main.py and sync/sync_service.py have
+#                    unrelated in-flight changes right now.
+#   UP   (pyupgrade) 103 findings, almost all typing.Optional/List -> PEP 604
+#                    and 585. A repo-wide annotation rewrite, not a lint gate.
+#   W    (pycodestyle warnings) trailing whitespace throughout backend/app/models.
+#                    Cosmetic; belongs with a formatter pass, not here.
+#   S    (bandit rules) bandit itself runs in CI. Enabling S duplicates its
+#                    findings under a second set of codes.
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+minversion = "7.4"
+testpaths = ["tests"]
+
+# Neither tree is pip-installed, so put both import roots on sys.path:
+#   backend  -> `import app.core.security`
+#   .        -> `import sync.sync_service`
+pythonpath = ["backend", "."]
+
+# pytest-asyncio in auto mode: every `async def test_*` is collected as an
+# asyncio test without a per-test marker. Chosen over strict mode because this
+# suite is ~entirely async and the markers would be pure noise.
+asyncio_mode = "auto"
+
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+]
+
+filterwarnings = [
+    "error::RuntimeWarning",
+]
+
+# ---------------------------------------------------------------------------
+# coverage
+# ---------------------------------------------------------------------------
+[tool.coverage.run]
+source = ["backend/app", "sync"]
+branch = true
+omit = ["*/__pycache__/*"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+# ---------------------------------------------------------------------------
+# bandit
+# ---------------------------------------------------------------------------
+# Only read when bandit is invoked with `-c pyproject.toml`. No rule is skipped
+# here; the only thing configured is the target directory list, because bandit's
+# B101 (assert_used) fires on every assertion in a test suite.
+[tool.bandit]
+exclude_dirs = ["tests", ".git", "data", "frontend"]

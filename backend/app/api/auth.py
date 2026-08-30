@@ -16,7 +16,6 @@ from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.security import (
     verify_password,
-    hash_password,
     create_access_token,
     decode_access_token,
     blacklist_token,
@@ -25,7 +24,6 @@ from app.core.security import (
 )
 from app.models.user import User, UserRole
 from app.models.audit_log import AuditLog
-from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()

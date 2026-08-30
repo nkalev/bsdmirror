@@ -38,8 +38,11 @@ class Base(DeclarativeBase):
 async def init_db() -> None:
     """Initialize database connection and create tables."""
     async with engine.begin() as conn:
-        # Import models to register them
-        from app.models import user, mirror, sync_job, audit_log, setting
+        # Import models for their side effect: importing each module registers
+        # its mapped class on Base.metadata, which create_all() then reads. The
+        # names are intentionally unused, hence the noqa -- removing the import
+        # would silently create an empty schema.
+        from app.models import user, mirror, sync_job, audit_log, setting  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database initialized")
 

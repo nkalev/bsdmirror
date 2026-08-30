@@ -1,0 +1,64 @@
+# Root build-context excludes.
+#
+# SCOPE WARNING: Docker reads .dockerignore from the root of the *build
+# context*, not from the repo root. Every context in docker-compose.yml is a
+# subdirectory (./backend, ./sync, ./rsync), so this file is currently INERT --
+# see backend/.dockerignore and sync/.dockerignore for the ones that take
+# effect today.
+#
+# It is kept because a root context is the likely shape of the next change:
+# a models package shared by backend/ and sync/ (Phase 1) cannot be COPYed from
+# a subdirectory context, and moving `context:` to `.` would otherwise ship the
+# whole repo -- .git, tests/, frontend/, data/ -- into the image.
+
+# VCS
+.git/
+.gitignore
+.github/
+
+# Secrets and local state
+**/.env
+**/.env.*
+**/.credentials
+docker-compose.override.yml
+
+# Python build/test artifacts
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.venv
+**/venv
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage
+**/.coverage.*
+**/htmlcov
+**/coverage.xml
+
+# Tests and tooling config: not needed at runtime in any image
+**/tests
+pyproject.toml
+
+# Not part of any application image
+data/
+docs/
+scripts/
+nginx/
+rsync/
+LICENSE
+README.md
+CONTRIBUTING.md
+CLAUDE.md
+.claude/
+docker-compose*.yml
+
+# Editor / OS noise
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+**/Thumbs.db
+**/*.log

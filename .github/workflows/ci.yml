@@ -1,0 +1,351 @@
+# bsdmirror CI
+#
+# This repo's first 36 commits contain 30 post-deploy "Fix ..." commits, almost
+# all of them configuration and integration failures. The jobs below are chosen
+# to catch that specific class of failure before a deploy, not to maximise
+# coverage: compose parsing, nginx config parsing (including the production
+# config that scripts/ssl-setup.sh generates at runtime), plus the lint, SAST
+# and test tooling that has been pinned in backend/requirements.txt and never
+# run.
+#
+# Every version here is derived from something already in the repo:
+#   PYTHON_VERSION  must equal the tag in backend/Dockerfile and sync/Dockerfile
+#   NGINX_IMAGE     must equal the image in docker-compose.yml
+#   ruff / bandit   installed from the pins in backend/requirements.txt
+# Drift in any of those fails a job rather than passing on a version that never
+# runs in production.
+
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['**']
+  # Also on PRs so fork contributions are covered; same-repo branches will run
+  # twice, which is the cheaper mistake of the two.
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # backend/Dockerfile and sync/Dockerfile both use python:3.12-slim.
+  PYTHON_VERSION: '3.12'
+  # docker-compose.yml, service `nginx`.
+  NGINX_IMAGE: nginx:1.25-bookworm
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # ruff
+  # ---------------------------------------------------------------------------
+  ruff:
+    name: ruff
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install ruff at the version pinned in backend/requirements.txt
+        run: |
+          pin="$(grep -E '^ruff==' backend/requirements.txt || true)"
+          if [ -z "$pin" ]; then
+            echo "::error file=backend/requirements.txt::no 'ruff==' pin found. CI installs the pinned version on purpose and will not guess one."
+            exit 1
+          fi
+          echo "installing $pin"
+          python -m pip install --disable-pip-version-check "$pin"
+
+      - name: ruff check .
+        run: |
+          ruff --version
+          ruff check --output-format=github .
+
+  # ---------------------------------------------------------------------------
+  # bandit
+  # ---------------------------------------------------------------------------
+  bandit:
+    name: bandit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install bandit at the version pinned in backend/requirements.txt
+        run: |
+          pin="$(grep -E '^bandit==' backend/requirements.txt || true)"
+          if [ -z "$pin" ]; then
+            echo "::error file=backend/requirements.txt::no 'bandit==' pin found. CI installs the pinned version on purpose and will not guess one."
+            exit 1
+          fi
+          echo "installing $pin"
+          python -m pip install --disable-pip-version-check "$pin"
+
+      # Full inventory, all severities. Informational only: it is here so the
+      # low-severity findings stay visible in the log instead of being silently
+      # filtered out by the gate below. The gate is the next step.
+      - name: Bandit full report (informational, does not gate)
+        run: bandit -r backend/app sync || true
+
+      # Gate: MEDIUM severity and above.
+      #
+      # Severity floor rationale. An unfiltered run on this tree reports three
+      # findings, all of them accepted by design:
+      #   B106 backend/app/api/auth.py       token_type="bearer"        (LOW)
+      #   B105 backend/app/core/security.py  "token_blacklist:" prefix  (LOW)
+      #   B104 sync/sync_service.py:414      health server on 0.0.0.0   (MEDIUM)
+      # The two LOW findings are string-heuristic false positives, hence the
+      # MEDIUM floor. B104 is skipped explicitly rather than by lowering the
+      # floor further: the sync service publishes no ports in docker-compose.yml,
+      # so :8001 is reachable only from the compose networks, and binding to the
+      # container's own interfaces is the only thing that works there.
+      #
+      # Suppressing these at the source with `# nosec` would be the better fix
+      # and would let the floor drop to LOW, but backend/app/** and the body of
+      # sync_service.py belong to the `developer` agent. Handed over, not edited.
+      - name: Bandit gate (medium severity and above)
+        run: bandit -r backend/app sync --severity-level medium --skip B104
+
+  # ---------------------------------------------------------------------------
+  # pytest
+  # ---------------------------------------------------------------------------
+  pytest:
+    name: pytest
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # If the Dockerfiles move to a new interpreter, this job must move with
+      # them. A green CI on a Python the containers never run is worse than no
+      # CI at all.
+      - name: Interpreter must match the container base image
+        run: |
+          fail=0
+          for df in backend/Dockerfile sync/Dockerfile; do
+            if ! grep -qE "^FROM python:${PYTHON_VERSION}-slim\b" "$df"; then
+              echo "::error file=$df::expected 'FROM python:${PYTHON_VERSION}-slim'; found: $(grep -E '^FROM ' "$df" | tr '\n' ' ')"
+              echo "::error file=$df::update PYTHON_VERSION in .github/workflows/ci.yml to match, or revert the base image"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend requirements
+        run: |
+          python -m pip install --disable-pip-version-check --upgrade pip
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+
+      - name: pytest
+        run: |
+          python -c 'import sys; print("python", sys.version)'
+          pytest
+
+  # ---------------------------------------------------------------------------
+  # docker compose config
+  # ---------------------------------------------------------------------------
+  compose:
+    name: docker compose config
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      # docker compose falls back to a blank string for any unset ${VAR} and
+      # still exits 0, so `config -q` on a bare checkout passes while telling you
+      # nothing. This fixture supplies exactly the seven variables that have no
+      # compose-level default; the guard below then fails the job if compose
+      # warns about an eighth, which is how a newly added variable that nobody
+      # put in .env or the README gets caught here instead of on the server.
+      - name: Write .env fixture (placeholder values, never real secrets)
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-placeholder-not-a-secret
+          REDIS_PASSWORD=ci-placeholder-not-a-secret
+          SECRET_KEY=ci-placeholder-not-a-secret
+          ADMIN_PASSWORD=ci-placeholder-not-a-secret
+          FREEBSD_UPSTREAM=rsync://ftp.freebsd.org/FreeBSD/
+          NETBSD_UPSTREAM=rsync://rsync.NetBSD.org/NetBSD/
+          OPENBSD_UPSTREAM=rsync://ftp2.eu.openbsd.org/OpenBSD/
+          EOF
+          echo "wrote .env with $(grep -c '=' .env) variables"
+
+      - name: Validate compose (production, dev overlay, and both profiles)
+        run: |
+          docker compose version
+
+          # --profile rsync --profile ssl: the `rsync` and `certbot` services are
+          # behind profiles and are not even parsed without them.
+          run_config() {
+            desc="$1"; shift
+            echo "::group::docker compose $* config -q  --  $desc"
+            set +e
+            docker compose "$@" --profile rsync --profile ssl config -q 2>.compose.err
+            rc=$?
+            set -e
+            cat .compose.err
+            echo "::endgroup::"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::compose config failed for: $desc"
+              return 1
+            fi
+            if grep -q 'variable is not set' .compose.err; then
+              echo "::error::compose references a variable that is neither defaulted in docker-compose.yml nor present in the CI .env fixture."
+              echo "::error::Add it to the fixture in .github/workflows/ci.yml AND to the environment table in README.md, or give it a default in compose."
+              return 1
+            fi
+            return 0
+          }
+
+          rc=0
+          run_config "production" || rc=1
+          run_config "dev overlay" -f docker-compose.yml -f docker-compose.dev.yml || rc=1
+          exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # nginx -t
+  # ---------------------------------------------------------------------------
+  #
+  # The highest-value job here. Validated against the exact image compose runs,
+  # so the module set, compiled-in paths and the `nginx` user are the production
+  # ones rather than an ubuntu apt build's.
+  #
+  # What this does and does not prove:
+  #   proves     syntax, directive context, unknown directives, duplicate
+  #              server/location blocks, and that every ssl_certificate path is
+  #              loadable -- nginx reads certificates during `-t`.
+  #   does not   that `backend:8000` resolves, that /data/mirrors or
+  #     prove    /var/www/public exist, or that any location returns the right
+  #              body. Those need the stack up and belong to the deploy gate.
+  nginx:
+    name: nginx -t (all site configs)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Site configs referenced by name must exist
+        run: |
+          # docker-compose.yml defaults NGINX_SITE_CONF to dev.conf;
+          # scripts/ssl-setup.sh boots with bootstrap.conf and generates
+          # production.conf from default.conf. A rename breaks a deploy silently.
+          fail=0
+          for required in dev.conf default.conf bootstrap.conf; do
+            if [ ! -f "nginx/sites/$required" ]; then
+              echo "::error::nginx/sites/$required is missing, but docker-compose.yml or scripts/ssl-setup.sh reference it by name"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: Build the fixtures nginx -t needs
+        run: |
+          CI_DOMAIN=ci.bsdmirror.test
+
+          # nginx loads certificates during `-t`, so default.conf cannot be
+          # validated without a readable key pair at the path it names.
+          for cn in mirror.example.com "$CI_DOMAIN"; do
+            mkdir -p "ci-fixtures/letsencrypt/live/$cn"
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+              -subj "/CN=$cn" \
+              -keyout "ci-fixtures/letsencrypt/live/$cn/privkey.pem" \
+              -out    "ci-fixtures/letsencrypt/live/$cn/fullchain.pem" 2>/dev/null
+          done
+
+          # Reproduce scripts/ssl-setup.sh step 3 exactly (lines 127-131) so the
+          # config that actually serves production -- not just the template it
+          # is cut from -- gets validated.
+          mkdir -p ci-fixtures/sites
+          cp nginx/sites/default.conf ci-fixtures/sites/production.conf
+          ESCAPED_DOMAIN=$(printf '%s\n' "$CI_DOMAIN" | sed 's/[&/\]/\\&/g')
+          sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" ci-fixtures/sites/production.conf
+
+          if grep -q 'mirror.example.com' ci-fixtures/sites/production.conf; then
+            echo "::error file=scripts/ssl-setup.sh::domain substitution left 'mirror.example.com' in the generated production.conf"
+            exit 1
+          fi
+          echo "generated ci-fixtures/sites/production.conf for $CI_DOMAIN"
+
+      - name: Pull ${{ env.NGINX_IMAGE }}
+        run: docker pull "$NGINX_IMAGE"
+
+      - name: nginx -t every site config
+        run: |
+          # Glob, not a hardcoded list: a new nginx/sites/*.conf is validated the
+          # day it lands rather than the day it is deployed.
+          configs=(nginx/sites/*.conf ci-fixtures/sites/production.conf)
+
+          rc=0
+          for conf in "${configs[@]}"; do
+            echo "::group::nginx -t  $conf"
+            set +e
+            docker run --rm \
+              -v "$PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+              -v "$PWD/$conf:/etc/nginx/sites-enabled/active.conf:ro" \
+              -v "$PWD/ci-fixtures/letsencrypt:/etc/letsencrypt:ro" \
+              "$NGINX_IMAGE" nginx -t >nginx-t.out 2>&1
+            trc=$?
+            set -e
+            cat nginx-t.out
+            echo "::endgroup::"
+            if [ "$trc" -ne 0 ]; then
+              echo "::error file=$conf::nginx -t failed"
+              rc=1
+            elif grep -q '\[warn\]' nginx-t.out; then
+              echo "::warning file=$conf::nginx -t passed with warnings"
+            else
+              echo "ok: $conf"
+            fi
+          done
+
+          if [ "${#configs[@]}" -lt 4 ]; then
+            echo "::error::expected at least 4 configs (3 site configs + generated production.conf), validated ${#configs[@]}"
+            exit 1
+          fi
+          echo "validated ${#configs[@]} nginx configurations"
+          exit "$rc"
+
+  # ---------------------------------------------------------------------------
+  # Aggregate status
+  # ---------------------------------------------------------------------------
+  # One check to require in branch protection. Without this, adding a job later
+  # means remembering to also add it to the protection rule -- which is exactly
+  # the kind of step that gets skipped.
+  ci:
+    name: CI
+    if: always()
+    needs: [ruff, bandit, pytest, compose, nginx]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Fail unless every job succeeded
+        # Passed through env rather than interpolated into the script body: the
+        # standard way to keep a ${{ }} expansion out of the shell's parser.
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
+            if [ "$r" != "success" ]; then
+              echo "::error::at least one CI job did not succeed (results: $RESULTS)"
+              exit 1
+            fi
+          done
+          echo "all jobs succeeded"

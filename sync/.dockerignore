@@ -1,0 +1,49 @@
+# Build context: ./sync (docker-compose.yml, service `sync`).
+# This is the file Docker actually reads for that build -- the repo-root
+# .dockerignore does NOT apply to a subdirectory context.
+#
+# Patterns are matched against the path relative to the context root and `*`
+# does not cross `/`, so anything that can appear at any depth needs the `**/`
+# prefix. Verified: without it, nested __pycache__/*.pyc still shipped.
+#
+# Keep in sync with backend/.dockerignore.
+
+# The recipe itself: never needed inside the image
+Dockerfile
+.dockerignore
+
+# Secrets / local state. None of these are committed, but an image layer is a
+# permanent, shippable copy -- exclude them before they can exist.
+**/.env
+**/.env.*
+**/.credentials
+**/*.pem
+**/*.key
+
+# Python build/test artifacts
+**/__pycache__
+**/*.py[cod]
+**/*.egg-info
+**/.venv
+**/venv
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/.coverage
+**/.coverage.*
+**/htmlcov
+**/coverage.xml
+
+# Tests do not run inside the runtime image; CI runs them from the repo root.
+**/tests
+**/test_*.py
+**/conftest.py
+
+# Editor / OS noise
+**/.vscode
+**/.idea
+**/*.swp
+**/*.swo
+**/*~
+**/.DS_Store
+**/*.log
