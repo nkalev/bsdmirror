@@ -1,0 +1,29 @@
+# bsdmirror - schedule for the health check
+#
+# Hourly, not daily. The dedup in health_check.sh means a persistent problem
+# still produces exactly one message plus a daily reminder, so the only thing
+# a shorter interval costs is that a NEW problem is noticed within an hour
+# instead of within a day. With SYNC_SCHEDULE at 0 4 * * * and
+# STALE_AFTER_HOURS at 36, a missed night is reported the following afternoon
+# rather than up to a day later still.
+
+[Unit]
+Description=Run the bsdmirror health check hourly
+Documentation=file:/opt/bsdmirror/scripts/health_check.sh
+
+[Timer]
+OnCalendar=hourly
+
+# Spread the load off the top of the hour, and off every other hourly timer on
+# the box.
+RandomizedDelaySec=5m
+AccuracySec=1m
+
+# The single most important line in this file. Without it, a host that was
+# down or suspended over the scheduled instant simply skips that run and says
+# nothing -- which is the failure mode this whole change exists to remove.
+# With it, systemd runs the check once, immediately, on the next boot.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

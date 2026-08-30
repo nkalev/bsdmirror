@@ -435,6 +435,30 @@ LETSENCRYPT_ENV=$LETSENCRYPT_ENV
 
 # Logging
 LOG_LEVEL=INFO
+
+# Alerting
+# ------------------------------------------------------------------
+# scripts/health_check.sh checks mirror freshness and shouts when a mirror
+# stops updating. It only shouts if a channel is configured here, and it only
+# runs at all once scripts/install-health-timer.sh has installed the timer:
+#
+#     sudo ./scripts/install-health-timer.sh
+#     ./scripts/health_check.sh --test-alert
+#
+# ALERT_CHANNELS is a comma-separated list of: discord, slack, email.
+# The webhook URL is a secret; this file is mode 0600 and gitignored. Keep it
+# that way, and do not paste the URL into a shell command, a crontab, or an
+# issue -- it is a bearer credential for posting to your channel.
+ALERT_CHANNELS=
+#DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
+#SLACK_WEBHOOK=https://hooks.slack.com/services/<workspace>/<channel>/<token>
+#EMAIL_RECIPIENT=
+
+# Alert when a mirror's last completed sync is older than this. The sync
+# schedule above is nightly, so 36h is one missed night plus some slack.
+STALE_AFTER_HOURS=36
+# A problem that persists is re-announced this often, and not otherwise.
+ALERT_REMIND_HOURS=24
 EOF
 
 chmod 600 "$INSTALL_DIR/.env"

@@ -1,0 +1,66 @@
+# bsdmirror - health check and alerting (one-shot, driven by the .timer)
+#
+# Install with scripts/install-health-timer.sh, which rewrites the three
+# /opt/bsdmirror paths below if the deployment lives somewhere else. The
+# default is spelled out literally rather than templated so that this file is
+# valid as it stands and `systemd-analyze verify` can be run on it in CI.
+#
+# Why a timer and not cron -- see scripts/install-health-timer.sh.
+
+[Unit]
+Description=bsdmirror mirror health check and alerting
+Documentation=file:/opt/bsdmirror/scripts/health_check.sh
+# The check talks to the API over the network and asks the docker engine which
+# containers are unhealthy. Both are Wants, not Requires: if docker is down the
+# check should still run and say so, which is the whole point.
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/bsdmirror
+ExecStart=/opt/bsdmirror/scripts/health_check.sh
+
+# Creates and owns /var/lib/bsdmirror and exports $STATE_DIRECTORY, which is
+# where health_check.sh keeps its alert-dedup state. Without a persistent
+# state file every run would look like a fresh transition and would alert.
+StateDirectory=bsdmirror
+StateDirectoryMode=0700
+
+# The webhook URL is a secret. It is NOT loaded with EnvironmentFile= here:
+# health_check.sh reads /opt/bsdmirror/.env itself. That keeps the secret out
+# of the unit's environment block, and means the file's contents are parsed by
+# the one program that understands them rather than by systemd's parser.
+UMask=0077
+
+# A wedged curl must not hold the timer's next run. HTTP_TIMEOUT defaults to
+# 15s and there are at most a handful of requests, so 5 minutes is generous.
+TimeoutStartSec=300
+
+# Exit 1 means "a condition is bad" and is expected; the unit is allowed to
+# fail on it so that `systemctl --failed` and `systemctl status` become a
+# second, free signal alongside the webhook. Exit 2 means the script could not
+# run at all -- a missing prerequisite or a misconfigured channel.
+
+# --- Sandboxing ------------------------------------------------------------
+# Conservative on purpose. The stricter options (ProtectSystem=strict,
+# SystemCallFilter=@system-service, PrivateNetwork-adjacent settings) were NOT
+# enabled because they could not be tested against a real docker socket from
+# the environment this file was written in, and a sandbox that silently breaks
+# the container check would reintroduce exactly the blind spot being fixed.
+# Tighten them deliberately, one at a time, running
+# `systemctl start bsdmirror-health` after each.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+
+# The unit is started by bsdmirror-health.timer. It is deliberately NOT
+# WantedBy=multi-user.target: enabling the service instead of the timer would
+# run the check once at boot and never again.

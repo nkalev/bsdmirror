@@ -518,6 +518,104 @@ jobs:
           echo "ok: ${#files[@]} script(s) clean"
 
   # ---------------------------------------------------------------------------
+  # systemd units
+  # ---------------------------------------------------------------------------
+  #
+  # scripts/systemd/*.{service,timer} schedule the health check, and until this
+  # job existed nothing validated them. A unit that fails to load does not fail
+  # loudly -- `systemctl enable` succeeds and the timer simply never fires,
+  # which is indistinguishable from the 58 silent nights this alerting was
+  # added to end.
+  #
+  # `systemd-analyze verify` parses the units, rejects unknown directives, and
+  # resolves ExecStart and WorkingDirectory on disk. Verified that the ExecStart
+  # resolution is real, not cosmetic: pointing it at a missing file exits 1 with
+  # "Command ... is not executable: No such file or directory".
+  systemd:
+    name: systemd-analyze verify
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: systemd-analyze must be available
+        run: |
+          if ! command -v systemd-analyze >/dev/null 2>&1; then
+            echo "::error::systemd-analyze is not on this runner. The units would go unvalidated, which is worse than a red build -- fix the job rather than skipping it."
+            exit 1
+          fi
+          systemd-analyze --version | head -1
+
+      # The units name an absolute path on purpose (see the comment in
+      # bsdmirror-health.service), so the tree has to exist there for the
+      # ExecStart check to mean anything.
+      - name: Stage the deployment at the path the units name
+        run: |
+          sudo mkdir -p /opt/bsdmirror
+          sudo cp -r scripts /opt/bsdmirror/
+          sudo chmod +x /opt/bsdmirror/scripts/*.sh
+          ls -l /opt/bsdmirror/scripts/health_check.sh
+
+      - name: The path baked into the units must match the installer's default
+        run: |
+          # scripts/install-health-timer.sh rewrites UNIT_DEFAULT_DIR when
+          # --dir differs. If the two ever disagree the substitution silently
+          # does nothing and a relocated install points at the wrong tree.
+          expected=$(grep -E '^UNIT_DEFAULT_DIR=' scripts/install-health-timer.sh | cut -d'"' -f2)
+          if [ -z "$expected" ]; then
+            echo "::error file=scripts/install-health-timer.sh::UNIT_DEFAULT_DIR not found"
+            exit 1
+          fi
+          echo "installer default: $expected"
+          fail=0
+          for unit in scripts/systemd/*.service scripts/systemd/*.timer; do
+            if ! grep -q "$expected" "$unit"; then
+              echo "::error file=$unit::does not mention $expected, so install-health-timer.sh cannot relocate it"
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: systemd-analyze verify
+        run: |
+          shopt -s nullglob
+          units=(scripts/systemd/*.service scripts/systemd/*.timer)
+          if [ "${#units[@]}" -eq 0 ]; then
+            echo "::error::no unit files found -- the glob or the directory moved"
+            exit 1
+          fi
+          echo "verifying ${#units[@]} unit(s): ${units[*]}"
+          rc=0
+          for u in "${units[@]}"; do
+            echo "::group::systemd-analyze verify $u"
+            set +e
+            systemd-analyze verify "$u" 2>&1 | tee verify.out
+            trc=${PIPESTATUS[0]}
+            set -e
+            echo "::endgroup::"
+            if [ "$trc" -ne 0 ] || [ -s verify.out ]; then
+              echo "::error file=$u::systemd-analyze verify reported problems"
+              rc=1
+            else
+              echo "ok: $u"
+            fi
+          done
+          exit "$rc"
+
+      # The same check against a relocated copy, because that is the code path
+      # `install-health-timer.sh --dir` takes and it is not otherwise exercised.
+      - name: Verify a relocated copy the way --dir installs it
+        run: |
+          sudo mkdir -p /srv/mirror
+          sudo cp -r scripts /srv/mirror/
+          sudo chmod +x /srv/mirror/scripts/*.sh
+          mkdir -p relocated
+          for u in scripts/systemd/*.service scripts/systemd/*.timer; do
+            sed 's#/opt/bsdmirror#/srv/mirror#g' "$u" > "relocated/$(basename "$u")"
+          done
+          systemd-analyze verify relocated/*.service relocated/*.timer
+          echo "relocated units verify clean"
+
+  # ---------------------------------------------------------------------------
   # Aggregate status
   # ---------------------------------------------------------------------------
   # One check to require in branch protection. Without this, adding a job later
@@ -526,7 +624,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [ruff, bandit, pytest, compose, nginx, shellcheck]
+    needs: [ruff, bandit, pytest, compose, nginx, shellcheck, systemd]
     runs-on: ubuntu-24.04
     steps:
       - name: Fail unless every job succeeded

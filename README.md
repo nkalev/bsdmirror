@@ -122,6 +122,15 @@ Key environment variables in `.env`:
 | `SYNC_BANDWIDTH_LIMIT` | Rsync bandwidth limit (KB/s, 0=unlimited) | `0` |
 | `MIRROR_DATA_PATH` | Local path for mirror data | `/data/mirrors` |
 | `LOG_LEVEL` | Log level for the backend and sync services (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
+| `ALERT_CHANNELS` | Comma-separated alert channels: `discord`, `slack`, `email`. Empty means "derive from whichever channel variable is set" | *(empty)* |
+| `DISCORD_WEBHOOK_URL` | Discord incoming webhook. **Secret** | *(unset)* |
+| `SLACK_WEBHOOK` | Slack incoming webhook. **Secret** | *(unset)* |
+| `EMAIL_RECIPIENT` | Address for `mailx` alerts | *(unset)* |
+| `STALE_AFTER_HOURS` | Alert when a mirror's last completed sync is older than this | `36` |
+| `ALERT_REMIND_HOURS` | How often a still-broken condition is re-announced | `24` |
+| `DISK_WARN_PCT` / `DISK_CRIT_PCT` | Disk usage that warns / alerts | `85` / `95` |
+| `API_URL` | Base URL the health check probes. Empty derives `https://$DOMAIN` | *(derived)* |
+| `ALERT_SOURCE_LABEL` | Name shown in alerts. Empty uses `DOMAIN`, then the hostname | *(derived)* |
 
 Upstream URLs can also be changed from the admin panel without restarting services.
 
@@ -185,6 +194,147 @@ structlog's `filter_by_level` processor tests against. Third-party libraries kee
 their own default levels, so raising `LOG_LEVEL` to `DEBUG` does not turn on
 SQLAlchemy statement logging or aiohttp access logs. An unrecognised value falls
 back to `INFO` rather than failing at startup.
+
+## Monitoring and alerting
+
+On 2026-07-02 the OpenBSD upstream went away. The mirror then failed **58
+consecutive nights** and nobody found out. `scripts/health_check.sh` already
+existed and would have caught it. Nothing had ever scheduled it, and it could
+not have alerted if it had run (see *The errexit bug*, below).
+
+### What is checked
+
+| Condition | Alerts when |
+|---|---|
+| `api` | `GET $API_URL/api/health` is not 200, or its `status` is not `healthy` |
+| `mirror-api` | `/api/stats/health` is unreachable or unparseable — mirror freshness is then **unknown**, which is treated as bad |
+| `mirror-stale:<name>` | `last_sync_completed` is older than `STALE_AFTER_HOURS`, is `null` (never synced), or is not a parseable timestamp |
+| `mirror-error:<name>` | the mirror's status is `error` |
+| `disk` | `MIRROR_DATA_PATH` is at or above `DISK_CRIT_PCT` |
+| `containers` | any `bsdmirror*` container is unhealthy, or `docker ps` fails |
+
+Staleness is the one that matters. A mirror that has not synced since July still
+returns a `status`, still serves the files already on disk, and its containers stay
+healthy — every other check passes. Only the clock gives it away.
+
+Mirror state comes from `/api/stats/health`, which needs no credentials, so the
+alerter holds no token that can expire and take the alerting down with it. The
+endpoint's own top-level `status` field is deliberately ignored: it collapses to
+`healthy`/`updating`/`degraded` and reports `healthy` for a mirror that has not
+synced in two months. The per-mirror `last_sync` is what is read.
+
+A mirror stuck in `SYNCING` — the unrecoverable case in `backend/app/api/admin.py`
+— is caught for free here: its `last_sync_completed` stops advancing, so it goes
+stale like any other.
+
+### Not crying wolf
+
+A channel that fires every hour while a problem persists gets muted, and a muted
+channel is 58 silent nights with extra steps. Each condition is tracked
+independently in `/var/lib/bsdmirror/health-state.json`:
+
+| Transition | Message |
+|---|---|
+| ok → bad | **sent** (new problem) |
+| bad → bad | silent, until `ALERT_REMIND_HOURS` have passed since the last message |
+| bad → bad, reminder due | **sent** (still broken, with how long it has been bad) |
+| bad → ok | **sent** (recovered, with how long it was bad) |
+| ok → ok | silent |
+
+Conditions are tracked separately so a *new* problem appearing while an old one
+persists is not swallowed by the old one's silence.
+
+A missing, unreadable or corrupt state file makes every currently-bad condition
+look new, so it **alerts**. So does an unwritable state directory, and the message
+says the alert may repeat. The state layer fails loud, never quiet.
+
+An alert that no channel accepted is **not** recorded as sent, so it is retried on
+the next run — a webhook outage during the transition cannot swallow the alert
+permanently.
+
+### Configuring a channel
+
+Discord and Slack take different payloads (`{"content": ...}` vs `{"text": ...}`)
+and have different length limits, so the channel is **explicit configuration, not
+guessed from the webhook hostname** — hostname sniffing breaks silently behind a
+proxy or against a self-hosted endpoint. Add to `.env`:
+
+```
+ALERT_CHANNELS=discord
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/<id>/<token>
+```
+
+Discord: *Server Settings → Integrations → Webhooks → New Webhook → Copy Webhook
+URL*. Then:
+
+```bash
+./scripts/health_check.sh --test-alert   # send a test message
+./scripts/health_check.sh --dry-run      # run the checks, print, send nothing
+```
+
+`ALERT_CHANNELS=discord,slack` sends to both. Naming a channel that is not
+configured is a hard error rather than a silent no-op.
+
+**The webhook URL is a bearer credential.** It lives in `.env` (mode 0600,
+gitignored), is never passed to `curl` as an argument — `curl` reads it from a
+`--config -` stream on stdin, so it does not appear in `ps` — and every line the
+script prints, including `curl`'s own error output, is filtered through a literal
+redactor first, so it cannot reach `journalctl` either.
+
+Adding a fourth channel is three functions and one word in `CHANNEL_REGISTRY`;
+the contract is documented above the channel section of the script.
+
+### Scheduling
+
+```bash
+sudo ./scripts/install-health-timer.sh          # idempotent
+sudo ./scripts/install-health-timer.sh --dry-run
+sudo ./scripts/install-health-timer.sh --uninstall
+```
+
+It refuses to install unless an alert channel is configured (`--allow-no-channel`
+overrides), because installing a checker that cannot tell anyone is how this repo
+got here.
+
+A **systemd timer**, not a cron entry. There is precedent for cron —
+`scripts/ssl-setup.sh:164` writes `/etc/cron.d/certbot-renew` — and it is the right
+call there, because certbot's failure becomes visible the next time a browser loads
+the site. Alerting is the opposite: its failures are invisible by construction, so
+the scheduler itself has to be observable.
+
+```bash
+systemctl list-timers bsdmirror-health.timer   # next run, last run
+journalctl -u bsdmirror-health -n 50           # every past run, with exit status
+systemctl start bsdmirror-health               # run it now
+```
+
+`Persistent=true` is the single most important line in the timer: a run missed
+while the host was down is executed on the next boot instead of being silently
+skipped, and "silently skipped" is the bug being fixed.
+
+The check runs hourly. Because of the dedup above, a persistent problem still
+produces exactly one message plus a daily reminder; the only thing the shorter
+interval buys is that a new problem is noticed within an hour.
+
+Exit 1 means "a condition is bad" and is allowed to fail the unit, so
+`systemctl --failed` is a second signal alongside the webhook. Exit 2 means the
+script could not run at all.
+
+### The errexit bug
+
+The previous `health_check.sh` counted failures with:
+
+```bash
+check_health || ((errors++))
+```
+
+Under `set -euo pipefail` on **bash 4 and later**, this aborts the script at the
+first failing check, before `send_alert` is ever reached. `((errors++))`
+post-increments from `0`, evaluates to `0`, and therefore exits 1; as the last
+command of an `||` list it is not exempt from `errexit`. Confirmed on bash 5.2.21
+(Ubuntu 24.04, the deploy target). bash 3.2.57 (macOS) wrongly exempts the whole
+list and does *not* abort, which is why it survived review on a laptop. Every
+counter in the script now uses `n=$((n + 1))`.
 
 ## Security
 
