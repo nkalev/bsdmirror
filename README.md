@@ -102,6 +102,55 @@ Key environment variables in `.env`:
 
 Upstream URLs can also be changed from the admin panel without restarting services.
 
+### Sync results
+
+Pulling from a public mirror that is itself syncing means racing it. Upstream
+writes each file to an rsync temp name (`.<original>.<6 random chars>`, mode 0600)
+and then renames it into place. Lose that race one way and the file is gone before
+we can read it; lose it the other way and it is there but unreadable. Neither is a
+problem with the mirror, and rsync reports them with different exit codes.
+
+**A sync that exits 24 is recorded as successful.** Exit 24 is rsync's "some files
+vanished before they could be transferred" warning, and rsync returns it only when
+nothing worse happened, so it is tolerated unconditionally.
+
+**A sync that exits 23 is recorded as successful only if every error line is
+explained.** Exit 23 — "some files/attrs were not transferred" — is a bucket, so it
+is opened rather than trusted. The run succeeds only when every diagnostic line in
+the output is either a vanished source file or a `Permission denied (13)` on a path
+whose name has rsync's temp-file structure. **One line that is not** — a permission
+error on real mirror content, an I/O error, a full disk, `IO error encountered --
+skipping file deletion` — **and the whole run fails.** Anything the classifier does
+not positively recognise counts as unrecognised, and an exit 23 with no readable
+error lines at all is treated as unattributable and fails too. The bias is
+deliberate: a spurious failure is loud and clears on the next run, while a mirror
+wrongly marked `active` is published in that state and nobody finds out.
+
+Tolerated runs are not silent. They are logged at `warning` with the number of temp
+files and vanished files waved through and a sample of the paths, so a `completed`
+job that was not perfectly clean can be told apart in `docker compose logs sync`.
+Rejected ones are logged at `error` with the lines that were not recognised. In both
+cases the full rsync output is kept on the job record.
+
+Every other non-zero exit is a failure outright.
+
+**A failed sync no longer clears "last synced".** The timestamp records when the
+mirror was last known good, which is the one thing worth keeping when a sync fails.
+The failure is visible in the mirror's status and error message and in the sync job
+row instead.
+
+**Size and file count are only updated by a successful sync.** A failed run's
+statistics describe the fraction it transferred before dying, so recording them
+would replace a correct total with a smaller wrong one.
+
+**"Files" means regular files.** rsync reports its file list as, for example,
+`Number of files: 5,582 (reg: 4,321, dir: 1,261)`; the mirror's file count is the
+`reg:` figure. Earlier releases stored the leading total, which also counts
+directories, symlinks and devices, so the counts shown on the public site and in the
+admin panel were over-stated — by 29% in that example. **Counts will drop the first
+time each mirror syncs after this change.** That is the correction, not a loss of
+data; the byte totals are unaffected.
+
 ### Logging
 
 Both services write newline-delimited JSON to stderr, so `docker compose logs backend`

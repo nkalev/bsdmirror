@@ -7,9 +7,10 @@ Polls for pending sync jobs created by the admin panel.
 import asyncio
 import logging
 import os
+import re
 import signal
 from datetime import datetime, timezone
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from aiohttp import web
 from croniter import croniter
@@ -50,6 +51,268 @@ logger = structlog.get_logger(__name__)
 
 # How often to poll for pending jobs (seconds)
 POLL_INTERVAL = 10
+
+# rsync exit codes that mean "the mirror on disk is good".
+#
+#   0   success.
+#   24  "some files vanished before they could be transferred". This is a
+#       warning, not an error, and it is routine when pulling from a public
+#       mirror that is itself syncing: upstream deletes its own rsync temp
+#       files (.base80.tgz.lLPdyl and friends) between the file list being
+#       built and the transfer reaching them. Job 615 moved 567,277 files /
+#       2,584,831,248,502 bytes over 15.7 hours and was recorded FAILED because
+#       exactly five such temp files disappeared.
+#
+# 23 is NOT in this set. It is handled separately, by inspecting the error
+# lines -- see _classify_partial_transfer below.
+#
+# There is no "completed with warnings" SyncStatus and there must not be: this
+# repo has no migrations (schema comes from Base.metadata.create_all), so a new
+# enum value would never reach an existing database. A tolerated run is
+# COMPLETED and the warning text survives in SyncJob.rsync_output.
+RSYNC_EXIT_SUCCESS = 0
+RSYNC_EXIT_VANISHED_SOURCE_FILES = 24
+RSYNC_SUCCESS_EXIT_CODES = frozenset({RSYNC_EXIT_SUCCESS, RSYNC_EXIT_VANISHED_SOURCE_FILES})
+
+# 24 is tolerated unconditionally because the code IS the condition: rsync
+# returns 24 only when the sole thing that went wrong was source files
+# disappearing. 23 -- "some files/attrs were not transferred" -- is a bucket,
+# and has to be opened before it can be judged.
+#
+# Both codes come from the same race against an upstream that is itself
+# syncing. The upstream writes each file to an rsync temp name, mode 0600, then
+# renames it into place. Losing that race one way gives us a file that is gone
+# by the time we ask for it (24); losing it the other way gives us a file that
+# is there but unreadable (23). Job 615 hit the first, job 617 the second:
+# 3,190 files transferred, the full 2,628,302,118,514-byte tree seen,
+# speedup 424.29 -- a clean incremental -- recorded FAILED over six 0600 temp
+# files and two vanished ones.
+#
+# So 23 is tolerated only when EVERY error line in the output is positively
+# recognised as one of those two shapes. Anything else -- a permission error on
+# real mirror content, an I/O error, a full disk -- and the run fails. The
+# asymmetry that argued against blanket-tolerating 23 still holds and is what
+# shapes the classifier: a spurious FAILED is loud and retryable, a spurious
+# ACTIVE on a truncated mirror is invisible. Unrecognised means fail.
+RSYNC_EXIT_PARTIAL_TRANSFER = 23
+
+# An rsync temp name is "." + the original basename + "." + six characters from
+# mkstemp's [A-Za-z0-9] alphabet. Matching that structure, rather than a loose
+# "starts with a dot" or a substring of the message, is what keeps ordinary
+# dotfiles out: ".cshrc" has no second component, ".vimrc.swp" has a 3-character
+# one, "base80.tgz" has no leading dot.
+_RSYNC_TEMP_BASENAME_RE = re.compile(r"^\.(?P<stem>[^/]+)\.(?P<suffix>[A-Za-z0-9]{6})$")
+
+# `file has vanished: "/path"`
+_VANISHED_RE = re.compile(r'^file has vanished: "(?P<path>.*)"$')
+
+# `rsync: [sender] send_files failed to open "/p" (in OpenBSD): Permission denied (13)`
+# The [sender] tag and the (in MODULE) clause are both absent on older rsync.
+# The errno is pinned to 13: this branch exists for the 0600-temp-file race and
+# nothing else, so a different errno on the same path shape still fails.
+_SEND_FAILED_OPEN_RE = re.compile(
+    r'^rsync: (?:\[[a-z]+\] )?send_files failed to open "(?P<path>.*?)"'
+    r'(?: \(in [^)]*\))?: Permission denied \(13\)$'
+)
+
+# The terminal "rsync error: ... (code N)" line. Only ignored when N is the
+# code the process actually exited with -- a (code 11) line inside a run that
+# exits 23 is a real second failure and must not be waved through.
+_EXIT_SUMMARY_RE = re.compile(r"^rsync (?:error|warning): .*\(code (?P<code>\d+)\)")
+
+# Line prefixes that mean "rsync is reporting a problem". Deliberately broad,
+# and safe to over-include: a line caught here must then be positively
+# classified as benign or the whole run fails, so a false positive costs a
+# spurious failure, never a spurious success. rsync does not prefix all of
+# these with "rsync:" -- "file has vanished:" and "IO error encountered" are
+# both bare -- which is why this is a list and not a single prefix test.
+_DIAGNOSTIC_PREFIXES = (
+    "rsync:",
+    "rsync error:",
+    "rsync warning:",
+    "ERROR:",
+    "ERROR ",
+    "WARNING:",
+    "file has vanished:",
+    "IO error encountered",
+    "skipping ",
+    "symlink has no referent",
+    "cannot delete non-empty directory",
+    "could not make way for",
+    "delete_file:",
+    "recv_files:",
+    "send_files:",
+    "readlink_stat(",
+    "opendir ",
+    "rename failed",
+    "mkstemp ",
+)
+
+
+class RsyncErrorVerdict(NamedTuple):
+    """The result of reading an exit-23 run's error lines.
+
+    tolerable is True only when nothing was left unrecognised AND at least one
+    line was positively explained. An exit 23 with no error lines we can read
+    is unattributable, and unattributable means failure.
+    """
+
+    tolerable: bool
+    vanished: tuple
+    upstream_temp_files: tuple
+    unrecognised: tuple
+
+
+def _is_rsync_temp_path(path: str) -> bool:
+    """True if `path` names a file rsync itself created as a transfer temp.
+
+    The structural match is the whole test: a leading dot, a non-empty stem, and
+    a six-character suffix from mkstemp's alphabet.
+
+    An earlier revision also rejected an all-lowercase-alphabetic suffix, on the
+    grounds that ".config.backup" fits the structure exactly. That refinement is
+    deliberately gone. It should not come back without new evidence, because:
+
+      * It misfires often. mkstemp draws 6 characters from a 62-character
+        alphabet, so (26/62)^6 = 0.54% of genuine temp names are all lowercase.
+        Jobs 615 and 617 carried 5 and 8 attributable error lines; at 8 per run
+        the chance a sync trips the guard is 1-(1-0.0054)^8 = 4.2%, which on a
+        nightly schedule is a spurious FAILED every three to four weeks.
+      * It protects against almost nothing on these trees. The scenario it
+        prevents needs a real file named ".<stem>.<six lowercase letters>" that
+        ALSO raises Permission denied (13) on the sender. Dot-prefixed files are
+        not mirror content by convention here -- rsync/rsyncd.conf:22,28,34,40
+        excludes them from what we serve, with `exclude = .* ~*`.
+      * A false alarm stops being free the moment something is listening.
+        scripts/health_check.sh is being put behind a Slack webhook because a
+        real upstream failure ran unnoticed for 58 consecutive nights. An alert
+        that cries wolf monthly teaches people to mute it, which is the exact
+        failure mode the webhook exists to end.
+
+    The safety in this function is carried by the exact six-character length and,
+    at the call site, by the errno being pinned to Permission denied (13). Both
+    stay. Neither is negotiable the way this refinement was.
+    """
+    basename = path.rsplit("/", 1)[-1]
+    return _RSYNC_TEMP_BASENAME_RE.match(basename) is not None
+
+
+def _classify_partial_transfer(output: str, returncode: int) -> RsyncErrorVerdict:
+    """Decide whether an rsync exit 23 is the upstream temp-file race.
+
+    Every line that looks like a diagnostic must resolve to one of:
+      * `file has vanished: "..."` -- the source went away mid-run. Tolerated
+        for any path, because that is already how exit 24 is treated and the
+        two codes describe the same event.
+      * a Permission-denied open failure on a path whose basename has rsync's
+        temp-file structure.
+      * the terminal exit-summary line for this very exit code.
+
+    Anything else lands in `unrecognised` and the run fails.
+    """
+    vanished = []
+    temp_files = []
+    unrecognised = []
+
+    for raw_line in output.split("\n"):
+        line = raw_line.strip()
+        if not line or not line.startswith(_DIAGNOSTIC_PREFIXES):
+            continue
+
+        summary = _EXIT_SUMMARY_RE.match(line)
+        if summary and int(summary.group("code")) == returncode:
+            continue
+
+        gone = _VANISHED_RE.match(line)
+        if gone:
+            vanished.append(gone.group("path"))
+            continue
+
+        denied = _SEND_FAILED_OPEN_RE.match(line)
+        if denied and _is_rsync_temp_path(denied.group("path")):
+            temp_files.append(denied.group("path"))
+            continue
+
+        unrecognised.append(line)
+
+    tolerable = not unrecognised and bool(vanished or temp_files)
+    return RsyncErrorVerdict(
+        tolerable=tolerable,
+        vanished=tuple(vanished),
+        upstream_temp_files=tuple(temp_files),
+        unrecognised=tuple(unrecognised),
+    )
+
+# rsync 3.x breaks its counts down by entry type:
+#     Number of files: 5,582 (reg: 4,321, dir: 1,261)
+# _BREAKDOWN_RE grabs the parenthesised part. rsync 2.6.9 and openrsync print
+# no parenthesis at all.
+_BREAKDOWN_RE = re.compile(r"\(([^)]*)\)")
+
+# Items inside that parenthesis are separated by ", " while the thousands
+# separator inside a number is a bare ",". Splitting on comma-then-whitespace
+# is what keeps "reg: 4,321, dir: 1,261" from being read as reg=4: an item
+# separator always has a space after it, a thousands separator never does.
+_BREAKDOWN_ITEM_SEPARATOR_RE = re.compile(r",\s+")
+
+
+def _to_int(token: str) -> Optional[int]:
+    """First whitespace-delimited word of `token` as an int, or None.
+
+    Handles the thousands separators rsync always writes and the unit suffix it
+    appends to sizes ("17 B" on 2.6.9, "17 bytes" on 3.x). Returns None rather
+    than guessing for -h/--human-readable output ("897.65G"), so a scaled
+    number is never mistaken for an exact one.
+    """
+    try:
+        return int(token.strip().split()[0].replace(",", ""))
+    except (IndexError, ValueError):
+        return None
+
+
+def _parse_count_field(value: str) -> tuple[Optional[int], dict]:
+    """Split an rsync count field into its leading total and its breakdown.
+
+        "5,582 (reg: 4,321, dir: 1,261)" -> (5582, {"reg": 4321, "dir": 1261})
+        "5"                              -> (5, {})
+
+    Sub-counts that do not parse are omitted, so an empty breakdown dict means
+    "no usable breakdown" and the caller can fall back to the leading total.
+    """
+    breakdown = {}
+    match = _BREAKDOWN_RE.search(value)
+    if match:
+        head = value[:match.start()]
+        for item in _BREAKDOWN_ITEM_SEPARATOR_RE.split(match.group(1)):
+            key, separator, raw = item.partition(":")
+            if not separator:
+                continue
+            parsed = _to_int(raw)
+            if parsed is not None:
+                breakdown[key.strip().lower()] = parsed
+    else:
+        head = value
+
+    return _to_int(head), breakdown
+
+
+def _regular_file_count(value: str) -> Optional[int]:
+    """The number of *regular files* in an rsync count field.
+
+    `Number of files: 5,582 (reg: 4,321, dir: 1,261)` describes 4,321 files and
+    1,261 directories. The leading 5,582 is the size of the file list, not a
+    file count, and reporting it under a column labelled "files" over-reports
+    by the directory, symlink and device count -- 29% in that sample.
+
+    A breakdown with no `reg:` key means zero regular files (a tree of nothing
+    but directories), which is why the fallback is only used when the breakdown
+    is absent entirely. That fallback -- rsync 2.6.9 and openrsync, which print
+    no breakdown -- still over-reports; there is no finer number in that output.
+    """
+    total, breakdown = _parse_count_field(value)
+    if breakdown:
+        return breakdown.get("reg", 0)
+    return total
 
 
 class SyncConfig:
@@ -171,44 +434,134 @@ class SyncService:
             # Parse statistics from output
             stats = self._parse_rsync_stats(output)
 
-            if process.returncode == 0:
-                logger.info("Rsync completed successfully", mirror=mirror_name, stats=stats)
+            if process.returncode in RSYNC_SUCCESS_EXIT_CODES:
+                if process.returncode == RSYNC_EXIT_VANISHED_SOURCE_FILES:
+                    # Warning, not an error. The mirror on disk is complete
+                    # apart from files upstream deleted mid-run, which the next
+                    # sync will not look for either. Logged at warning so it is
+                    # visible, returned as success so the job is not FAILED.
+                    logger.warning(
+                        "Rsync completed with vanished source files",
+                        mirror=mirror_name,
+                        returncode=process.returncode,
+                        stats=stats,
+                    )
+                else:
+                    logger.info("Rsync completed successfully", mirror=mirror_name, stats=stats)
                 return True, output, stats
-            else:
-                logger.error("Rsync failed", mirror=mirror_name, returncode=process.returncode)
+
+            if process.returncode == RSYNC_EXIT_PARTIAL_TRANSFER:
+                verdict = _classify_partial_transfer(output, process.returncode)
+                if verdict.tolerable:
+                    logger.warning(
+                        "Rsync exit 23 tolerated: every error line was an upstream "
+                        "temp file or a vanished source",
+                        mirror=mirror_name,
+                        returncode=process.returncode,
+                        upstream_temp_file_count=len(verdict.upstream_temp_files),
+                        vanished_count=len(verdict.vanished),
+                        upstream_temp_files=list(verdict.upstream_temp_files[:10]),
+                        vanished=list(verdict.vanished[:10]),
+                        stats=stats,
+                    )
+                    return True, output, stats
+
+                logger.error(
+                    "Rsync failed: exit 23 with error lines that are not the "
+                    "upstream temp-file race",
+                    mirror=mirror_name,
+                    returncode=process.returncode,
+                    unrecognised_count=len(verdict.unrecognised),
+                    unrecognised=list(verdict.unrecognised[:10]),
+                    upstream_temp_file_count=len(verdict.upstream_temp_files),
+                    vanished_count=len(verdict.vanished),
+                )
                 return False, output, stats
+
+            logger.error("Rsync failed", mirror=mirror_name, returncode=process.returncode)
+            return False, output, stats
 
         except Exception as e:
             logger.error("Rsync error", mirror=mirror_name, error=str(e))
             return False, str(e), {}
 
     def _parse_rsync_stats(self, output: str) -> dict:
-        """Parse rsync statistics from output."""
+        """Parse the --stats block of an rsync run.
+
+        Every key is optional. A key is absent when rsync did not print the
+        line, or printed a value int() will not take -- which is how
+        -h/--human-readable output is rejected rather than guessed at. Callers
+        must therefore use stats.get(), and must distinguish a missing key from
+        a legitimate zero.
+
+        Keys:
+          regular_files      regular files in the file list, from the `reg:`
+                             sub-count. This is what Mirror.file_count means by
+                             "files"; see _regular_file_count.
+          total_entries      the leading number on `Number of files:`, i.e.
+                             every file-list entry of every type. Nothing
+                             writes it to a column today; it is returned so the
+                             reg/total split stays recoverable downstream
+                             instead of being silently dropped.
+          files_transferred  regular files actually sent. Both the rsync 3.x
+                             spelling ("Number of regular files transferred:")
+                             and the 2.6.9/openrsync one ("Number of files
+                             transferred:") are matched -- the latter used to
+                             fall through and leave the column NULL.
+          files_deleted      regular files removed by --delete, which is always
+                             passed. SyncJob.files_deleted had no parser at all
+                             and was NULL on every job ever run.
+          total_size         bytes in the whole tree.
+          bytes_transferred  bytes actually sent.
+
+        Branch matching stays substring-based (`in`), not prefix-based: no two
+        of these labels is a substring of another, and "Number of created
+        files:" / "Number of deleted files:" do not contain "Number of files:".
+        """
         stats = {}
 
         for line in output.split("\n"):
+            # split(":", 1) -- not split(":") -- because the value half of a
+            # 3.x count line contains its own colons inside the parenthesis.
+            parts = line.split(":", 1)
+            if len(parts) != 2:
+                continue
+            value = parts[1]
+
             if "Number of files:" in line:
-                try:
-                    stats["total_files"] = int(line.split(":")[1].strip().split()[0].replace(",", ""))
-                except (IndexError, ValueError) as e:
-                    logger.debug("Failed to parse rsync total_files", line=line.strip(), error=str(e))
-            elif "Number of regular files transferred:" in line:
-                try:
-                    stats["files_transferred"] = int(line.split(":")[1].strip().replace(",", ""))
-                except (IndexError, ValueError) as e:
-                    logger.debug("Failed to parse rsync files_transferred", line=line.strip(), error=str(e))
+                total, breakdown = _parse_count_field(value)
+                regular = breakdown.get("reg", 0) if breakdown else total
+                if total is not None:
+                    stats["total_entries"] = total
+                if regular is not None:
+                    stats["regular_files"] = regular
+                if total is None and regular is None:
+                    logger.debug("Failed to parse rsync file counts", line=line.strip())
+            elif "Number of deleted files:" in line:
+                deleted = _regular_file_count(value)
+                if deleted is not None:
+                    stats["files_deleted"] = deleted
+                else:
+                    logger.debug("Failed to parse rsync files_deleted", line=line.strip())
+            elif ("Number of regular files transferred:" in line
+                    or "Number of files transferred:" in line):
+                transferred = _to_int(value)
+                if transferred is not None:
+                    stats["files_transferred"] = transferred
+                else:
+                    logger.debug("Failed to parse rsync files_transferred", line=line.strip())
             elif "Total file size:" in line:
-                try:
-                    size_str = line.split(":")[1].strip().split()[0].replace(",", "")
-                    stats["total_size"] = int(size_str)
-                except (IndexError, ValueError) as e:
-                    logger.debug("Failed to parse rsync total_size", line=line.strip(), error=str(e))
+                total_size = _to_int(value)
+                if total_size is not None:
+                    stats["total_size"] = total_size
+                else:
+                    logger.debug("Failed to parse rsync total_size", line=line.strip())
             elif "Total transferred file size:" in line:
-                try:
-                    size_str = line.split(":")[1].strip().split()[0].replace(",", "")
-                    stats["bytes_transferred"] = int(size_str)
-                except (IndexError, ValueError) as e:
-                    logger.debug("Failed to parse rsync bytes_transferred", line=line.strip(), error=str(e))
+                sent = _to_int(value)
+                if sent is not None:
+                    stats["bytes_transferred"] = sent
+                else:
+                    logger.debug("Failed to parse rsync bytes_transferred", line=line.strip())
 
         return stats
 
@@ -247,22 +600,37 @@ class SyncService:
                     completed_at=now,
                     files_transferred=stats.get("files_transferred"),
                     bytes_transferred=stats.get("bytes_transferred"),
+                    files_deleted=stats.get("files_deleted"),
                     rsync_output=output[-10000:] if len(output) > 10000 else output,
                     error_message=None if success else output[-1000:]
                 )
             )
 
-            # Update mirror status
+            # Update mirror status.
+            #
+            # last_sync_completed is NOT cleared on failure. It answers "when
+            # was this mirror last known good", which is the one question a
+            # failed sync makes urgent; overwriting it with NULL destroyed the
+            # answer at exactly the wrong moment. The failure is recorded in
+            # status, last_sync_error and the SyncJob row instead.
             mirror_update = {
                 "status": MirrorStatus.ACTIVE if success else MirrorStatus.ERROR,
-                "last_sync_completed": now if success else None,
                 "last_sync_error": None if success else output[-500:]
             }
+            if success:
+                mirror_update["last_sync_completed"] = now
 
-            if success and stats.get("total_size"):
+            # Size and file count are still only written on success. A failed
+            # run's --stats block describes the partial transfer it managed
+            # before dying, so recording it would replace a correct total with
+            # a smaller wrong one -- the same understatement this guard exists
+            # to prevent, just from the other direction. `is not None` rather
+            # than truthiness so a genuine zero (an empty upstream) is stored
+            # instead of being mistaken for a parse failure.
+            if success and stats.get("total_size") is not None:
                 mirror_update["total_size_bytes"] = stats["total_size"]
-            if success and stats.get("total_files"):
-                mirror_update["file_count"] = stats["total_files"]
+            if success and stats.get("regular_files") is not None:
+                mirror_update["file_count"] = stats["regular_files"]
 
             await session.execute(
                 update(Mirror)
