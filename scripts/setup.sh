@@ -81,10 +81,10 @@ fi
 # Production requires domain and email
 if [[ "$MODE" == "production" ]]; then
     if [[ -z "$DOMAIN" ]]; then
-        read -p "Enter your domain name (e.g., mirror.example.com): " DOMAIN
+        read -r -p "Enter your domain name (e.g., mirror.example.com): " DOMAIN
     fi
     if [[ -z "$ADMIN_EMAIL" ]]; then
-        read -p "Enter admin email for SSL certificates: " ADMIN_EMAIL
+        read -r -p "Enter admin email for SSL certificates: " ADMIN_EMAIL
     fi
     if [[ -z "$DOMAIN" || -z "$ADMIN_EMAIL" ]]; then
         log_error "Domain and email are required for production mode"
@@ -163,6 +163,8 @@ install_docker() {
     chmod a+r /etc/apt/keyrings/docker.gpg
 
     # Add the Docker repository
+    # shellcheck disable=SC1091  # /etc/os-release lives on the target
+    # host, not in this repo, so shellcheck cannot follow it.
     echo \
       "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
       $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
@@ -197,6 +199,8 @@ else
                 install -m 0755 -d /etc/apt/keyrings
                 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
                 chmod a+r /etc/apt/keyrings/docker.gpg
+                # shellcheck disable=SC1091  # /etc/os-release lives on the target
+                # host, not in this repo, so shellcheck cannot follow it.
                 echo \
                   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
                   $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \

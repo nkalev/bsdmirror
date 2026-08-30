@@ -98,8 +98,15 @@ fi
 log_info "Removing any existing certificates for $DOMAIN..."
 docker compose --profile ssl run --rm certbot delete --cert-name "$DOMAIN" 2>/dev/null || true
 
-# Run certbot
-docker compose --profile ssl run --rm certbot certonly \
+# Run certbot.
+#
+# `if ! cmd; then` rather than running it bare and testing $? afterwards. This
+# script sets `set -euo pipefail` (line 5), so a failing certbot exited the
+# script immediately and the diagnostic block below was unreachable -- the
+# operator got a bare non-zero exit instead of the three things to check.
+# A command in an `if` condition is exempt from errexit, which is what makes
+# that guidance reachable.
+if ! docker compose --profile ssl run --rm certbot certonly \
     --webroot \
     --webroot-path=/var/www/certbot \
     --email "$EMAIL" \
@@ -107,9 +114,7 @@ docker compose --profile ssl run --rm certbot certonly \
     --no-eff-email \
     --force-renewal \
     $STAGING_FLAG \
-    -d "$DOMAIN"
-
-if [[ $? -ne 0 ]]; then
+    -d "$DOMAIN"; then
     log_error "Failed to obtain SSL certificate"
     log_error "Make sure:"
     log_error "  1. Your domain $DOMAIN points to this server's IP"

@@ -39,7 +39,10 @@ fi
 
 # Clean old backups
 echo "Cleaning backups older than $KEEP_DAYS days..."
-find "$BACKUP_DIR" -type f -mtime +$KEEP_DAYS -delete
+# KEEP_DAYS comes from the environment ("${KEEP_DAYS:-7}"), so quote it:
+# an unquoted value word-splits into extra find predicates, and this
+# line ends in -delete.
+find "$BACKUP_DIR" -type f -mtime "+$KEEP_DAYS" -delete
 echo "✓ Cleanup complete"
 
 # List current backups

@@ -56,6 +56,29 @@ chmod +x scripts/ssl-setup.sh
 ./scripts/ssl-setup.sh
 ```
 
+### Updating a running deployment
+
+Use `scripts/deploy.sh`, not `git pull`. It refuses to deploy a commit whose
+CI is not green, refuses to deploy on top of uncommitted edits, refuses to
+interrupt a running rsync, and verifies the result afterwards.
+
+```bash
+cd /opt/bsdmirror
+./scripts/deploy.sh                      # deploy origin/main
+./scripts/deploy.sh --ci-check-only      # just ask "is main deployable?"
+./scripts/deploy.sh --dry-run            # run every gate, change nothing
+./scripts/deploy.sh --rollback <sha>     # go back to a previous commit
+./scripts/deploy.sh --help               # all options and exit codes
+```
+
+Only `backend` and `sync` are rebuilt and recreated; `nginx`, `postgres` and
+`redis` are never touched. The CI status comes from the public GitHub
+check-runs API, so no token or deploy key is required.
+
+Exit codes: `0` deployed and verified, `1` preflight error, `2` a gate
+refused and nothing was touched, `3` the deploy failed but the old containers
+are still serving, `4` the new code is live but failed verification.
+
 ## Architecture
 
 ```

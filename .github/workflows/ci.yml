@@ -39,6 +39,10 @@ env:
   PYTHON_VERSION: '3.12'
   # docker-compose.yml, service `nginx`.
   NGINX_IMAGE: nginx:1.25-bookworm
+  # Pinned rather than using the runner's preinstalled shellcheck: a runner
+  # image bump must not be able to turn a clean tree red on its own. Bumping
+  # this is a deliberate commit, and the tree is clean at this version.
+  SHELLCHECK_IMAGE: koalaman/shellcheck:v0.11.0
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -149,12 +153,142 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
-          cache-dependency-path: backend/requirements.txt
+          # BOTH files feed this environment, so both must key the cache.
+          # With only backend/requirements.txt here, editing
+          # sync/requirements.txt restores a cache built before that edit and
+          # the job passes against packages nobody asked for -- an
+          # intermittent, environment-shaped failure that looks like flakiness.
+          cache-dependency-path: |
+            backend/requirements.txt
+            sync/requirements.txt
 
-      - name: Install backend requirements
+      # The two files overlap on eight packages (asyncpg, croniter, httpx,
+      # pydantic-settings, python-dotenv, redis, sqlalchemy, structlog). Today
+      # they agree. This makes a future disagreement a named error here rather
+      # than a pip ResolutionImpossible wall further down, and it also catches
+      # the case pip cannot: one file pinning `redis==5.0.1` while the other
+      # says `redis>=5.0`, which resolves cleanly and drifts silently.
+      #
+      # It also fails on any direct dependency that is not pinned with `==`.
+      # That is the CI half of pinning bcrypt: `bcrypt>=4.0.0` let a rebuild
+      # move the login path from 4.x to 5.0.0 unreviewed, and a pin with no
+      # gate behind it just waits to be undone.
+      - name: Requirement files must be exactly pinned and must agree
+        run: |
+          python - backend/requirements.txt sync/requirements.txt <<'PYCHECK'
+          import re, sys
+          from collections import defaultdict
+
+          def norm(name):                      # PEP 503
+              return re.sub(r"[-_.]+", "-", name).lower()
+
+          seen = defaultdict(list)
+          problems = []
+
+          for path in sys.argv[1:]:
+              with open(path) as fh:
+                  for lineno, raw in enumerate(fh, 1):
+                      line = raw.split("#", 1)[0].strip()
+                      if not line:
+                          continue
+                      if line.startswith("-"):
+                          problems.append("%s:%d: pip option lines are not supported "
+                                          "by this check: %s" % (path, lineno, line))
+                          continue
+                      m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*(.*)$", line)
+                      if not m:
+                          problems.append("%s:%d: cannot parse requirement: %s"
+                                          % (path, lineno, line))
+                          continue
+                      name, extras, spec = m.group(1), (m.group(2) or ""), m.group(3).strip()
+                      seen[norm(name)].append((path, lineno, extras, spec, line))
+
+          for name, entries in sorted(seen.items()):
+              for path, lineno, _extras, spec, line in entries:
+                  if not spec.startswith("=="):
+                      problems.append(
+                          "%s:%d: '%s' is not pinned with '=='; found '%s'. A floating "
+                          "direct dependency means the next image rebuild installs a "
+                          "version nobody reviewed."
+                          % (path, lineno, line, spec or "(no specifier)"))
+
+          # Extras may legitimately differ between the two trees. The version may not.
+          for name, entries in sorted(seen.items()):
+              if len(entries) < 2:
+                  continue
+              if len({spec for (_p, _l, _e, spec, _r) in entries}) > 1:
+                  where = "; ".join("%s:%d %s" % (p, l, r) for (p, l, _e, _s, r) in entries)
+                  problems.append(
+                      "'%s' is declared in more than one requirements file with "
+                      "different versions: %s -- update every copy in the same commit."
+                      % (name, where))
+
+          shared = sorted(n for n, e in seen.items() if len(e) > 1)
+          print("checked %d distinct packages across %d files; %d shared: %s"
+                % (len(seen), len(sys.argv) - 1, len(shared), ", ".join(shared)))
+
+          for p in problems:
+              print("::error::%s" % p)
+          if problems:
+              sys.exit(1)
+          print("all direct dependencies pinned, all shared pins agree")
+          PYCHECK
+
+      # sync/sync_service.py:15 does `from aiohttp import web` at module scope,
+      # and aiohttp is declared only in sync/requirements.txt. tests/ imports
+      # sync.sync_service, so installing backend/requirements.txt alone makes
+      # pytest die during collection with ModuleNotFoundError and run zero
+      # tests -- which is exactly what happened on 69c4131.
+      #
+      # ONE resolve across both files, not two sequential installs. Verified
+      # locally with pip 26.0.1 on two files pinning the same package to
+      # different versions: two `pip install -r` calls both exit 0 and the
+      # second silently overwrites the first, while a single call with two
+      # `-r` flags exits 1 with ResolutionImpossible. The eight shared pins
+      # make that difference load-bearing.
+      - name: Install backend and sync requirements in a single resolve
         run: |
           python -m pip install --disable-pip-version-check --upgrade pip
-          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m pip install --disable-pip-version-check \
+            -r backend/requirements.txt \
+            -r sync/requirements.txt
+
+      - name: Installed versions must match the pins that were just requested
+        run: |
+          # Guards the cache path specifically: if a stale wheel cache or a
+          # transitive constraint moved something off its pin, say so here
+          # rather than letting the suite pass against an environment the
+          # requirements files never described.
+          python - backend/requirements.txt sync/requirements.txt <<'PYVERIFY'
+          import re, sys
+          from importlib.metadata import version, PackageNotFoundError
+
+          fail = 0
+          checked = 0
+          for path in sys.argv[1:]:
+              for raw in open(path):
+                  line = raw.split("#", 1)[0].strip()
+                  if not line or line.startswith("-"):
+                      continue
+                  m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==(.+)$", line)
+                  if not m:
+                      continue
+                  name, want = m.group(1), m.group(2).strip()
+                  try:
+                      got = version(name)
+                  except PackageNotFoundError:
+                      print("::error::%s pins %s==%s but it is not installed"
+                            % (path, name, want))
+                      fail = 1
+                      continue
+                  checked += 1
+                  if got != want:
+                      print("::error::%s pins %s==%s but %s is installed"
+                            % (path, name, want, got))
+                      fail = 1
+          print("verified %d pinned packages against the installed environment" % checked)
+          sys.exit(fail)
+          PYVERIFY
 
       - name: pytest
         run: |
@@ -324,6 +458,66 @@ jobs:
           exit "$rc"
 
   # ---------------------------------------------------------------------------
+  # shellcheck
+  # ---------------------------------------------------------------------------
+  #
+  # scripts/ holds this repo's deploy-time behaviour -- setup.sh writes .env,
+  # ssl-setup.sh generates the nginx config that serves production, deploy.sh is
+  # the gate every deploy now passes through -- and none of it was linted.
+  #
+  # The three findings fixed to make this job green on its first run are a fair
+  # sample of what it catches, and none of them are style:
+  #   backup.sh      unquoted $KEEP_DAYS on a line ending in `find -delete`
+  #   ssl-setup.sh   `if [[ $? -ne 0 ]]` after a bare command, under `set -e`,
+  #                  so the certbot diagnostics were unreachable
+  #   deploy.sh      SC2086 word-splitting a GitHub API response (caught in
+  #                  review, before the file was ever committed)
+  #
+  # Run at shellcheck's default severity, which is the strictest: the tree is
+  # clean there, so there is no reason to lower it. The only suppression in the
+  # repo is two SC1091 for `. /etc/os-release`, which is on the target host and
+  # cannot be followed from a checkout.
+  shellcheck:
+    name: shellcheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull ${{ env.SHELLCHECK_IMAGE }}
+        run: docker pull -q "$SHELLCHECK_IMAGE"
+
+      - name: shellcheck scripts/*.sh
+        run: |
+          docker run --rm "$SHELLCHECK_IMAGE" --version
+
+          # Glob, not a hardcoded list: a new scripts/*.sh is linted the day it
+          # lands rather than the day it breaks a deploy.
+          shopt -s nullglob
+          files=(scripts/*.sh)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::no scripts/*.sh found -- the glob or the directory moved"
+            exit 1
+          fi
+          echo "linting ${#files[@]} script(s): ${files[*]}"
+
+          set +e
+          docker run --rm -v "$PWD:/mnt:ro" -w /mnt "$SHELLCHECK_IMAGE" \
+            --format=gcc "${files[@]}" >shellcheck.out
+          rc=$?
+          set -e
+          cat shellcheck.out
+
+          # gcc format is  path:line:col: severity: message [SCxxxx]
+          sed -E 's|^([^:]+):([0-9]+):([0-9]+): [a-z]+: (.*)$|::error file=\1,line=\2,col=\3::\4|' \
+            shellcheck.out || true
+
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::shellcheck reported findings. Fix them, or add a narrowly scoped '# shellcheck disable=SCxxxx' on the line above with a reason."
+            exit 1
+          fi
+          echo "ok: ${#files[@]} script(s) clean"
+
+  # ---------------------------------------------------------------------------
   # Aggregate status
   # ---------------------------------------------------------------------------
   # One check to require in branch protection. Without this, adding a job later
@@ -332,7 +526,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [ruff, bandit, pytest, compose, nginx]
+    needs: [ruff, bandit, pytest, compose, nginx, shellcheck]
     runs-on: ubuntu-24.04
     steps:
       - name: Fail unless every job succeeded
