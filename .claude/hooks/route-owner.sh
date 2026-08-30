@@ -41,7 +41,7 @@ case "$rel" in
   *.css|frontend/public/*.html|frontend/public/img/*)
     owner="web-designer"
     gate="Both light and dark themes checked, mobile + desktop, WCAG AA contrast, no new hardcoded values outside the tokens."
-    trap_note="Two independent token sets exist: style.css (147 custom properties) and admin.css (117), diverging on the same concepts (--card-bg vs --bg-card). Both @import Google Fonts, which the production CSP does not permit." ;;
+    trap_note="Two independent token sets exist: style.css and admin.css each declare their own token set (32 and 27 unique properties), diverging on the same concepts (--card-bg vs --bg-card). Both @import Google Fonts, which the production CSP does not permit." ;;
   frontend/public/js/*)
     owner="developer"
     gate="Behavior verified in the browser; escaping via the helper."

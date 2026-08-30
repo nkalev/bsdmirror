@@ -30,7 +30,7 @@ When you change markup inside `admin.js`, changing an interpolated value's escap
 
 ## Known state — read before proposing work
 
-- **There are two independent design systems.** `style.css` defines 147 custom properties, `admin.css` defines 117. They overlap but diverge — the same concept is `--card-bg` in one and `--bg-card` in the other. Neither imports the other; there is no shared source of truth.
+- **There are two independent design systems.** `style.css` and `admin.css` each declare their own token set (32 and 27 unique custom properties at the time of writing). They overlap but diverge — the same concept is `--card-bg` in one and `--bg-card` in the other. Neither imports the other; there is no shared source of truth.
 - **Both stylesheets `@import` Google Fonts at CSS level** (`style.css:4`, `admin.css:4`), and `admin/index.html` also links them in `<head>`. The production CSP at `nginx/sites/default.conf:55` permits neither. This currently works only because that CSP is being dropped by an nginx bug — see `appsec-reviewer`. **Coordinate before changing font loading**, and assume the CSP will be fixed.
 - **Theming is manual.** `main.js` toggles `data-theme` on the root element and persists to `localStorage`; some status colors are set from JS with hardcoded hex fallbacks (`main.js:79`, `:87`, `:95`). Prefer tokens over new hardcoded values.
 - **Version drift:** the footer shows `v1.0.1` (`index.html:285`) while the backend reports `1.0.0`.
