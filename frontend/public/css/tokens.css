@@ -1,0 +1,208 @@
+/* BSD Mirror - Design Tokens */
+/* Single source of truth for colour, type, spacing, radius and motion.
+   Consumed by both surfaces via <link>, ahead of the page stylesheet:
+
+     public site   frontend/public/index.html        -> tokens.css, then css/style.css
+     admin panel   frontend/public/admin/index.html  -> tokens.css, then admin/css/admin.css
+
+   Do not declare custom properties in style.css or admin.css. Add them here.
+
+   ---------------------------------------------------------------------------
+   Layers
+   ---------------------------------------------------------------------------
+   1. PRIMITIVES (--c-*)   Raw palette. No meaning attached, never used directly
+                           by a component rule — semantic tokens reference these.
+   2. INVARIANTS           Semantics that do not change with theme or surface.
+   3. LIGHT THEME          Semantics for :root, i.e. the public site's default.
+   4. DARK THEME           Semantics for [data-theme="dark"], set by main.js.
+   5. ADMIN SURFACE        The five tokens where the admin panel genuinely
+                           disagrees with the public site. See notes below.
+
+   ---------------------------------------------------------------------------
+   How a surface picks its values
+   ---------------------------------------------------------------------------
+   Theme and surface are independent axes, both expressed on <html>:
+
+     <html>                                    public site, light
+     <html data-theme="dark">                  public site, dark  (main.js)
+     <html data-theme="dark" data-surface="admin">   admin panel
+
+   The admin panel has no theme toggle; it is dark-only and always has been.
+   It carries data-theme="dark" statically so it consumes the same dark theme
+   the public site does, instead of maintaining a second copy of those values.
+
+   Layers 3-5 all have specificity (0,1,0), so ordering in this file decides:
+   dark overrides light, admin overrides dark. Keep them in this order.
+
+   ---------------------------------------------------------------------------
+   Deliberate divergence (layer 5)
+   ---------------------------------------------------------------------------
+   These are design decisions, not merge accidents. The admin panel is a denser,
+   more utilitarian surface than the marketing-oriented public site:
+
+     --header-height   72px -> 64px   admin chrome is tighter
+     --radius-md       12px -> 10px   smaller corners suit dense controls
+     --radius-lg       16px -> 14px   ditto
+     --accent-secondary  red -> orange  admin's gradient stays inside the orange
+                                        family; the public site's runs orange->red
+
+   --accent-gradient is derived from --accent-primary and --accent-secondary, so
+   overriding the latter is enough to retune the gradient for the admin surface.
+*/
+
+/* ===========================================================================
+   1. PRIMITIVES
+   Raw palette values. Reference these from the semantic layers only.
+   =========================================================================== */
+
+:root {
+    /* Warm neutrals - the public site's light surfaces */
+    --c-white: #FFFFFF;
+    --c-sand-50: #FFFBF5;
+    --c-sand-100: #F5F0E8;
+    --c-sand-200: #EDE6D9;
+    --c-sand-300: #E0D8CC;
+
+    /* Cool neutrals - dark surfaces, and text on light surfaces */
+    --c-navy-900: #0D0D1A;
+    --c-navy-800: #1A1A2E;
+    --c-navy-700: #2A2A40;
+    --c-slate-600: #4A4E69;
+    --c-slate-500: #606078;
+    --c-slate-400: #8D8DA0;
+    --c-slate-300: #A0A0B8;
+    --c-slate-50: #E8E8F0;
+
+    /* Brand accents */
+    --c-orange-500: #F48C06;
+    --c-orange-600: #E85D04;
+    --c-red-500: #EF4444;
+    --c-red-700: #D62828;
+    --c-amber-400: #E8B059;
+
+    /* Feedback hues */
+    --c-green-500: #22c55e;
+    --c-amber-500: #F59E0B;
+    --c-sky-500: #0ea5e9;
+
+    /* BSD distribution identity */
+    --c-freebsd: #AB2B28;
+    --c-netbsd: #FF6600;
+    --c-openbsd: #F2CA30;
+}
+
+/* ===========================================================================
+   2. INVARIANTS
+   Same on every theme and every surface.
+   =========================================================================== */
+
+:root {
+    /* Typography.
+       The Inter / JetBrains Mono webfonts are loaded separately by each page;
+       that loading is coupled to the CSP work and is not configured here. */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+    /* Motion */
+    --transition-fast: 150ms ease;
+    --transition-base: 300ms ease;
+
+    /* Radius. --radius-md and --radius-lg are retuned for the admin surface. */
+    --radius-sm: 6px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 24px;
+
+    /* Layout. --header-height is retuned for the admin surface. */
+    --container-max: 1200px;
+    --header-height: 72px;
+    --sidebar-width: 260px;
+
+    /* Mirror / sync status.
+       main.js reads --status-healthy and --status-error directly
+       (main.js:79, :95, :100) - do not rename without updating it. */
+    --status-healthy: var(--c-green-500);
+    --status-syncing: var(--c-amber-500);
+    --status-error: var(--c-red-500);
+    --status-info: var(--c-sky-500);
+
+    /* BSD distribution identity */
+    --freebsd-color: var(--c-freebsd);
+    --netbsd-color: var(--c-netbsd);
+    --openbsd-color: var(--c-openbsd);
+}
+
+/* ===========================================================================
+   3. LIGHT THEME  (public site default)
+   =========================================================================== */
+
+:root {
+    --bg-primary: var(--c-sand-50);
+    --bg-secondary: var(--c-sand-100);
+    --bg-tertiary: var(--c-sand-200);
+    --bg-card: var(--c-white);
+
+    --text-primary: var(--c-navy-800);
+    --text-secondary: var(--c-slate-600);
+    --text-muted: var(--c-slate-400);
+
+    --accent-primary: var(--c-orange-600);
+    --accent-secondary: var(--c-red-700);
+    --accent-gradient: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+
+    --border-color: var(--c-sand-300);
+
+    /* Tinted with the navy-800 ink rather than pure black, so shadows stay warm.
+       Alpha variants are written literally: there is no build step to derive
+       them, and color-mix() would change the resolved value. */
+    --shadow-card: 0 4px 6px -1px rgba(26, 26, 46, 0.06), 0 2px 4px -2px rgba(26, 26, 46, 0.04);
+    --shadow-card-hover: 0 20px 25px -5px rgba(26, 26, 46, 0.08), 0 8px 10px -6px rgba(26, 26, 46, 0.04);
+
+    /* Terminal-style code blocks (public site only) */
+    --terminal-bg: var(--c-navy-800);
+    --terminal-text: var(--c-amber-400);
+    --terminal-prompt: var(--c-green-500);
+}
+
+/* ===========================================================================
+   4. DARK THEME
+   Applied by main.js on the public site; static on the admin panel.
+   =========================================================================== */
+
+[data-theme="dark"] {
+    --bg-primary: var(--c-navy-900);
+    --bg-secondary: var(--c-navy-800);
+    --bg-tertiary: var(--c-navy-700);
+    --bg-card: var(--c-navy-800);
+
+    --text-primary: var(--c-slate-50);
+    --text-secondary: var(--c-slate-300);
+    --text-muted: var(--c-slate-500);
+
+    --accent-primary: var(--c-orange-500);
+    --accent-secondary: var(--c-red-500);
+
+    --border-color: var(--c-navy-700);
+
+    --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
+    --shadow-card-hover: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+
+    --terminal-bg: var(--c-navy-900);
+    --terminal-text: var(--c-orange-500);
+}
+
+/* ===========================================================================
+   5. ADMIN SURFACE
+   Only the tokens the admin panel deliberately disagrees on. Everything else
+   it inherits from layers 1-4. Must stay after layer 4 to win the cascade.
+   =========================================================================== */
+
+[data-surface="admin"] {
+    --header-height: 64px;
+
+    --radius-md: 10px;
+    --radius-lg: 14px;
+
+    /* Gradient stays within the orange family instead of running orange->red. */
+    --accent-secondary: var(--c-orange-600);
+}

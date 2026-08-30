@@ -1,48 +1,11 @@
 /* BSD Mirror Admin Panel - Styles */
 /* BSD-themed dark palette: Orange / Red / Dark Navy */
+/* Design tokens live in /css/tokens.css, linked ahead of this file in admin/index.html.
+   The admin surface is dark-only: <html> carries data-theme="dark" data-surface="admin",
+   which selects the shared dark theme plus the admin-specific overrides.
+   Do not declare custom properties here. */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
-:root {
-    /* Colors - Dark theme (default for admin) */
-    --bg-primary: #0D0D1A;
-    --bg-secondary: #1A1A2E;
-    --bg-tertiary: #2A2A40;
-    --bg-card: #1A1A2E;
-    --text-primary: #E8E8F0;
-    --text-secondary: #A0A0B8;
-    --text-muted: #606078;
-    --accent-primary: #F48C06;
-    --accent-secondary: #E85D04;
-    --accent-gradient: linear-gradient(135deg, #F48C06 0%, #E85D04 100%);
-    --border-color: #2A2A40;
-    --success: #22c55e;
-    --warning: #f59e0b;
-    --error: #ef4444;
-    --info: #0ea5e9;
-
-    /* BSD identity colors */
-    --freebsd-color: #AB2B28;
-    --netbsd-color: #FF6600;
-    --openbsd-color: #F2CA30;
-
-    /* Layout */
-    --sidebar-width: 260px;
-    --header-height: 64px;
-
-    /* Typography */
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-
-    /* Transitions */
-    --transition-fast: 150ms ease;
-    --transition-base: 300ms ease;
-
-    /* Border radius */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-}
 
 /* Reset */
 *,
@@ -307,12 +270,12 @@ body {
 
 .stat-card-trend.up {
     background: rgba(34, 197, 94, 0.2);
-    color: var(--success);
+    color: var(--status-healthy);
 }
 
 .stat-card-trend.down {
     background: rgba(239, 68, 68, 0.2);
-    color: var(--error);
+    color: var(--status-error);
 }
 
 .stat-card-value {
@@ -374,17 +337,17 @@ tr:hover td {
 
 .status-badge.active {
     background: rgba(34, 197, 94, 0.2);
-    color: var(--success);
+    color: var(--status-healthy);
 }
 
 .status-badge.syncing {
     background: rgba(245, 158, 11, 0.2);
-    color: var(--warning);
+    color: var(--status-syncing);
 }
 
 .status-badge.error {
     background: rgba(239, 68, 68, 0.2);
-    color: var(--error);
+    color: var(--status-error);
 }
 
 .status-badge.disabled {
@@ -470,7 +433,7 @@ tr:hover td {
 }
 
 .btn-danger {
-    background: var(--error);
+    background: var(--status-error);
     color: white;
 }
 
@@ -646,8 +609,8 @@ tr:hover td {
 
 .login-error {
     background: rgba(239, 68, 68, 0.2);
-    border: 1px solid var(--error);
-    color: var(--error);
+    border: 1px solid var(--status-error);
+    color: var(--status-error);
     padding: 12px;
     border-radius: var(--radius-md);
     margin-bottom: 16px;
@@ -690,15 +653,15 @@ tr:hover td {
 }
 
 .toast.success {
-    border-left: 3px solid var(--success);
+    border-left: 3px solid var(--status-healthy);
 }
 
 .toast.error {
-    border-left: 3px solid var(--error);
+    border-left: 3px solid var(--status-error);
 }
 
 .toast.warning {
-    border-left: 3px solid var(--warning);
+    border-left: 3px solid var(--status-syncing);
 }
 
 /* Responsive */
