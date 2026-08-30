@@ -41,6 +41,7 @@ from sync.sync_service import (
     SyncStatus,
     _classify_partial_transfer,
     _is_rsync_temp_path,
+    _VANISHED_RE,
 )
 
 # ---------------------------------------------------------------------------
@@ -51,13 +52,19 @@ from sync.sync_service import (
 # "file has vanished" lines are the temp files the upstream mirror deleted
 # while it was itself syncing; each is an rsync temp file (leading dot, random
 # six-character suffix), not a file the mirror was ever meant to hold.
+#
+# The trailing " (in OpenBSD)" on those lines is not decoration: it is what
+# rsync 3.x emits, and every fixture in this file used to omit it because the
+# sample they were transcribed from had been filtered through a grep that cut
+# at the closing quote. See the job 619 section at the bottom -- that omission
+# is what made the classifier reject a run it should have tolerated.
 JOB_615_EXIT_24 = """\
 receiving incremental file list
-file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.base80.tgz.lLPdyl"
-file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.debug-spidermonkey140-140.14.0v1.tgz.2ML90i"
-file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.gcc-11.2.0p14.tgz.KjR1mQ"
-file has vanished: "/pub/OpenBSD/snapshots/packages/i386/.llvm-16.0.6p9.tgz.9wKzTb"
-file has vanished: "/pub/OpenBSD/snapshots/packages/arm64/.rust-1.78.0.tgz.Xq4mVn"
+file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.base80.tgz.lLPdyl" (in OpenBSD)
+file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.debug-spidermonkey140-140.14.0v1.tgz.2ML90i" (in OpenBSD)
+file has vanished: "/pub/OpenBSD/snapshots/packages/amd64/.gcc-11.2.0p14.tgz.KjR1mQ" (in OpenBSD)
+file has vanished: "/pub/OpenBSD/snapshots/packages/i386/.llvm-16.0.6p9.tgz.9wKzTb" (in OpenBSD)
+file has vanished: "/pub/OpenBSD/snapshots/packages/arm64/.rust-1.78.0.tgz.Xq4mVn" (in OpenBSD)
 
 Number of files: 571,398 (reg: 567,277, dir: 4,110, link: 11)
 Number of created files: 567,277 (reg: 567,277)
@@ -108,8 +115,8 @@ rsync: [sender] send_files failed to open "/snapshots/arm64/.base80.tgz.XVIpnS" 
 rsync: [sender] send_files failed to open "/snapshots/i386/.install80.iso.rdGCa3" (in OpenBSD): Permission denied (13)
 rsync: [sender] send_files failed to open "/snapshots/packages/aarch64/.chromium-151.0.7922.169.tgz.l4HNjI" (in OpenBSD): Permission denied (13)
 rsync: [sender] send_files failed to open "/snapshots/powerpc64/.install80.iso.XfGnWV" (in OpenBSD): Permission denied (13)
-file has vanished: "/snapshots/packages/amd64/.base80.tgz.lLPdyl"
-file has vanished: "/snapshots/i386/.install80.iso.9wKzTb"
+file has vanished: "/snapshots/packages/amd64/.base80.tgz.lLPdyl" (in OpenBSD)
+file has vanished: "/snapshots/i386/.install80.iso.9wKzTb" (in OpenBSD)
 
 Number of files: 571,398 (reg: 567,277, dir: 4,110, link: 11)
 Number of created files: 0
@@ -128,7 +135,7 @@ rsync error: some files/attrs were not transferred (code 23) at main.c(1338) [se
 REAL_PERMISSION_ERROR_EXIT_23 = """\
 receiving incremental file list
 rsync: [sender] send_files failed to open "/snapshots/amd64/base80.tgz" (in OpenBSD): Permission denied (13)
-file has vanished: "/snapshots/arm64/.base80.tgz.XVIpnS"
+file has vanished: "/snapshots/arm64/.base80.tgz.XVIpnS" (in OpenBSD)
 
 Number of files: 571,398 (reg: 567,277, dir: 4,110, link: 11)
 Total file size: 2,628,302,118,514 bytes
@@ -918,3 +925,175 @@ async def test_subprocess_failure_is_caught_and_reported_as_a_failed_job(
     assert m.status is MirrorStatus.ERROR
     # Still not erased, even on the path where there is no rsync at all.
     assert _naive(m.last_sync_completed) == _naive(PREVIOUS_SYNC)
+
+
+# ---------------------------------------------------------------------------
+# Job 619: the trailing "(in MODULE)" clause on vanished lines
+# ---------------------------------------------------------------------------
+#
+# These two lines are verbatim and unsanitised, copied out of the structured log
+# of job 619. Every earlier fixture in this file carried a shortened form of this
+# shape -- the trailing " (in OpenBSD)" was lost to a `grep -oE '...[^"]*'` that
+# stopped at the closing quote -- so the pattern was written against output that
+# rsync never actually produces. Nothing in the suite could catch that, because
+# the fixtures and the regex shared the same wrong assumption.
+#
+# Keep these two strings verbatim. They are the only test data in this file
+# taken directly from a production log rather than transcribed or reconstructed.
+JOB_619_VANISHED_VERBATIM = (
+    'file has vanished: "/snapshots/packages/amd64/'
+    '.geckodriver-0.31.0p1.tgz.S5EDPJ" (in OpenBSD)',
+    'file has vanished: "/snapshots/packages/riscv64/'
+    '.dgen-sdl-1.33p2-debugger.tgz.Bk5dNR" (in OpenBSD)',
+)
+
+
+@pytest.mark.parametrize("line", JOB_619_VANISHED_VERBATIM)
+def test_vanished_line_with_module_clause_is_recognised(line):
+    """rsync appends " (in MODULE)" after the closing quote. The pattern
+    anchored $ immediately after the quote, so these landed in `unrecognised`
+    and failed job 619 -- a run whose every error line was benign."""
+    match = _VANISHED_RE.match(line)
+    assert match is not None, "verbatim rsync output must parse"
+    assert match.group("path").endswith(".tgz.S5EDPJ") or match.group(
+        "path"
+    ).endswith(".tgz.Bk5dNR")
+    assert '"' not in match.group("path"), "the capture must not run past the quote"
+    assert "(in OpenBSD)" not in match.group("path"), "module clause is not part of the path"
+
+
+def test_vanished_line_without_module_clause_still_parses():
+    """Older rsync omits the clause entirely. Both shapes must work; the fix
+    must not simply move the anchor to require the module."""
+    line = 'file has vanished: "/snapshots/packages/amd64/.base80.tgz.lLPdyl"'
+    match = _VANISHED_RE.match(line)
+    assert match is not None
+    assert match.group("path") == "/snapshots/packages/amd64/.base80.tgz.lLPdyl"
+
+
+def test_vanished_path_capture_stops_at_the_first_quote():
+    """A greedy .* would swallow the closing quote and everything up to a later
+    one, silently producing a path that is not a path."""
+    line = 'file has vanished: "/a/.x.AAAAAA" and "/b/.y.BBBBBB"'
+    match = _VANISHED_RE.match(line)
+    if match is not None:
+        assert match.group("path") == "/a/.x.AAAAAA"
+
+
+def test_vanished_line_with_trailing_junk_is_still_rejected():
+    """The anchor has to stay in some form. A diagnostic carrying unexplained
+    trailing text is not something we understand, and unrecognised must keep
+    meaning unrecognised."""
+    assert _VANISHED_RE.match(
+        'file has vanished: "/a/.x.AAAAAA" (in OpenBSD) and then the disk caught fire'
+    ) is None
+    assert _VANISHED_RE.match('file has vanished: "/a/.x.AAAAAA" unexpected trailer') is None
+
+
+JOB_619_EXIT_23 = """\
+receiving incremental file list
+rsync: [sender] send_files failed to open "/patches/.2.2.tar.gz.Yf874d" (in OpenBSD): Permission denied (13)
+rsync: [sender] send_files failed to open "/snapshots/amd64/.install80.img.cG99qU" (in OpenBSD): Permission denied (13)
+rsync: [sender] send_files failed to open "/snapshots/arm64/.base80.tgz.XVIpnS" (in OpenBSD): Permission denied (13)
+rsync: [sender] send_files failed to open "/snapshots/i386/.install80.iso.rdGCa3" (in OpenBSD): Permission denied (13)
+rsync: [sender] send_files failed to open "/snapshots/packages/aarch64/.chromium-151.0.7922.169.tgz.l4HNjI" (in OpenBSD): Permission denied (13)
+rsync: [sender] send_files failed to open "/snapshots/powerpc64/.install80.iso.XfGnWV" (in OpenBSD): Permission denied (13)
+%s
+%s
+
+Number of files: 571,398 (reg: 567,277, dir: 4,110, link: 11)
+Number of created files: 0
+Number of deleted files: 2 (reg: 2)
+Number of regular files transferred: 41
+Total file size: 2,628,302,118,514 bytes
+Total transferred file size: 78,381,056 bytes
+
+sent 402,112 bytes  received 78,772,224 bytes  1,204,112.44 bytes/sec
+total size is 2,628,302,118,514  speedup is 33,201.14
+rsync error: some files/attrs were not transferred (code 23) at main.c(1338) [sender=3.2.7]
+""" % JOB_619_VANISHED_VERBATIM
+
+
+def test_job_619_is_fully_attributable():
+    """The post-deploy verification run. Six temp files and two vanished files,
+    all benign; it was recorded FAILED and left OpenBSD at 43 GB."""
+    verdict = _classify_partial_transfer(JOB_619_EXIT_23, 23)
+
+    assert verdict.unrecognised == ()
+    assert len(verdict.upstream_temp_files) == 6
+    assert len(verdict.vanished) == 2
+    assert verdict.tolerable is True
+
+
+async def test_job_619_end_to_end_is_recorded_completed(service, rsync, factory, mirror):
+    rsync(23, JOB_619_EXIT_23)
+
+    await run_job(service, mirror)
+
+    m, j = reload(factory, mirror["mirror_id"], mirror["job_id"])
+    assert j.status is SyncStatus.COMPLETED
+    assert m.status is MirrorStatus.ACTIVE
+    assert m.total_size_bytes == 2_628_302_118_514
+    assert m.file_count == 567_277
+
+
+# Same run, as an rsync old enough to omit the module clause would report it.
+# Both shapes have to reach `tolerable`, so the fix cannot be "require (in X)".
+OLD_RSYNC_EXIT_23_NO_MODULE_CLAUSE = """\
+rsync: send_files failed to open "/patches/.2.2.tar.gz.Yf874d": Permission denied (13)
+file has vanished: "/snapshots/packages/amd64/.geckodriver-0.31.0p1.tgz.S5EDPJ"
+rsync error: some files/attrs were not transferred (code 23) at main.c(1338)
+"""
+
+
+def test_both_module_clause_shapes_are_tolerated_end_to_end():
+    """The clause is optional on both benign branches, and its presence or
+    absence must not change the verdict."""
+    with_clause = _classify_partial_transfer(JOB_619_EXIT_23, 23)
+    without_clause = _classify_partial_transfer(OLD_RSYNC_EXIT_23_NO_MODULE_CLAUSE, 23)
+
+    assert with_clause.tolerable is True
+    assert without_clause.tolerable is True
+    assert without_clause.unrecognised == ()
+    assert len(without_clause.upstream_temp_files) == 1
+    assert len(without_clause.vanished) == 1
+
+
+def test_the_module_clause_is_not_absorbed_into_the_path():
+    """If " (in OpenBSD)" were captured as part of the path, the temp-file
+    structural check downstream would be reading a basename that ends in
+    ")" and would reject every one of them."""
+    verdict = _classify_partial_transfer(JOB_619_EXIT_23, 23)
+
+    for path in verdict.vanished + verdict.upstream_temp_files:
+        assert "(in " not in path
+        assert not path.endswith(")")
+        assert _is_rsync_temp_path(path), path
+
+
+def test_send_files_path_capture_cannot_run_across_two_quoted_spans():
+    """A filename may legally contain a double quote, so a diagnostic can carry
+    two quoted spans. With a `.*?` capture the regex backtracks past the first
+    closing quote and returns "/snapshots/amd64/base80.tgz" and "/x/.decoy.AAAAAA"
+    as one path; rsplit("/") then yields the temp-shaped basename `.decoy.AAAAAA`
+    and a permission error on REAL mirror content is waved through as benign.
+
+    `[^"]*` cannot cross a quote, so the line matches nothing, falls to
+    unrecognised, and the run fails. This is the same defect class as the
+    vanished-line anchor: the capture has to end where the quoted span ends.
+    """
+    line = (
+        'rsync: [sender] send_files failed to open '
+        '"/snapshots/amd64/base80.tgz" and "/x/.decoy.AAAAAA": Permission denied (13)'
+    )
+    output = (
+        line
+        + '\nfile has vanished: "/x/.real.S5EDPJ" (in OpenBSD)'
+        + "\nrsync error: some files/attrs were not transferred (code 23) at main.c(1338)\n"
+    )
+
+    verdict = _classify_partial_transfer(output, 23)
+
+    assert verdict.tolerable is False
+    assert line in verdict.unrecognised
+    assert verdict.upstream_temp_files == ()

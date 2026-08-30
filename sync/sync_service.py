@@ -103,15 +103,33 @@ RSYNC_EXIT_PARTIAL_TRANSFER = 23
 # one, "base80.tgz" has no leading dot.
 _RSYNC_TEMP_BASENAME_RE = re.compile(r"^\.(?P<stem>[^/]+)\.(?P<suffix>[A-Za-z0-9]{6})$")
 
-# `file has vanished: "/path"`
-_VANISHED_RE = re.compile(r'^file has vanished: "(?P<path>.*)"$')
+# `file has vanished: "/path" (in OpenBSD)`
+#
+# The trailing " (in MODULE)" clause is what rsync 3.x actually emits and older
+# rsync omits, so both shapes have to parse. An earlier revision anchored $
+# straight after the closing quote, having been written against log lines that
+# had been through `grep -oE '...[^"]*'` -- which stops at the quote and hid the
+# clause. Job 619 then failed on two lines that begin "file has vanished:",
+# because the pattern rejected the only shape production ever produces.
+#
+# The clause is modelled exactly as _SEND_FAILED_OPEN_RE below already models
+# it, deliberately: one convention for one piece of rsync syntax.
+#
+# The path is [^"]* rather than .* so the capture stops at the closing quote. A
+# greedy .* on a line carrying two quoted spans runs across both and yields a
+# "path" that is not one.
+#
+# $ stays. The anchor is the safety property: a diagnostic with unexplained
+# trailing text is not one we understand, and it has to fall through to
+# `unrecognised` rather than be waved past on a prefix match.
+_VANISHED_RE = re.compile(r'^file has vanished: "(?P<path>[^"]*)"(?: \(in [^)]*\))?$')
 
 # `rsync: [sender] send_files failed to open "/p" (in OpenBSD): Permission denied (13)`
 # The [sender] tag and the (in MODULE) clause are both absent on older rsync.
 # The errno is pinned to 13: this branch exists for the 0600-temp-file race and
 # nothing else, so a different errno on the same path shape still fails.
 _SEND_FAILED_OPEN_RE = re.compile(
-    r'^rsync: (?:\[[a-z]+\] )?send_files failed to open "(?P<path>.*?)"'
+    r'^rsync: (?:\[[a-z]+\] )?send_files failed to open "(?P<path>[^"]*)"'
     r'(?: \(in [^)]*\))?: Permission denied \(13\)$'
 )
 
