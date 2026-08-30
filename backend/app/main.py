@@ -3,6 +3,7 @@ BSD Mirrors Backend API
 
 FastAPI application for managing BSD mirror website.
 """
+import logging
 import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
@@ -22,6 +23,20 @@ from app.models.user import User, UserRole
 from app.models.mirror import Mirror, MirrorType, MirrorStatus
 from app.models.setting import Setting
 from app.api import health, auth, mirrors, admin, stats
+
+# Configure stdlib logging before structlog: structlog's filter_by_level checks
+# the *stdlib* logger's effective level, and the root logger defaults to WARNING,
+# which silently discards every logger.info() call. An unrecognised LOG_LEVEL
+# falls back to INFO instead of raising at import time.
+_log_level = logging.getLevelName(str(settings.LOG_LEVEL).strip().upper())
+if not isinstance(_log_level, int):
+    _log_level = logging.INFO
+
+# format="%(message)s" keeps the line exactly as structlog's JSONRenderer emits it.
+# The level is set on the "app" package logger (every module here logs under
+# app.*) so third-party loggers keep the levels they have today.
+logging.basicConfig(format="%(message)s")
+logging.getLogger("app").setLevel(_log_level)
 
 # Configure structured logging
 structlog.configure(

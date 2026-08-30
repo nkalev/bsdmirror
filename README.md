@@ -98,8 +98,21 @@ Key environment variables in `.env`:
 | `SYNC_SCHEDULE` | Cron schedule for sync | `0 4 * * *` |
 | `SYNC_BANDWIDTH_LIMIT` | Rsync bandwidth limit (KB/s, 0=unlimited) | `0` |
 | `MIRROR_DATA_PATH` | Local path for mirror data | `/data/mirrors` |
+| `LOG_LEVEL` | Log level for the backend and sync services (`DEBUG`, `INFO`, `WARNING`, `ERROR`) | `INFO` |
 
 Upstream URLs can also be changed from the admin panel without restarting services.
+
+### Logging
+
+Both services write newline-delimited JSON to stderr, so `docker compose logs backend`
+and `docker compose logs sync` are one JSON object per line.
+
+`LOG_LEVEL` sets the level of the services' own loggers (`app.*` in the backend, the
+sync service's module logger) and is applied to stdlib `logging`, which is what
+structlog's `filter_by_level` processor tests against. Third-party libraries keep
+their own default levels, so raising `LOG_LEVEL` to `DEBUG` does not turn on
+SQLAlchemy statement logging or aiohttp access logs. An unrecognised value falls
+back to `INFO` rather than failing at startup.
 
 ## Security
 

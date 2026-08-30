@@ -5,17 +5,32 @@ Handles scheduled rsync synchronization of BSD mirrors.
 Polls for pending sync jobs created by the admin panel.
 """
 import asyncio
+import logging
 import os
 import signal
-import subprocess
 from datetime import datetime, timezone
 from typing import Optional
 
 from aiohttp import web
 from croniter import croniter
-from sqlalchemy import select, update, text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import structlog
+
+# Configure stdlib logging before structlog: structlog's filter_by_level checks
+# the *stdlib* logger's effective level, and the root logger defaults to WARNING,
+# which silently discards every logger.info() call. An unrecognised LOG_LEVEL
+# falls back to INFO instead of raising at import time. SyncConfig is defined
+# below this point, so the env var is read directly here and mirrored there.
+_log_level = logging.getLevelName(os.getenv("LOG_LEVEL", "INFO").strip().upper())
+if not isinstance(_log_level, int):
+    _log_level = logging.INFO
+
+# format="%(message)s" keeps the line exactly as structlog's JSONRenderer emits it.
+# The level is set on this module's own logger so third-party loggers (aiohttp's
+# access log for the health endpoint, for one) keep the levels they have today.
+logging.basicConfig(format="%(message)s")
+logging.getLogger(__name__).setLevel(_log_level)
 
 # Configure logging
 structlog.configure(
@@ -39,6 +54,8 @@ POLL_INTERVAL = 10
 
 class SyncConfig:
     """Configuration from environment variables."""
+
+    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
     POSTGRES_HOST = os.getenv("POSTGRES_HOST", "postgres")
     POSTGRES_PORT = int(os.getenv("POSTGRES_PORT", "5432"))
@@ -307,7 +324,7 @@ class SyncService:
 
         async with self.session_maker() as session:
             result = await session.execute(
-                select(Mirror).where(Mirror.enabled == True)
+                select(Mirror).where(Mirror.enabled.is_(True))
             )
             mirrors = result.scalars().all()
 
@@ -452,9 +469,16 @@ class SyncService:
 # Import models (for SQLAlchemy metadata)
 # NOTE: These must match the backend's model definitions exactly,
 # including using the same PostgreSQL enum types.
-import enum as python_enum
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, BigInteger, Enum, ForeignKey
-from sqlalchemy.orm import declarative_base
+#
+# E402 (import not at top of file) is suppressed on the next three lines only.
+# These imports sit below the code that uses them because this file duplicates
+# backend/app/models/ by hand. Moving them is not a formatting fix -- it is
+# Phase 4, which extracts a shared models package and deletes this whole block.
+# Delete these three noqa comments then; RUF100 will fail the build if they
+# outlive their reason.
+import enum as python_enum  # noqa: E402
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, BigInteger, Enum, ForeignKey  # noqa: E402
+from sqlalchemy.orm import declarative_base  # noqa: E402
 
 Base = declarative_base()
 
