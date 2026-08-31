@@ -9,7 +9,7 @@ from sqlalchemy import String, Boolean, DateTime, Enum as SQLEnum
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
 
-from app.core.database import Base
+from shared.models.base import Base
 
 
 class UserRole(str, Enum):

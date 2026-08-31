@@ -19,9 +19,20 @@ Two seams, both synthetic, both narrow:
     Every statement, mapping and constraint is real; only the await points are
     synthetic.
 
-The schema comes from sync_service's OWN Base, not the backend's. The two model
-sets are duplicated by hand (sync/sync_service.py, bottom of file) and this
-module tests the copy the sync container actually runs.
+The schema comes from shared/models/ -- there is now only one copy, imported by
+both services. This module used to build its tables from a second `Base` that
+sync_service declared at the bottom of its own file, and that copy typed
+mirrors.mirror_type as VARCHAR(20) where production has the Postgres enum
+`mirror_type`. So this file was exercising a table shape that has never existed
+in the database it is meant to describe, and could not have noticed: the test
+and the code under test were the same wrong copy, agreeing with each other.
+
+What that specifically changed for the fixture below: under VARCHAR(20) the
+literal "openbsd" was stored verbatim, lowercase. Under the real column it is
+coerced to the label 'OPENBSD' -- the enum members subclass str, so SQLAlchemy
+resolves the lowercase value to its member and then persists the member NAME.
+Same Python input, two different rows. The fixture now passes MirrorType.OPENBSD
+so the intent is explicit rather than resting on that coercion.
 """
 import logging
 from datetime import datetime, timezone
@@ -31,14 +42,10 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from shared.models import Base, Mirror, MirrorStatus, MirrorType, SyncJob, SyncStatus
 from sync import sync_service
 from sync.sync_service import (
-    Base,
-    Mirror,
-    MirrorStatus,
-    SyncJob,
     SyncService,
-    SyncStatus,
     _classify_partial_transfer,
     _is_rsync_temp_path,
     _VANISHED_RE,
@@ -304,7 +311,11 @@ def mirror(factory, tmp_path):
     session = factory()
     row = Mirror(
         name="OpenBSD",
-        mirror_type="openbsd",
+        # The column is the Postgres enum `mirror_type`; SQLAlchemy persists
+        # the member NAME, so this stores the label 'OPENBSD'. It read
+        # mirror_type="openbsd" while sync_service had its own VARCHAR(20)
+        # copy of this table, which stored that string as-is.
+        mirror_type=MirrorType.OPENBSD,
         upstream_url="rsync://ftp2.eu.openbsd.org/OpenBSD/",
         local_path=str(tmp_path / "openbsd"),
         enabled=True,

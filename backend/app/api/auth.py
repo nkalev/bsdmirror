@@ -22,8 +22,7 @@ from app.core.security import (
     is_token_blacklisted,
     TokenData
 )
-from app.models.user import User, UserRole
-from app.models.audit_log import AuditLog
+from shared.models import AuditLog, User, UserRole
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()

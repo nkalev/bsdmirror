@@ -9,7 +9,7 @@ from sqlalchemy import String, DateTime, BigInteger, Text, Integer, ForeignKey, 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
-from app.core.database import Base
+from shared.models.base import Base
 
 
 class SyncStatus(str, Enum):

@@ -18,6 +18,20 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import structlog
 
+# The schema, defined once, in shared/models/. This file used to redeclare
+# mirrors, sync_jobs and settings by hand at the bottom of the module, in a
+# second declarative_base(), under a comment asking that they be kept matching
+# the backend's -- which nothing checked and which had drifted seventeen ways,
+# one of them into production (798ae79).
+#
+# These imports are at the top of the file now, with everything else. They sat
+# below the code that used them only because they were definitions, not
+# imports; that reason is gone, and with it their three E402 suppressions.
+#
+# NOT IMPORTED, deliberately: Base. This service must never create the schema.
+# create_all belongs to the backend alone -- see shared/models/base.py.
+from shared.models import Mirror, MirrorStatus, Setting, SyncJob, SyncStatus
+
 # Configure stdlib logging before structlog: structlog's filter_by_level checks
 # the *stdlib* logger's effective level, and the root logger defaults to WARNING,
 # which silently discards every logger.info() call. An unrecognised LOG_LEVEL
@@ -850,76 +864,6 @@ class SyncService:
 
         await self.engine.dispose()
         logger.info("Sync service stopped")
-
-
-# Import models (for SQLAlchemy metadata)
-# NOTE: These must match the backend's model definitions exactly,
-# including using the same PostgreSQL enum types.
-#
-# E402 (import not at top of file) is suppressed on the next three lines only.
-# These imports sit below the code that uses them because this file duplicates
-# backend/app/models/ by hand. Moving them is not a formatting fix -- it is
-# Phase 4, which extracts a shared models package and deletes this whole block.
-# Delete these three noqa comments then; RUF100 will fail the build if they
-# outlive their reason.
-import enum as python_enum  # noqa: E402
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, Text, BigInteger, Enum, ForeignKey  # noqa: E402
-from sqlalchemy.orm import declarative_base  # noqa: E402
-
-Base = declarative_base()
-
-
-class MirrorStatus(str, python_enum.Enum):
-    ACTIVE = "active"
-    SYNCING = "syncing"
-    ERROR = "error"
-    DISABLED = "disabled"
-
-
-class SyncStatus(str, python_enum.Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class Mirror(Base):
-    __tablename__ = "mirrors"
-    id = Column(Integer, primary_key=True)
-    name = Column(String(50), unique=True)
-    mirror_type = Column(String(20))
-    upstream_url = Column(String(500))
-    local_path = Column(String(500))
-    enabled = Column(Boolean, default=True)
-    status = Column(Enum(MirrorStatus, name="mirror_status"), default=MirrorStatus.ACTIVE)
-    last_sync_started = Column(DateTime(timezone=True))
-    last_sync_completed = Column(DateTime(timezone=True))
-    last_sync_error = Column(Text)
-    total_size_bytes = Column(BigInteger)
-    file_count = Column(BigInteger)
-
-class SyncJob(Base):
-    __tablename__ = "sync_jobs"
-    id = Column(Integer, primary_key=True)
-    mirror_id = Column(Integer, ForeignKey("mirrors.id"))
-    status = Column(Enum(SyncStatus, name="sync_status"), default=SyncStatus.PENDING)
-    started_at = Column(DateTime(timezone=True))
-    completed_at = Column(DateTime(timezone=True))
-    files_transferred = Column(BigInteger)
-    bytes_transferred = Column(BigInteger)
-    files_deleted = Column(BigInteger)
-    rsync_output = Column(Text)
-    error_message = Column(Text)
-    triggered_by = Column(String(50))
-
-class Setting(Base):
-    """Settings table — mirrors backend Setting model."""
-    __tablename__ = "settings"
-    id = Column(Integer, primary_key=True)
-    key = Column(String(100), unique=True, nullable=False)
-    value = Column(Text)
-    description = Column(Text)
 
 
 if __name__ == "__main__":

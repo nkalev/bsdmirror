@@ -18,9 +18,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.security import create_access_token
-from app.models.mirror import Mirror
-from app.models.sync_job import SyncJob
-from app.models.user import User
+from shared.models import Mirror, SyncJob, User
 from tests.conftest import auth_header
 
 ROLES = ["admin", "operator", "readonly"]

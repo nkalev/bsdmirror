@@ -47,10 +47,16 @@ from app.core.database import Base, get_db  # noqa: E402
 from app.core.redis import get_redis  # noqa: E402
 from app.core.security import create_access_token, hash_password  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models.mirror import Mirror, MirrorStatus, MirrorType  # noqa: E402
-from app.models.setting import Setting  # noqa: E402
-from app.models.sync_job import SyncJob, SyncStatus  # noqa: E402
-from app.models.user import User, UserRole  # noqa: E402
+from shared.models import (  # noqa: E402
+    Mirror,
+    MirrorStatus,
+    MirrorType,
+    Setting,
+    SyncJob,
+    SyncStatus,
+    User,
+    UserRole,
+)
 
 # Passwords used by the seeded fixtures. >= 12 chars so they also satisfy
 # UserCreateRequest's min_length when reused in create-user tests.

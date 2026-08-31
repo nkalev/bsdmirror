@@ -26,16 +26,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # because the root of this context holds .env, .credentials, .git and the data/
 # symlink.
 #
-# When the shared models package lands:
-#     COPY --chown=syncuser:syncgroup shared/ ./shared
-# and `!shared` in the root .dockerignore. sync/sync_service.py:452-512 then
-# stops redeclaring Mirror, SyncJob, Setting and both enums by hand.
+# The shared models package has landed. sync_service.py no longer redeclares
+# Mirror, SyncJob, Setting and both enums by hand; it imports them from
+# shared.models, copied in by the one scoped line below.
 
 COPY sync/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Contents of sync/ into /app, exactly as the old ./sync context produced.
 COPY --chown=syncuser:syncgroup sync/ .
+
+# The schema, shared with the backend image. `import shared.models` resolves
+# because `python -m` puts the cwd (/app, the WORKDIR) on sys.path.
+COPY --chown=syncuser:syncgroup shared/ ./shared
 
 # Switch to non-root user
 USER syncuser

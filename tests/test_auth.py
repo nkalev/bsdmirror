@@ -36,8 +36,7 @@ from app.core.security import (
     verify_password,
     verify_password_async,
 )
-from app.models.audit_log import AuditLog
-from app.models.user import User
+from shared.models import AuditLog, User
 from tests.conftest import ADMIN_PASSWORD, READONLY_PASSWORD, auth_header, token_for
 
 LOGIN_URL = "/api/auth/token"

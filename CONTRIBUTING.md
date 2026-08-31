@@ -62,11 +62,12 @@ Thank you for your interest in contributing to the BSD Mirror project! This docu
 
 ```
 bsdmirror/
+├── shared/           # Code imported by BOTH Python services
+│   └── models/       # The SQLAlchemy schema. One definition, see below.
 ├── backend/          # FastAPI backend API
 │   ├── app/
 │   │   ├── api/      # API route handlers
-│   │   ├── core/     # Configuration, security, database
-│   │   └── models/   # SQLAlchemy models
+│   │   └── core/     # Configuration, security, database engine/session
 │   └── Dockerfile
 ├── frontend/         # Static frontend files
 │   └── public/
@@ -84,6 +85,54 @@ bsdmirror/
 ├── scripts/          # Setup and maintenance scripts
 └── docker-compose.yml
 ```
+
+### The database schema lives in `shared/models/`, once
+
+`mirrors`, `sync_jobs`, `settings`, `users` and `audit_logs` are declared in
+exactly one place. Both services import them:
+
+```python
+from shared.models import Mirror, MirrorStatus, SyncJob, SyncStatus
+```
+
+They used to be declared twice -- SQLAlchemy 2.0 `Mapped`/`mapped_column` in
+`backend/app/models/`, and hand-written `Column(...)` at the bottom of
+`sync/sync_service.py` under a comment asking that the two be kept identical.
+Nothing checked that, and they had drifted in seventeen distinct ways by the
+time they were merged, one of which reached production (commit `798ae79`, a
+Postgres enum type mismatch). The last one still open was
+`mirrors.mirror_type`: a native `mirror_type` enum in the database, declared
+`String(20)` by the sync service. It never corrupted anything only because the
+sync service happens never to write that column.
+
+Three things about this package are load-bearing:
+
+- **Neither service is pip-installed.** `shared/` sits at the repo root because
+  that is where it can be imported identically everywhere: `pythonpath` in
+  `pyproject.toml` already includes `"."` for tests, and each Dockerfile does
+  one scoped `COPY shared/ ./shared` into its `/app` WORKDIR. The sync image
+  contains no `backend/`, so the package could not have lived under it.
+
+- **`Base.metadata.create_all` has exactly one caller**: `init_db()` in
+  `backend/app/core/database.py`. The sync service imports the models but
+  deliberately not `Base`. create_all creates missing *tables* only, so with no
+  migrations the first process to run it fixes the schema permanently, and both
+  containers start together, so a second caller is also a race on `CREATE TYPE`.
+  `tests/test_shared_models.py::test_create_all_has_exactly_one_caller` walks
+  the AST of every file in the repo and fails if a second one appears.
+
+- **Enums are stored by NAME, not by value.** Every enum is
+  `class X(str, Enum)` with lowercase values (`ACTIVE = "active"`), but
+  SQLAlchemy's `Enum` persists `.name`, so Postgres holds `'ACTIVE'` and the
+  type is `ENUM('ACTIVE','SYNCING','ERROR','DISABLED')` in that order. Adding
+  `values_callable=` to any of those columns would silently invert this and make
+  every existing row unreadable. `tests/test_shared_models.py` pins the labels,
+  their order, and the round trip in both directions.
+
+Changing the schema still needs care for the reason that has not gone away:
+there are no migrations, and `create_all` will not alter an existing table.
+Adding a column to a model changes nothing in a database that already has that
+table. That is the next task, not this one.
 
 ### Key Technologies
 

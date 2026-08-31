@@ -11,8 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import humanize
 
 from app.core.database import get_db
-from app.models.mirror import Mirror, MirrorType, MirrorStatus
-from app.models.sync_job import SyncJob
+from shared.models import Mirror, MirrorStatus, MirrorType, SyncJob
 
 router = APIRouter()
 

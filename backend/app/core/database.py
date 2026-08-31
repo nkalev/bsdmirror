@@ -4,10 +4,15 @@ Database connection and session management.
 from typing import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
 import structlog
 
 from app.core.config import settings
+
+# Re-exported, not defined here. `Base` lives in shared/models/base.py so the
+# sync service can import the same MetaData without importing FastAPI; this
+# module owns the engine and the session, not the schema. Existing callers
+# (app.core.__init__, tests/conftest.py) keep importing it from here.
+from shared.models import Base
 
 logger = structlog.get_logger(__name__)
 
@@ -30,19 +35,28 @@ async_session_maker = async_sessionmaker(
 )
 
 
-class Base(DeclarativeBase):
-    """Base class for SQLAlchemy models."""
-    pass
-
-
 async def init_db() -> None:
-    """Initialize database connection and create tables."""
+    """Initialize database connection and create tables.
+
+    THIS IS THE ONLY create_all IN THE REPOSITORY, ON PURPOSE.
+
+    The sync service imports the same `Base` and could therefore create the
+    schema too. It must not. create_all creates missing *tables* only -- it
+    never adds a column or alters a type on a table that already exists, and
+    this repo has no migrations -- so whichever process runs first fixes the
+    schema permanently. Both containers start together, so a second caller is
+    also a race: two concurrent `CREATE TYPE mirror_status ...` and the loser
+    raises DuplicateObject.
+
+    Enforced, not just documented: tests/test_shared_models.py
+    ::test_create_all_has_exactly_one_caller walks every .py file in the repo
+    and fails if a second call appears anywhere.
+
+    Importing shared.models (at module scope, above) is what registers all five
+    mapped classes on Base.metadata; without it create_all would find an empty
+    MetaData and silently create nothing.
+    """
     async with engine.begin() as conn:
-        # Import models for their side effect: importing each module registers
-        # its mapped class on Base.metadata, which create_all() then reads. The
-        # names are intentionally unused, hence the noqa -- removing the import
-        # would silently create an empty schema.
-        from app.models import user, mirror, sync_job, audit_log, setting  # noqa: F401
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database initialized")
 

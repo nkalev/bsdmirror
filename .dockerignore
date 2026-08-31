@@ -44,10 +44,11 @@
 # costs build time and cache churn but still cannot put a repo-root secret in a
 # layer. Do not replace either COPY with `COPY . .`.
 #
-# ADDING THE SHARED MODELS PACKAGE
-# --------------------------------
-# Add `!shared` under the `!` block below and one scoped COPY line to each
-# Dockerfile. Nothing else.
+# THE SHARED MODELS PACKAGE
+# -------------------------
+# `!shared` is below, and each Dockerfile has one scoped
+# `COPY shared/ ./shared`. shared/ holds the SQLAlchemy models both services
+# used to declare separately; it ships into both images and nowhere else.
 #
 # NOT USED BY EVERY BUILD. The `rsync` service still builds from ./rsync, and
 # Docker reads .dockerignore from the root of the build context -- so for that
@@ -63,6 +64,7 @@
 # ---------------------------------------------------------------------------
 !backend
 !sync
+!shared
 
 # ---------------------------------------------------------------------------
 # 3. Re-exclude what must never ship, even from inside those subtrees.

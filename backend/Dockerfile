@@ -33,9 +33,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # guarantee, independent of .dockerignore: nothing outside backend/ can enter
 # this image, whatever the ignore file says. Keep it that way.
 #
-# When the shared models package lands, it is ONE more scoped line here --
-#     COPY --chown=appuser:appgroup shared/ ./shared
-# -- plus `!shared` in the root .dockerignore. Nothing else changes.
+# The shared models package has landed: the `COPY shared/ ./shared` below is
+# that one scoped line, and `!shared` is in the root .dockerignore.
 
 # Requirements first, for layer caching: this layer is rebuilt only when the
 # pins change, not on every source edit.
@@ -47,6 +46,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 # context did -- the image layout is unchanged. backend/Dockerfile and
 # backend/.dockerignore are excluded by the root .dockerignore.
 COPY --chown=appuser:appgroup backend/ .
+
+# The schema, shared with the sync image. `import shared.models` resolves
+# because uvicorn puts its --app-dir (default ".") on sys.path and WORKDIR is
+# /app. Trailing-slash form again: shared/ -> /app/shared/, keeping the package
+# name importable rather than dumping its contents into /app.
+COPY --chown=appuser:appgroup shared/ ./shared
 
 # Switch to non-root user
 USER appuser

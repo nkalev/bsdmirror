@@ -29,9 +29,15 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 
-# Both trees run under an event loop end to end: backend/ is FastAPI, sync/ is
-# an asyncio service with an aiohttp health server.
-SOURCE_ROOTS = [REPO_ROOT / "backend" / "app", REPO_ROOT / "sync"]
+# Every tree that runs under an event loop: backend/ is FastAPI, sync/ is an
+# asyncio service with an aiohttp health server, and shared/ is imported by
+# both -- a blocking call added there would land inside both event loops at
+# once, which makes it the worst place in the repo to have one.
+SOURCE_ROOTS = [
+    REPO_ROOT / "backend" / "app",
+    REPO_ROOT / "sync",
+    REPO_ROOT / "shared",
+]
 
 # name -> why it must not be called from a coroutine.
 BLOCKING_CALLS = {

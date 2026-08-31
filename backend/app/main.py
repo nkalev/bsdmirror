@@ -19,9 +19,7 @@ from app.core.config import settings
 from app.core.database import init_db, close_db, async_session_maker
 from app.core.redis import init_redis, close_redis
 from app.core.security import hash_password_async
-from app.models.user import User, UserRole
-from app.models.mirror import Mirror, MirrorType, MirrorStatus
-from app.models.setting import Setting
+from shared.models import Mirror, MirrorStatus, MirrorType, Setting, User, UserRole
 from app.api import health, auth, mirrors, admin, stats
 
 # Configure stdlib logging before structlog: structlog's filter_by_level checks

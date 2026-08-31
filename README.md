@@ -109,6 +109,14 @@ are still serving, `4` the new code is live but failed verification.
    └───────────────┘
 ```
 
+The backend and the sync service are separate containers over one Postgres
+database, and they share its schema through a single package, `shared/models/`,
+copied into both images. Neither service redeclares a table. Only the backend
+creates them: `Base.metadata.create_all` runs once, from `init_db()` at backend
+startup, and the sync service deliberately does not import `Base`. See
+[CONTRIBUTING.md](CONTRIBUTING.md#the-database-schema-lives-in-sharedmodels-once)
+for why that boundary is enforced by a test rather than by convention.
+
 ## Configuration
 
 Key environment variables in `.env`:

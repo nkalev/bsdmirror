@@ -61,9 +61,14 @@ ignore = [
 minversion = "7.4"
 testpaths = ["tests"]
 
-# Neither tree is pip-installed, so put both import roots on sys.path:
+# No tree is pip-installed, so put every import root on sys.path:
 #   backend  -> `import app.core.security`
-#   .        -> `import sync.sync_service`
+#   .        -> `import sync.sync_service` and `import shared.models`
+#
+# `shared` needs no entry of its own: it sits at the repo root, which is
+# already here as ".". That is also why shared/ was put at the root rather than
+# under backend/ -- the sync image has no backend/ in it, and both images get
+# the package as /app/shared, matching this layout exactly.
 pythonpath = ["backend", "."]
 
 # pytest-asyncio in auto mode: every `async def test_*` is collected as an
@@ -85,7 +90,9 @@ filterwarnings = [
 # coverage
 # ---------------------------------------------------------------------------
 [tool.coverage.run]
-source = ["backend/app", "sync"]
+# shared/ holds the SQLAlchemy models both services import; it is application
+# code that ships in both images, so it is measured like the rest.
+source = ["backend/app", "sync", "shared"]
 branch = true
 omit = ["*/__pycache__/*"]
 
