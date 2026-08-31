@@ -67,10 +67,10 @@ services:
     # ---------------------------------------------------------------------
     #
     # The context was ./backend, which made anything outside backend/ invisible
-    # to this build. Phase 4 extracts the SQLAlchemy models that
-    # backend/app/models/ and sync/sync_service.py currently declare TWICE by
-    # hand -- they drifted once already (798ae79, a Postgres enum mismatch) --
-    # into one package that both images must copy. A subdirectory context makes
+    # to this build. Phase 4 extracted the SQLAlchemy models that
+    # backend/app/models/ and sync/sync_service.py used to declare TWICE by hand
+    # -- they drifted once already (798ae79, a Postgres enum mismatch) -- into
+    # shared/, one package that both images copy. A subdirectory context makes
     # that impossible: COPY cannot reach above its own context root.
     #
     # A root context sends the whole repo to the daemon unless .dockerignore
@@ -78,9 +78,10 @@ services:
     # mirror data on the server), `.git`, `frontend/`, the self-hosted fonts,
     # and `.env`/`.credentials`. The root .dockerignore is therefore no longer
     # documentation -- it is the only thing standing between this build and all
-    # of that. It denies everything (`*`) and re-admits `backend` and `sync`
-    # explicitly, so a new top-level directory is excluded by default rather
-    # than shipped by default.
+    # of that. It denies everything (`*`) and re-admits `backend`, `sync` and
+    # `shared` explicitly, so a new top-level directory is excluded by default
+    # rather than shipped by default. The CI job `docker-build` asserts that
+    # list of three by name; growing it is a deliberate edit in both places.
     #
     # Second, independent guarantee: the COPY lines in backend/Dockerfile are
     # scoped to `backend/`, so nothing outside that subtree can enter a layer

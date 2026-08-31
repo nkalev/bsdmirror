@@ -23,11 +23,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # EVERY COPY SOURCE BELOW IS RELATIVE TO THE REPO ROOT, NOT TO backend/.
 # ---------------------------------------------------------------------------
 # docker-compose.yml builds this with `context: .` so that backend/ and sync/
-# can share one models package (they currently declare the same tables twice by
-# hand, and drifted once -- 798ae79). `COPY requirements.txt` would now resolve
-# to the repo root and fail the build; that is the good failure. The dangerous
-# one is `COPY . .`, which from a root context would ship .env, .credentials,
-# .git, tests/, frontend/ and the data/ symlink into a layer.
+# share one models package, shared/ (they used to declare the same tables twice
+# by hand, and drifted once -- 798ae79). `COPY requirements.txt` would now
+# resolve to the repo root and fail the build; that is the good failure. The
+# dangerous one is `COPY . .`, which from a root context would ship .env,
+# .credentials, .git, tests/, frontend/ and the data/ symlink into a layer.
 #
 # So every COPY here is scoped to a named subtree. That is a structural
 # guarantee, independent of .dockerignore: nothing outside backend/ can enter

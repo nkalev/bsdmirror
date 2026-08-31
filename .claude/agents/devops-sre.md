@@ -34,7 +34,7 @@ Application logic in `backend/app/**` or `frontend/**` — that is the `develope
 ## Known state — read before proposing work
 
 - **No migrations exist.** Schema is created by `Base.metadata.create_all` in `backend/app/core/database.py:43`. `alembic==1.13.1` is in `backend/requirements.txt` but there is no `alembic.ini` and no migrations directory. Any column change is silently ignored on an existing deployment.
-- **Models are duplicated.** `sync/sync_service.py:452-512` redefines `Mirror`, `SyncJob`, `Setting` and both enums, with a comment stating they must match `backend/app/models/` exactly. They already drifted once — commit `798ae79`.
+- **Models live in `shared/models/`**, imported by both services, and the builds use a repo-root context so that package reaches both images. There is still no Alembic: schema comes from `Base.metadata.create_all`, which creates missing *tables* only and silently ignores column or type changes on tables that already exist.
 - **`ruff`, `bandit`, `pytest`, `pytest-asyncio`, `pytest-cov` are installed and never invoked.** No CI, no `pyproject.toml`, no Makefile, no pre-commit.
 - **`limit_conn_zone` is declared at `nginx/nginx.conf:64` and used nowhere.**
 - **A stuck sync is unrecoverable.** If the sync container dies mid-`rsync`, the mirror stays at `MirrorStatus.SYNCING` forever and `backend/app/api/admin.py:301` then rejects every manual retry. There is no reaper and no stale-job timeout.
@@ -55,4 +55,4 @@ If a check cannot be run in the current environment, say which one and why. Do n
 
 ## First assignment
 
-Introduce Alembic and extract the duplicated models into a package shared by `backend/` and `sync/`, so the two definitions cannot drift again. Then wire CI to run `ruff`, `bandit`, and `pytest`.
+Introduce Alembic, now that `shared/models/` is the single definition to autogenerate against. Then wire CI to run `ruff`, `bandit`, and `pytest`.

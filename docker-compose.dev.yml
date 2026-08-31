@@ -2,18 +2,46 @@
 # Use: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 
 services:
+  # ---------------------------------------------------------------------------
+  # THE shared/ MOUNTS BELOW GO IN BOTH SERVICES OR IN NEITHER.
+  # ---------------------------------------------------------------------------
+  #
+  # shared/ holds the SQLAlchemy models that backend/app/models/ and
+  # sync/sync_service.py used to declare separately, by hand, until they drifted
+  # (798ae79). Each image gets its own copy via `COPY shared/ ./shared`, so
+  # without a bind mount a model edit needs `docker compose build` before either
+  # container sees it.
+  #
+  # That is a dev-time version of the exact bug the package removes. Mounting it
+  # into the backend alone would be worse than mounting it nowhere: the API
+  # would pick up an edited model on restart while sync kept running the copy
+  # baked into its image -- two definitions again, disagreeing, in one stack.
+  #
+  # Targets, not shadows: the backend's other mount is /app/app and this one is
+  # /app/shared. They are siblings; neither hides the other. Compose merges
+  # `volumes` by target path, so each line here is ADDED to the base file's list
+  # rather than replacing it -- the same merge behaviour that once mounted the
+  # nginx dev config twice (see the note under `nginx` below).
+  #
+  # `:ro` because nothing in either container writes here. Both images set
+  # PYTHONDONTWRITEBYTECODE=1, so not even a __pycache__ write is attempted.
+  #
+  # Neither service runs with a reloader, so this makes a model change take a
+  # `docker compose restart`, not a rebuild. That is the whole claim.
   backend:
     ports:
       - "8000:8000"
     volumes:
       - ./data/mirrors:/data/mirrors:ro
       - ./backend/app:/app/app:ro
+      - ./shared:/app/shared:ro
     environment:
       - LOG_LEVEL=DEBUG
   
   sync:
     volumes:
       - ./data/mirrors:/data/mirrors
+      - ./shared:/app/shared:ro
     environment:
       - LOG_LEVEL=DEBUG
   

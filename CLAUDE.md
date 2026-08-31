@@ -33,7 +33,7 @@ This repo's first 36 commits include 30 `Fix ...` commits, almost all config/int
 Read these before touching anything; several are load-bearing.
 
 - **No migrations.** Schema comes from `Base.metadata.create_all` (`backend/app/core/database.py:43`). Alembic is installed but unconfigured. Column changes are silently ignored on existing deployments.
-- **Models are duplicated.** `sync/sync_service.py:452-512` mirrors `backend/app/models/` by hand. Until a shared package exists, model changes must land in both places in the same commit. They already drifted once (commit `798ae79`).
+- **Models live in one place.** `shared/models/` is imported by both `backend/app/` and `sync/sync_service.py`. They used to be declared twice and had drifted 17 ways, including a `VARCHAR(20)` where production has an enum and a missing `ON DELETE CASCADE`. Do not reintroduce a second definition. The sync service imports the models but deliberately not `Base`, so `create_all` is unreachable from it; AST tests enforce that.
 - **Tooling is installed but never runs.** `ruff`, `bandit`, `pytest`, `pytest-asyncio`, `pytest-cov` are in `backend/requirements.txt`; there is no CI, `pyproject.toml`, Makefile, or pre-commit, and zero test files.
 - **nginx `add_header` does not inherit.** A lower level defining any `add_header` drops all inherited ones. `location /admin` (`nginx/sites/default.conf:112`) therefore serves the admin panel with **no CSP and no HSTS**.
 - **The Google Fonts imports depend on that bug.** Both stylesheets `@import` Google Fonts, which the CSP at `default.conf:55` does not permit. Fixing the header inheritance breaks admin fonts — treat them as one change.

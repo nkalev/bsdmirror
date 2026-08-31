@@ -28,8 +28,8 @@ case "$rel" in
     trap_note="add_header does NOT inherit: any add_header at a lower level drops all inherited ones. location /admin (default.conf:112) already serves the admin panel with no CSP and no HSTS. Fixing that also breaks the Google Fonts @import in both stylesheets — one change, not two. Loop in appsec-reviewer." ;;
   backend/app/models/*|sync/sync_service.py)
     owner="developer (schema) — with devops-sre if migrations are involved"
-    gate="Both model definitions updated in the SAME change; tests pass."
-    trap_note="Models are duplicated: backend/app/models/ and sync/sync_service.py:452-512 must match exactly. They drifted once already (commit 798ae79, Postgres enum mismatch). There are no migrations — schema comes from Base.metadata.create_all, so a column change is silently ignored on an existing deploy." ;;
+    gate="Schema shape verified against the real Postgres schema, not just SQLite; tests pass."
+    trap_note="Models live once in shared/models/, imported by both services. They were duplicated until the copies had drifted 17 ways (commit 798ae79 was one such break). Do not reintroduce a second definition. There are still no migrations: create_all creates missing tables only and silently ignores column or type changes to existing ones." ;;
   backend/*|sync/*)
     owner="developer"
     gate="Tests written and passing, ruff clean, no blocking call in an async path."

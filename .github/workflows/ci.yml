@@ -950,9 +950,11 @@ jobs:
   # ---------------------------------------------------------------------------
   #
   # docker-compose.yml builds `backend` and `sync` with `context: .` so both
-  # images can COPY one shared models package -- today those models are declared
-  # twice by hand (backend/app/models/ and sync/sync_service.py:452-512) and have
-  # already drifted once, 798ae79, a Postgres enum mismatch found in production.
+  # images can COPY the one shared models package in shared/. Those models used
+  # to be declared twice by hand -- backend/app/models/ and sync/sync_service.py
+  # -- and had drifted once, 798ae79, a Postgres enum mismatch found in
+  # production. There is now a single definition and two scoped COPY lines, so
+  # the context has THREE admitted subtrees: backend/, sync/ and shared/.
   #
   # A root context means the build sees the whole repository. What is at the root
   # of this one: .env and .credentials (real secrets on a server), a `data/`
@@ -979,6 +981,15 @@ jobs:
     env:
       NEG: CANARY_MUSTNOTSHIP_2f81cc03
       POS: CANARY_SHOULDSHIP_2f81cc03
+      # shared/ carries its OWN positive marker, and deliberately not one that
+      # contains POS as a substring: the layer scan greps for the two
+      # separately, so a hit on one can never stand in for the other. With a
+      # single shared string, an image whose own subtree COPY had stopped
+      # shipping would still report a positive hit -- off shared/ -- and the
+      # control on the control would be satisfied by the wrong file.
+      # (Named POS_SHARED, counted into `sharedhit`: an env POSS beside a local
+      # `poss` reads as a typo to a human and to shellcheck, SC2153.)
+      POS_SHARED: CANARY_SHAREDSHIP_2f81cc03
       # Compose derives the project name -- and therefore the image names -- from
       # the checkout directory. Pinned so the audit steps below cannot look for
       # an image that a renamed working directory has made something else.
@@ -1046,6 +1057,12 @@ jobs:
           # Without these the audit below could pass by matching nothing at all.
           printf '%s_backend\n' "$POS" > backend/canary-admitted.txt
           printf '%s_sync\n'    "$POS" > sync/canary-admitted.txt
+          # shared/ is the third admitted subtree and the only one BOTH images
+          # copy. It needs a control of its own: every other check here would
+          # still pass if shared/ stopped shipping, and the failure would then
+          # surface as an ImportError when a container starts -- in a deploy,
+          # not in a build. One admitted subtree, one positive control.
+          printf '%s_shared\n'  "$POS_SHARED" > shared/canary-admitted.txt
 
       - name: What the root context actually sends to the daemon
         run: |
@@ -1062,13 +1079,26 @@ jobs:
           # Top level must be exactly the subtrees a COPY reads. Asserted rather
           # than eyeballed: this is the line that fails the day someone adds a
           # top-level directory and a `!` for it without thinking.
+          #
+          # This list has grown exactly once, on purpose: `shared` arrived with
+          # the models package, a `!shared` in .dockerignore and a scoped
+          # `COPY shared/ ./shared` in BOTH Dockerfiles. That is what a subtree
+          # someone thought about looks like, and widening the list is the right
+          # response to it -- in the same change, by hand.
+          #
+          # DO NOT make this dynamic. An expectation derived from the `!` lines
+          # in .dockerignore agrees with that file by construction: it would go
+          # green for any future `!whatever`, which is the precise mistake this
+          # step exists to catch. The cost of the explicit list is one line of
+          # human edit per deliberate subtree. That cost is the feature.
           got=$(docker run --rm ctx-probe sh -c 'ls -A /ctx')
-          want=$(printf 'backend\nsync\n')
+          want=$(printf 'backend\nshared\nsync\n')
           if [ "$(printf '%s\n' "$got" | sort | tr '\n' ' ')" != "$(printf '%s\n' "$want" | sort | tr '\n' ' ')" ]; then
-            echo "::error::the root build context should contain exactly 'backend' and 'sync'; it contains: $(printf '%s' "$got" | tr '\n' ' ')"
+            echo "::error::the root build context should contain exactly: $(printf '%s' "$want" | tr '\n' ' '); it contains: $(printf '%s' "$got" | tr '\n' ' ')"
+            echo "::error::If the new entry is deliberate -- it has a '!' in .dockerignore AND a scoped COPY that reads it -- add it to 'want' in this step. If it is not, it is now in the build context of both images and should not be."
             exit 1
           fi
-          echo "ok: context top level is exactly backend/ and sync/"
+          echo "ok: context top level is exactly backend/, shared/ and sync/"
 
       - name: Build backend and sync
         run: |
@@ -1094,7 +1124,7 @@ jobs:
             docker save "$img" -o "$work/img.tar"
             mkdir -p "$work/x" && tar -xf "$work/img.tar" -C "$work/x"
 
-            neg=0; pos=0; blobs=0
+            neg=0; pos=0; sharedhit=0; blobs=0
             while IFS= read -r blob; do
               blobs=$((blobs + 1))
               case "$(file -b --mime-type "$blob")" in
@@ -1102,7 +1132,8 @@ jobs:
                 *) cp "$blob" "$work/b" ;;
               esac
               grep -aq -- "$NEG" "$work/b" && { neg=$((neg + 1)); echo "::error::$img: a negative canary is present in layer $(basename "$blob")"; }
-              grep -aq -- "$POS" "$work/b" && pos=$((pos + 1))
+              grep -aq -- "$POS"  "$work/b" && pos=$((pos + 1))
+              grep -aq -- "$POS_SHARED" "$work/b" && sharedhit=$((sharedhit + 1))
               # Filenames too: a secret can leak under a name even when its
               # contents happen not to match.
               if tar -tf "$work/b" > "$work/m" 2>/dev/null; then
@@ -1115,13 +1146,22 @@ jobs:
               rm -f "$work/b"
             done < <(find "$work/x" -type f)
 
-            echo "$img: scanned $blobs layer blob(s) -- $neg negative hit(s), $pos positive hit(s)"
+            echo "$img: scanned $blobs layer blob(s) -- $neg negative hit(s), $pos own-subtree positive hit(s), $sharedhit shared/ positive hit(s)"
             [ "$neg" -eq 0 ] || fail=1
 
             # THE CONTROL ON THE CONTROL. A scanner that finds nothing because it
             # is broken looks exactly like a clean image.
             if [ "$pos" -eq 0 ]; then
               echo "::error::$img: the positive canary was NOT found in any layer. Either the COPY stopped shipping application code, or this scan is not reading the layers -- and a scan that cannot find a file it planted cannot prove the absence of anything."
+              fail=1
+            fi
+
+            # And the same control for the subtree both images copy. shared/
+            # holds the SQLAlchemy models backend and sync now import instead of
+            # declaring twice; if it stops arriving, nothing above notices and
+            # the image fails at 'import shared.models' when it is started.
+            if [ "$sharedhit" -eq 0 ]; then
+              echo "::error::$img: the shared/ positive canary was NOT found in any layer. The shared models package did not ship. Check '!shared' in .dockerignore and the scoped 'COPY shared/ ./shared' in this image's Dockerfile."
               fail=1
             fi
             rm -rf "$work"
@@ -1149,10 +1189,17 @@ jobs:
           docker run --rm --entrypoint sh bsdmirror-sync    -c 'find /app -maxdepth 2 | sort'
           echo "::endgroup::"
 
-          # The positive canary proves the allowlist admits new files under the
-          # two subtrees; the negatives must be absent from the running fs too.
-          docker run --rm --entrypoint sh bsdmirror-backend -c 'test -f /app/canary-admitted.txt' \
-            || { echo "::error::backend: a new file under backend/ did not reach the image -- the allowlist is too tight"; exit 1; }
+          # The positive canaries prove the allowlist admits new files under the
+          # three subtrees; the negatives must be absent from the running fs too.
+          #
+          # Both images, not just the backend: shared/ is copied by each of them
+          # independently, so "it shipped into one" says nothing about the other.
+          for img in bsdmirror-backend bsdmirror-sync; do
+            docker run --rm --entrypoint sh "$img" -c 'test -f /app/canary-admitted.txt' \
+              || { echo "::error::$img: a new file under its own subtree did not reach the image -- the allowlist is too tight"; exit 1; }
+            docker run --rm --entrypoint sh "$img" -c 'test -f /app/shared/canary-admitted.txt' \
+              || { echo "::error::$img: a new file under shared/ did not reach /app/shared. Both images COPY the shared models package; without it this container dies at import time, on a deploy, instead of here."; exit 1; }
+          done
           for f in /app/.env /app/.credentials /app/debug.log /app/app/__pycache__; do
             if docker run --rm --entrypoint sh bsdmirror-backend -c "test -e $f"; then
               echo "::error::backend: $f is present in the image"; exit 1
