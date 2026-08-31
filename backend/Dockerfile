@@ -19,12 +19,34 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first for layer caching
-COPY requirements.txt .
+# ---------------------------------------------------------------------------
+# EVERY COPY SOURCE BELOW IS RELATIVE TO THE REPO ROOT, NOT TO backend/.
+# ---------------------------------------------------------------------------
+# docker-compose.yml builds this with `context: .` so that backend/ and sync/
+# can share one models package (they currently declare the same tables twice by
+# hand, and drifted once -- 798ae79). `COPY requirements.txt` would now resolve
+# to the repo root and fail the build; that is the good failure. The dangerous
+# one is `COPY . .`, which from a root context would ship .env, .credentials,
+# .git, tests/, frontend/ and the data/ symlink into a layer.
+#
+# So every COPY here is scoped to a named subtree. That is a structural
+# guarantee, independent of .dockerignore: nothing outside backend/ can enter
+# this image, whatever the ignore file says. Keep it that way.
+#
+# When the shared models package lands, it is ONE more scoped line here --
+#     COPY --chown=appuser:appgroup shared/ ./shared
+# -- plus `!shared` in the root .dockerignore. Nothing else changes.
+
+# Requirements first, for layer caching: this layer is rebuilt only when the
+# pins change, not on every source edit.
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY --chown=appuser:appgroup . .
+# Application code. `backend/` with the trailing slash copies the CONTENTS of
+# that directory into /app, which is what the old `COPY . .` from a ./backend
+# context did -- the image layout is unchanged. backend/Dockerfile and
+# backend/.dockerignore are excluded by the root .dockerignore.
+COPY --chown=appuser:appgroup backend/ .
 
 # Switch to non-root user
 USER appuser

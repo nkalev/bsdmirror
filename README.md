@@ -204,6 +204,39 @@ consecutive nights** and nobody found out. `scripts/health_check.sh` already
 existed and would have caught it. Nothing had ever scheduled it, and it could
 not have alerted if it had run (see *The errexit bug*, below).
 
+### Which endpoint to point a monitor at
+
+Three endpoints answer to the word "health" and they prove different things.
+Picking the wrong one is how a mirror stays green while it is down.
+
+| Endpoint | Served by | Proves | Depends on |
+|---|---|---|---|
+| `/health` | nginx, static string | this nginx process is up and serving | nothing |
+| `/api/health` | backend | the FastAPI process is up | backend only |
+| `/api/health/detailed` | backend | postgres and redis both answer within 5s; reports `degraded` and names the failing service when they do not | backend, postgres, redis |
+
+**Point external monitoring at `/api/health/detailed` and alert on the JSON
+`status` field.** `/health` is a hardcoded 200 that stays green while every
+backing service is down — it is the nginx container's own liveness probe
+(`docker-compose.yml` runs `curl -f http://localhost/health`) and
+`scripts/deploy.sh` refuses to deploy while nginx is not up, so it must *not*
+depend on postgres or redis: a database outage would otherwise mark nginx
+unhealthy and block the deploy that fixes it. That narrowness is deliberate, and
+it is exactly why it is the wrong thing for an external monitor to watch.
+
+`/health` answers identically on `http://` and `https://` — `200`, `text/plain`,
+the three bytes `OK\n`. It did not until 2026-08-31: `location = /health` existed
+only in the `:80` server, so over TLS it fell through to `try_files ... /index.html`
+and returned **200 with the homepage**, which every status-code monitor reads as
+healthy. The definition now lives in `nginx/snippets/health.conf` and is included
+by every server block; `scripts/ci-nginx-health.py` fails CI if one is missing,
+and CI plus `scripts/deploy.sh verify_health_endpoint()` assert the response
+*bytes* rather than its status code.
+
+Note what `/api/health/detailed` still cannot tell you: whether the mirrors are
+actually being synced. Postgres and redis answer happily for a mirror that has
+not updated since July. That is what the staleness check below is for.
+
 ### What is checked
 
 | Condition | Alerts when |

@@ -17,12 +17,25 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements
-COPY requirements.txt .
+# ---------------------------------------------------------------------------
+# EVERY COPY SOURCE BELOW IS RELATIVE TO THE REPO ROOT, NOT TO sync/.
+# ---------------------------------------------------------------------------
+# docker-compose.yml builds this with `context: .` so this image and the backend
+# image can share one models package. See the longer note in backend/Dockerfile;
+# the rule is the same here: scope every COPY to a named subtree, never `COPY .`,
+# because the root of this context holds .env, .credentials, .git and the data/
+# symlink.
+#
+# When the shared models package lands:
+#     COPY --chown=syncuser:syncgroup shared/ ./shared
+# and `!shared` in the root .dockerignore. sync/sync_service.py:452-512 then
+# stops redeclaring Mirror, SyncJob, Setting and both enums by hand.
+
+COPY sync/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application
-COPY --chown=syncuser:syncgroup . .
+# Contents of sync/ into /app, exactly as the old ./sync context produced.
+COPY --chown=syncuser:syncgroup sync/ .
 
 # Switch to non-root user
 USER syncuser

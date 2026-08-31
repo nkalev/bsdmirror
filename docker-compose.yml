@@ -62,9 +62,32 @@ services:
   # Backend API (FastAPI)
   # ===========================================
   backend:
+    # ---------------------------------------------------------------------
+    # REPO-ROOT BUILD CONTEXT. This is load-bearing; do not narrow it back.
+    # ---------------------------------------------------------------------
+    #
+    # The context was ./backend, which made anything outside backend/ invisible
+    # to this build. Phase 4 extracts the SQLAlchemy models that
+    # backend/app/models/ and sync/sync_service.py currently declare TWICE by
+    # hand -- they drifted once already (798ae79, a Postgres enum mismatch) --
+    # into one package that both images must copy. A subdirectory context makes
+    # that impossible: COPY cannot reach above its own context root.
+    #
+    # A root context sends the whole repo to the daemon unless .dockerignore
+    # says otherwise, and this repo contains `data/` (a symlink to 2.4 TB of
+    # mirror data on the server), `.git`, `frontend/`, the self-hosted fonts,
+    # and `.env`/`.credentials`. The root .dockerignore is therefore no longer
+    # documentation -- it is the only thing standing between this build and all
+    # of that. It denies everything (`*`) and re-admits `backend` and `sync`
+    # explicitly, so a new top-level directory is excluded by default rather
+    # than shipped by default.
+    #
+    # Second, independent guarantee: the COPY lines in backend/Dockerfile are
+    # scoped to `backend/`, so nothing outside that subtree can enter a layer
+    # even if .dockerignore is wrong. Secrets live at the repo root. Keep both.
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: bsdmirrors-backend
     restart: unless-stopped
     security_opt:
@@ -113,9 +136,12 @@ services:
   # Sync Service
   # ===========================================
   sync:
+    # Repo-root context, same reasoning as `backend` above: the two services
+    # must be able to COPY one shared models package. sync/Dockerfile scopes
+    # its COPY lines to `sync/`.
     build:
-      context: ./sync
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: sync/Dockerfile
     container_name: bsdmirrors-sync
     restart: unless-stopped
     security_opt:
@@ -166,6 +192,12 @@ services:
   # Rsync Server
   # ===========================================
   rsync:
+    # Left on a subdirectory context deliberately. This image copies exactly one
+    # file (rsyncd.conf), shares no Python code with anything, and moving it to
+    # the root would put the whole repo behind a build that needs 400 bytes of
+    # it. The root .dockerignore does NOT apply here -- Docker reads
+    # .dockerignore from the root of the build context, so for this service that
+    # would be rsync/.dockerignore, which does not exist and does not need to.
     build:
       context: ./rsync
       dockerfile: Dockerfile

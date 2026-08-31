@@ -608,6 +608,30 @@ jobs:
             fail=1
           fi
 
+          # `proxy_pass $variable/uri;` silently truncates the request.
+          #
+          # When proxy_pass contains a variable, nginx does NOT do the usual
+          # "replace the matched location prefix and append the remainder" -- it
+          # sends the literal URI written here and discards everything after the
+          # prefix. dev.conf and bootstrap.conf both had
+          # `proxy_pass $backend_upstream/api/;` inside `location /api/`, so the
+          # backend received exactly `/api/` for every request:
+          #
+          #     GET  /api/health      -> backend saw GET  /api/   404
+          #     POST /api/auth/token  -> backend saw POST /api/   404
+          #
+          # The whole API was dead in both profiles. `nginx -t` accepts either
+          # form; only a real request tells them apart, and neither profile is
+          # ever exercised with a real request in production. Found 2026-08-31
+          # by reading the backend access log during a local stack run.
+          # ^[^#]* so a comment that QUOTES the broken form -- which both fixed
+          # files now carry, to say why -- does not fail the build. [^#]* cannot
+          # cross the '#', so only a live directive matches.
+          if grep -rnE '^[^#]*proxy_pass[[:space:]]+\$[A-Za-z_][A-Za-z0-9_]*/' nginx/; then
+            echo "::error::proxy_pass with a variable followed by a URI drops everything after the location prefix. Use 'proxy_pass \$upstream;' with no URI part, which forwards the client's request URI unchanged -- that is what sites/production/production.conf does."
+            fail=1
+          fi
+
           # The site configs are tracked and domain-free. A domain reappearing in
           # nginx/ means someone reintroduced the generated-config pattern that
           # kept production invisible to git for six months.
@@ -617,6 +641,22 @@ jobs:
           fi
 
           exit "$fail"
+
+      # /health must be defined in EVERY server block, not just the one somebody
+      # was looking at. It was defined in the :80 server of production.conf and
+      # not the :443 server, so over TLS it fell through to `location /`, hit
+      # try_files .../index.html and answered 200 with the homepage. `nginx -t`
+      # passes on that config -- it is valid -- and every probe this repo had
+      # read the status line and the headers and never the body, so all of them
+      # called it green.
+      #
+      # This is the structural half. The behavioural half is the last step in
+      # this job, which reads the bytes off the wire on every profile and every
+      # scheme. Both are here because either alone has a blind spot: the
+      # structural check cannot see a snippet that stops working, and the wire
+      # check cannot cover a profile CI does not boot.
+      - name: Every server block in every site profile must serve /health
+        run: python3 scripts/ci-nginx-health.py
 
       - name: Write .env fixture (placeholder values, never real secrets)
         run: |
@@ -776,7 +816,10 @@ jobs:
 
           want="x-frame-options x-content-type-options referrer-policy content-security-policy strict-transport-security"
           fails=0
-          for path in / /admin/ /css/style.css /img/favicon.svg /404.html /nope-404; do
+          # /health is in this list as well as in the body-probe step below:
+          # this asserts it keeps the header set (it adds no add_header of its
+          # own, so it inherits the 443 server's), that one the bytes.
+          for path in / /health /admin/ /css/style.css /img/favicon.svg /404.html /nope-404; do
             hdrs=$(curl -sk -o /dev/null -D - "https://localhost:18443$path" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
             code=$(printf '%s\n' "$hdrs" | awk '/^http\//{c=$2} END{print c}')
             missing=""
@@ -801,6 +844,321 @@ jobs:
             exit 1
           fi
           echo "all probed paths carry the full 5-header set"
+
+      # THE BODY, NOT THE STATUS CODE.
+      #
+      # This is the check whose absence let /health lie over HTTPS for as long
+      # as the 443 server has existed. A 200 is not evidence: the failure mode
+      # is a 200 that carries the homepage. So this asserts the exact bytes,
+      # the Content-Type, and that the two schemes return the same thing.
+      #
+      # Every profile is booted, not just production, because dev and bootstrap
+      # are the ones an operator reaches for when something is already broken --
+      # and dev has no TLS server at all, which is precisely why the divergence
+      # was invisible there.
+      - name: /health must return the same bytes on every profile and scheme
+        run: |
+          set -o pipefail
+          fails=0
+
+          probe() {   # url, expected-content-type-substring
+            local url="$1" want_ct="$2" code ct body
+            code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 "$url")
+            # Fold header names to lowercase: HTTP/2 lowercases them, HTTP/1.1
+            # does not, and the 443 server sets `http2 on`.
+            ct=$(curl -sk -o /dev/null -D - --max-time 10 "$url" | tr -d '\r' \
+                 | tr '[:upper:]' '[:lower:]' | awk '/^content-type:/{print $2}' | head -1)
+            body=$(curl -sk --max-time 10 "$url")
+            printf '  %-42s %-4s %-12s %s\n' "$url" "$code" "${ct:-<none>}" \
+              "$(printf '%s' "$body" | head -c 40 | tr '\n' '~')"
+            local bad=""
+            [ "$code" = "200" ] || bad="$bad status=$code(want 200);"
+            case "$ct" in *"$want_ct"*) ;; *) bad="$bad content-type=${ct:-<none>}(want $want_ct);" ;; esac
+            # $(...) strips the trailing newline, so this compares "OK".
+            [ "$body" = "OK" ] || bad="$bad body is not OK -- it is $(printf '%s' "$body" | head -c 80 | tr '\n' ' ');"
+            if [ -n "$bad" ]; then
+              echo "::error::$url:$bad"
+              fails=$((fails + 1))
+            fi
+          }
+
+          for profile in nginx/sites/*/; do
+            profile=$(basename "$profile")
+            args=()
+            while IFS= read -r line; do args+=("$line"); done < <(python3 scripts/ci-nginx-mounts.py "$profile")
+            [ "${#args[@]}" -gt 0 ] || { echo "::error::no mounts for $profile"; fails=$((fails + 1)); continue; }
+
+            docker rm -f ci-health >/dev/null 2>&1 || true
+            docker run -d --name ci-health -p 18080:80 -p 18443:443 "${args[@]}" \
+              -v "$PWD/ci-fixtures/letsencrypt:/etc/letsencrypt:ro" \
+              -v "$PWD/ci-fixtures/www:/var/www/public:ro" \
+              "$NGINX_IMAGE" >/dev/null
+
+            for _ in $(seq 1 30); do
+              curl -s -o /dev/null --max-time 2 "http://localhost:18080/health" && break
+              sleep 1
+            done
+
+            echo "::group::/health -- profile $profile"
+            printf '  %-42s %-4s %-12s %s\n' "URL" "CODE" "TYPE" "BODY"
+            probe "http://localhost:18080/health" "text/plain"
+
+            # Does this profile serve TLS at all? dev and bootstrap do not, by
+            # design, and asserting https on them would be a false failure.
+            # Derived from the config rather than from a hardcoded profile name,
+            # so a profile that GAINS a 443 server is covered the day it does.
+            # [[:space:]] rather than \s: \s is a GNU extension. This job is
+            # also run by hand on macOS when someone reproduces a CI failure,
+            # and BSD grep -E would silently match nothing -- turning "this
+            # profile has no TLS server" into a false pass for a profile that
+            # does.
+            if grep -qE '^[[:space:]]*listen[[:space:]]+(\[::\]:)?443' "nginx/sites/$profile"/*.conf; then
+              probe "https://localhost:18443/health" "text/plain"
+              a=$(curl -sk --max-time 10 "http://localhost:18080/health" | sha256sum | cut -d" " -f1)
+              b=$(curl -sk --max-time 10 "https://localhost:18443/health" | sha256sum | cut -d" " -f1)
+              if [ "$a" = "$b" ]; then
+                echo "  http and https bodies are byte-identical ($a)"
+              else
+                echo "::error::$profile: /health differs between schemes -- http $a, https $b"
+                fails=$((fails + 1))
+              fi
+            else
+              echo "  no 443 server in this profile: https not probed"
+            fi
+
+            # The literal healthcheck from docker-compose.yml. If this ever
+            # fails the nginx container is permanently unhealthy and
+            # scripts/deploy.sh dependencies_must_be_up() blocks every deploy.
+            if docker exec ci-health curl -f -s -o /dev/null http://localhost/health; then
+              echo "  container healthcheck (curl -f http://localhost/health): exit 0"
+            else
+              echo "::error::$profile: the docker-compose healthcheck command failed"
+              fails=$((fails + 1))
+            fi
+            echo "::endgroup::"
+            docker rm -f ci-health >/dev/null
+          done
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::/health is not consistent across profiles and schemes. A 200 is not enough: the failure this guards is a 200 carrying the homepage, which every external monitor reads as healthy."
+            exit 1
+          fi
+          echo "/health returns 200 text/plain OK on every profile and every scheme it serves"
+
+  # ---------------------------------------------------------------------------
+  # docker build (root context)
+  # ---------------------------------------------------------------------------
+  #
+  # docker-compose.yml builds `backend` and `sync` with `context: .` so both
+  # images can COPY one shared models package -- today those models are declared
+  # twice by hand (backend/app/models/ and sync/sync_service.py:452-512) and have
+  # already drifted once, 798ae79, a Postgres enum mismatch found in production.
+  #
+  # A root context means the build sees the whole repository. What is at the root
+  # of this one: .env and .credentials (real secrets on a server), a `data/`
+  # symlink that points at 2.4 TB of mirror data in production, .git, frontend/
+  # with 13 woff2 fonts, and tests/. The root .dockerignore is the filter, and
+  # until this change nothing had ever exercised it -- no build had used the root
+  # as its context, so it was a file full of patterns that had never once been
+  # applied.
+  #
+  # This job exercises it, adversarially. It plants canary files everywhere the
+  # ignore rules are supposed to reach, builds both images, and then scans EVERY
+  # LAYER BLOB -- not the running filesystem -- for the canary string. The
+  # distinction matters: a file added in one layer and deleted in a later one is
+  # absent from `docker run ... ls` and still shipped inside the image.
+  #
+  # And it plants a canary that SHOULD ship, asserting that one is found. Without
+  # it, a scanner that silently matched nothing would report a clean image
+  # forever. This repo has shipped that shape of bug more than once: a
+  # limit_conn_zone limiting nothing, a health check that returned before it
+  # could alert, a `nginx -t` re-reading a six-month-old inode.
+  docker-build:
+    name: docker build (root context, secret audit)
+    runs-on: ubuntu-24.04
+    env:
+      NEG: CANARY_MUSTNOTSHIP_2f81cc03
+      POS: CANARY_SHOULDSHIP_2f81cc03
+      # Compose derives the project name -- and therefore the image names -- from
+      # the checkout directory. Pinned so the audit steps below cannot look for
+      # an image that a renamed working directory has made something else.
+      COMPOSE_PROJECT_NAME: bsdmirror
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build contexts and ignore files must be consistent
+        run: |
+          fail=0
+
+          # Any service built from the repo root depends on the root
+          # .dockerignore. Its absence would silently ship the whole tree.
+          if [ ! -f .dockerignore ]; then
+            echo "::error::.dockerignore is missing while the backend and sync services build from the repo root. Every file in this repository would be sent to the daemon."
+            fail=1
+          fi
+
+          # Docker reads .dockerignore from the root of the BUILD CONTEXT. Once a
+          # service moves to `context: .`, an ignore file left behind in its old
+          # subdirectory is inert -- and an inert file that looks authoritative is
+          # how the previous root .dockerignore sat unexercised for months.
+          for stale in backend/.dockerignore sync/.dockerignore; do
+            if [ -f "$stale" ]; then
+              echo "::error file=$stale::this service builds from the repo root, so Docker never reads this file. It is inert and misleading; fold its rules into the root .dockerignore and delete it."
+              fail=1
+            fi
+          done
+
+          # A root context plus `COPY . .` ships .env into a layer. The COPY
+          # scoping is the second lock, independent of .dockerignore; it is the
+          # one that holds when the ignore file is wrong.
+          for df in backend/Dockerfile sync/Dockerfile; do
+            if grep -nE '^[[:space:]]*COPY([[:space:]]+--[^[:space:]]+)*[[:space:]]+\.[[:space:]]' "$df"; then
+              echo "::error file=$df::a bare 'COPY . <dest>' from a repo-root context copies .env, .credentials, .git and the data/ symlink into a layer. Scope every COPY to a named subdirectory."
+              fail=1
+            fi
+          done
+          exit "$fail"
+
+      - name: Plant canaries -- negative controls (must never reach a layer)
+        run: |
+          # At the context root, where the real secrets live.
+          printf 'SECRET_KEY=%s_root_env\n'       "$NEG" > .env
+          printf 'ADMIN_PASSWORD=%s_root_creds\n' "$NEG" > .credentials
+          # In directories the ignore file names.
+          mkdir -p data newtopleveldir
+          printf '%s_data\n'     "$NEG" > data/canary.txt
+          printf '%s_tests\n'    "$NEG" > tests/canary.txt
+          printf '%s_frontend\n' "$NEG" > frontend/public/canary.txt
+          printf '%s_nginx\n'    "$NEG" > nginx/canary.txt
+          printf '%s_scripts\n'  "$NEG" > scripts/canary.txt
+          # A NEW top-level directory. Under a denylist this ships by default and
+          # nothing says so; under the current allowlist it must not.
+          printf '%s_newdir\n'   "$NEG" > newtopleveldir/canary.txt
+          # Inside the ADMITTED subtrees -- these exercise the `**/` prefixes,
+          # which are the rules that do not work without it.
+          printf 'SECRET_KEY=%s_backend_env\n' "$NEG" > backend/.env
+          mkdir -p backend/app/__pycache__
+          printf '%s_pycache\n'  "$NEG" > backend/app/__pycache__/canary.pyc
+          printf '%s_synclog\n'  "$NEG" > sync/debug.log
+
+      - name: Plant canaries -- positive controls (must reach the image)
+        run: |
+          # Without these the audit below could pass by matching nothing at all.
+          printf '%s_backend\n' "$POS" > backend/canary-admitted.txt
+          printf '%s_sync\n'    "$POS" > sync/canary-admitted.txt
+
+      - name: What the root context actually sends to the daemon
+        run: |
+          cat > /tmp/Dockerfile.ctx <<'EOF'
+          FROM busybox:1.36
+          COPY . /ctx
+          EOF
+          docker build -q -f /tmp/Dockerfile.ctx -t ctx-probe . >/dev/null
+          echo "::group::every path in the build context"
+          docker run --rm ctx-probe find /ctx -mindepth 1 | sed 's|^/ctx|.|' | sort
+          echo "::endgroup::"
+          echo "context size: $(docker run --rm ctx-probe du -sh /ctx | cut -f1)"
+
+          # Top level must be exactly the subtrees a COPY reads. Asserted rather
+          # than eyeballed: this is the line that fails the day someone adds a
+          # top-level directory and a `!` for it without thinking.
+          got=$(docker run --rm ctx-probe sh -c 'ls -A /ctx')
+          want=$(printf 'backend\nsync\n')
+          if [ "$(printf '%s\n' "$got" | sort | tr '\n' ' ')" != "$(printf '%s\n' "$want" | sort | tr '\n' ' ')" ]; then
+            echo "::error::the root build context should contain exactly 'backend' and 'sync'; it contains: $(printf '%s' "$got" | tr '\n' ' ')"
+            exit 1
+          fi
+          echo "ok: context top level is exactly backend/ and sync/"
+
+      - name: Build backend and sync
+        run: |
+          cat > .env.compose <<'EOF'
+          POSTGRES_PASSWORD=ci-placeholder-not-a-secret
+          REDIS_PASSWORD=ci-placeholder-not-a-secret
+          ADMIN_PASSWORD=ci-placeholder-not-a-secret
+          FREEBSD_UPSTREAM=rsync://ftp.freebsd.org/FreeBSD/
+          NETBSD_UPSTREAM=rsync://rsync.NetBSD.org/NetBSD/
+          OPENBSD_UPSTREAM=rsync://ftp2.eu.openbsd.org/OpenBSD/
+          EOF
+          # .env is a canary file in this job, so compose reads the fixture
+          # instead. The canary .env must stay on disk: it is the thing being
+          # tested.
+          cat .env.compose >> .env
+          docker compose build backend sync
+
+      - name: Every layer of every image must be free of the negative canaries
+        run: |
+          fail=0
+          for img in bsdmirror-backend bsdmirror-sync; do
+            work=$(mktemp -d)
+            docker save "$img" -o "$work/img.tar"
+            mkdir -p "$work/x" && tar -xf "$work/img.tar" -C "$work/x"
+
+            neg=0; pos=0; blobs=0
+            while IFS= read -r blob; do
+              blobs=$((blobs + 1))
+              case "$(file -b --mime-type "$blob")" in
+                application/gzip|application/x-gzip) gunzip -c "$blob" > "$work/b" 2>/dev/null || cp "$blob" "$work/b" ;;
+                *) cp "$blob" "$work/b" ;;
+              esac
+              grep -aq -- "$NEG" "$work/b" && { neg=$((neg + 1)); echo "::error::$img: a negative canary is present in layer $(basename "$blob")"; }
+              grep -aq -- "$POS" "$work/b" && pos=$((pos + 1))
+              # Filenames too: a secret can leak under a name even when its
+              # contents happen not to match.
+              if tar -tf "$work/b" > "$work/m" 2>/dev/null; then
+                if grep -aqE '(^|/)(\.env|\.credentials)$' "$work/m"; then
+                  echo "::error::$img: layer $(basename "$blob") contains a file named .env or .credentials:"
+                  grep -aE '(^|/)(\.env|\.credentials)$' "$work/m" | sed 's/^/    /'
+                  neg=$((neg + 1))
+                fi
+              fi
+              rm -f "$work/b"
+            done < <(find "$work/x" -type f)
+
+            echo "$img: scanned $blobs layer blob(s) -- $neg negative hit(s), $pos positive hit(s)"
+            [ "$neg" -eq 0 ] || fail=1
+
+            # THE CONTROL ON THE CONTROL. A scanner that finds nothing because it
+            # is broken looks exactly like a clean image.
+            if [ "$pos" -eq 0 ]; then
+              echo "::error::$img: the positive canary was NOT found in any layer. Either the COPY stopped shipping application code, or this scan is not reading the layers -- and a scan that cannot find a file it planted cannot prove the absence of anything."
+              fail=1
+            fi
+            rm -rf "$work"
+          done
+          exit "$fail"
+
+      - name: The images must run, not merely build
+        run: |
+          # A build that succeeds and an image that starts are different claims.
+          #
+          # backend/app/core/config.py builds a pydantic Settings at import time
+          # and four fields have no default, so `import app.main` raises
+          # ValidationError with no environment. Placeholders are supplied here
+          # for that reason and no other -- they are not a fixture for behaviour,
+          # only for reaching the import. Nothing here connects to a database.
+          docker run --rm \
+            -e POSTGRES_PASSWORD=ci-placeholder-not-a-secret \
+            -e REDIS_PASSWORD=ci-placeholder-not-a-secret \
+            -e SECRET_KEY=ci-placeholder-not-a-secret \
+            -e ADMIN_PASSWORD=ci-placeholder-not-a-secret \
+            bsdmirror-backend python -c "import app.main; print('backend imports ok:', app.main.app.title)"
+          docker run --rm bsdmirror-sync    python -c "import sync_service; print('sync imports ok')"
+          echo "::group::image contents under /app"
+          docker run --rm --entrypoint sh bsdmirror-backend -c 'find /app -maxdepth 2 | sort'
+          docker run --rm --entrypoint sh bsdmirror-sync    -c 'find /app -maxdepth 2 | sort'
+          echo "::endgroup::"
+
+          # The positive canary proves the allowlist admits new files under the
+          # two subtrees; the negatives must be absent from the running fs too.
+          docker run --rm --entrypoint sh bsdmirror-backend -c 'test -f /app/canary-admitted.txt' \
+            || { echo "::error::backend: a new file under backend/ did not reach the image -- the allowlist is too tight"; exit 1; }
+          for f in /app/.env /app/.credentials /app/debug.log /app/app/__pycache__; do
+            if docker run --rm --entrypoint sh bsdmirror-backend -c "test -e $f"; then
+              echo "::error::backend: $f is present in the image"; exit 1
+            fi
+          done
+          echo "ok: both images run, admit what they should and exclude what they must"
 
   # ---------------------------------------------------------------------------
   # shellcheck
@@ -969,7 +1327,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [ruff, bandit, pytest, compose, nginx, shellcheck, systemd]
+    needs: [ruff, bandit, pytest, compose, nginx, docker-build, shellcheck, systemd]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

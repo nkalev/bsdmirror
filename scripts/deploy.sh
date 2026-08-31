@@ -941,6 +941,105 @@ verify_api_health() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# The nginx /health endpoint, read as BYTES
+# ---------------------------------------------------------------------------
+#
+# THE SECOND CHECK THAT WAS MISSING, and the reason this one reads a body.
+#
+# `location = /health` lived in the :80 server of
+# nginx/sites/production/production.conf and in no other server block. A
+# location is matched only inside the server that handled the request, so over
+# TLS -- which is every real request, and every external monitor -- /health fell
+# through to `location /`, matched `try_files $uri $uri/ /index.html` and
+# returned:
+#
+#     200 OK   content-type: text/html   <!DOCTYPE html>...
+#
+# verify_security_headers() below probed that exact URL and reported "200, 5/5
+# headers", because it reads the status line and the headers and never the body.
+# So did the CI header job. Both were right about what they measured and both
+# were reporting on a health endpoint that had been answering with the homepage
+# for as long as the 443 server had existed.
+#
+# A status-code check cannot see this class of failure. Assert the bytes.
+#
+# Also probed over plain HTTP on the same host: :80 is where the container
+# healthcheck (`curl -f http://localhost/health`) and certbot's HTTP-01 renewal
+# live, and the two schemes must agree. If they ever differ again, this says so
+# during the deploy rather than leaving it to a monitor that cannot tell.
+verify_health_endpoint() {
+    local opts body code ctype url http_url fails=0
+    opts=$(curl_base)
+    url="$BASE_URL/health"
+
+    probe_health() {
+        local target="$1" label="$2"
+        set +e
+        # shellcheck disable=SC2086
+        code=$(curl $opts -o /dev/null -w '%{http_code}' "$target" 2>/dev/null)
+        # Header names are lowercased on HTTP/2 and mixed-case on HTTP/1.1; the
+        # 443 server sets `http2 on`, so fold before matching.
+        # shellcheck disable=SC2086
+        ctype=$(curl $opts -o /dev/null -D - "$target" 2>/dev/null \
+                | tr -d '\r' | tr '[:upper:]' '[:lower:]' \
+                | awk '/^content-type:/{print $2}' | head -1)
+        # shellcheck disable=SC2086
+        body=$(curl $opts "$target" 2>/dev/null)
+        set -e
+
+        local problems=""
+        [ "$code" = "200" ] || problems="$problems status=$code(want 200);"
+        case "$ctype" in
+            text/plain*) ;;
+            *) problems="$problems content-type=${ctype:-none}(want text/plain);" ;;
+        esac
+        # $(...) strips the trailing newline, so this compares against "OK".
+        [ "$body" = "OK" ] || problems="$problems body is not OK;"
+
+        if [ -n "$problems" ]; then
+            printf '  %-34s %-5s %s%s%s\n' "$label" "$code" "$C_RED" "$problems" "$C_OFF"
+            printf '      body was: %s\n' "$(printf '%s' "$body" | head -c 120 | tr '\n' ' ')"
+            fails=$((fails + 1))
+        else
+            printf '  %-34s %-5s %stext/plain "OK"%s\n' "$label" "$code" "$C_GRN" "$C_OFF"
+        fi
+    }
+
+    probe_health "$url" "$url"
+
+    # Same endpoint over plaintext on the same host, so a divergence between the
+    # schemes is caught during the deploy rather than by a monitor that cannot
+    # see it. Skipped in two cases:
+    #   BASE_URL is already http://  -- that is the same probe twice
+    #   BASE_URL carries an explicit port -- :443 does not imply :80 on the same
+    #     number, and rewriting the scheme while keeping the port would probe
+    #     TLS with plaintext and fail a good deploy. A false red here costs more
+    #     than the coverage it buys.
+    local hostport
+    case "$BASE_URL" in
+        https://*)
+            hostport="${BASE_URL#https://}"
+            hostport="${hostport%%/*}"
+            case "$hostport" in
+                *:*) info "skipping the plaintext /health probe: BASE_URL names an explicit port ($hostport)" ;;
+                *)   http_url="http://${BASE_URL#https://}/health"
+                     probe_health "$http_url" "$http_url" ;;
+            esac
+            ;;
+    esac
+
+    if [ "$fails" -ne 0 ]; then
+        vfail "$fails /health probe(s) did not return exactly 'OK' as text/plain"
+        bad "a 200 is not enough here: the failure mode is a 200 carrying the"
+        bad "homepage, which every external monitor reads as healthy. Check that"
+        bad "every server block includes snippets/health.conf --"
+        bad "  python3 scripts/ci-nginx-health.py"
+        return 0
+    fi
+    ok "/health returns text/plain \"OK\" on every scheme"
+}
+
 verify_login_roundtrip() {
     # This is the check that would have caught a broken bcrypt bump.
     #
@@ -1043,6 +1142,11 @@ verify_bcrypt_pin() {
 #   /css/style.css       adds Cache-Control -> nested location, same trap
 #   /img/favicon.svg     same location, and the one where CSP actually matters
 #   /api/health          proxied to backend, no add_header at that level
+#   /health              nginx's own endpoint, an `include`d location in both
+#                        the :80 and :443 servers. Headers only here; the bytes
+#                        are asserted by verify_health_endpoint() above, which
+#                        exists because this function reported "200, 5/5" on a
+#                        /health that was serving the homepage.
 #   /404.html            error page: proves `always` is doing its job on 4xx
 #   /nope-404            a real 404 through try_files, same reason
 #   /FreeBSD/            autoindex, the highest-traffic path on the site
@@ -1058,7 +1162,7 @@ verify_security_headers() {
     local -a want=(x-frame-options x-content-type-options referrer-policy content-security-policy)
     [ "$scheme" = "https" ] && want+=(strict-transport-security)
 
-    local -a paths=(/ /admin/ /css/style.css /img/favicon.svg /api/health /404.html /nope-deploy-probe-404 /FreeBSD/)
+    local -a paths=(/ /admin/ /css/style.css /img/favicon.svg /api/health /health /404.html /nope-deploy-probe-404 /FreeBSD/)
     local path hdrs missing h code fails=0
 
     printf '  %-28s %-5s %s\n' "PATH" "CODE" "HEADERS"
@@ -1117,6 +1221,7 @@ verify_all() {
     step "Verifying"
     verify_container_health "$HEALTH_TIMEOUT"
     verify_api_health
+    verify_health_endpoint
     verify_login_roundtrip
     verify_bcrypt_pin
     step "Verifying security headers on the live site"

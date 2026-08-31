@@ -1,26 +1,87 @@
-# Root build-context excludes.
+# ============================================================================
+# THE ROOT BUILD CONTEXT FILTER. THIS FILE IS LOAD-BEARING.
+# ============================================================================
 #
-# SCOPE WARNING: Docker reads .dockerignore from the root of the *build
-# context*, not from the repo root. Every context in docker-compose.yml is a
-# subdirectory (./backend, ./sync, ./rsync), so this file is currently INERT --
-# see backend/.dockerignore and sync/.dockerignore for the ones that take
-# effect today.
+# docker-compose.yml builds `backend` and `sync` with `context: .`, so this is
+# the .dockerignore Docker actually reads for both. It used to be inert -- every
+# context was a subdirectory and this file was kept only as a sketch of what the
+# next change would need. That change is here; it is now the only thing between
+# a build and the entire repository.
 #
-# It is kept because a root context is the likely shape of the next change:
-# a models package shared by backend/ and sync/ (Phase 1) cannot be COPYed from
-# a subdirectory context, and moving `context:` to `.` would otherwise ship the
-# whole repo -- .git, tests/, frontend/, data/ -- into the image.
+# What sits at the root of this context:
+#   .env, .credentials   real secrets on a developer machine and on the server
+#   data/                on production, a SYMLINK to 2.4 TB of mirror data
+#   .git/                every version of every file, including deleted ones
+#   frontend/            the site, plus 13 self-hosted woff2 font files
+#   nginx/, scripts/     config and shell, needed by no Python image
+#   tests/               run from a checkout in CI, never inside an image
+#
+# DENY-BY-DEFAULT, NOT ALLOW-BY-DEFAULT
+# -------------------------------------
+# The first line excludes everything; the `!` lines re-admit exactly the two
+# subtrees that a COPY reads. That ordering matters -- Docker applies patterns
+# in order and the LAST match wins, so the re-exclusions at the bottom must stay
+# below the `!` lines.
+#
+# The point of the inversion is what happens to a directory nobody has thought
+# of yet. With a denylist, a new top-level `terraform/` or `backups/` is shipped
+# into both images the day it is created and nothing says so. With this, it is
+# excluded until someone adds a `!` line on purpose.
+#
+# PATTERNS DO NOT CROSS `/`
+# -------------------------
+# `*` compiles to `[^/]*`, so the leading `*` matches top-level entries only --
+# which is exactly why `!backend` can then re-admit the whole backend/ subtree.
+# For the same reason anything that can appear at ANY depth needs the `**/`
+# prefix: `__pycache__` alone would not match `backend/app/api/__pycache__`.
+# Verified below, not assumed -- see the CI job `docker-build`, which plants
+# canary files and fails if any of them reaches a layer.
+#
+# THE SECOND LOCK
+# ---------------
+# This file is not the only defence, on purpose. backend/Dockerfile and
+# sync/Dockerfile scope every COPY to `backend/` or `sync/`, so a hole here
+# costs build time and cache churn but still cannot put a repo-root secret in a
+# layer. Do not replace either COPY with `COPY . .`.
+#
+# ADDING THE SHARED MODELS PACKAGE
+# --------------------------------
+# Add `!shared` under the `!` block below and one scoped COPY line to each
+# Dockerfile. Nothing else.
+#
+# NOT USED BY EVERY BUILD. The `rsync` service still builds from ./rsync, and
+# Docker reads .dockerignore from the root of the build context -- so for that
+# service this file does not apply.
 
-# VCS
-.git/
-.gitignore
-.github/
+# ---------------------------------------------------------------------------
+# 1. Deny everything.
+# ---------------------------------------------------------------------------
+*
 
-# Secrets and local state
+# ---------------------------------------------------------------------------
+# 2. Re-admit only the subtrees a COPY reads.
+# ---------------------------------------------------------------------------
+!backend
+!sync
+
+# ---------------------------------------------------------------------------
+# 3. Re-exclude what must never ship, even from inside those subtrees.
+#    These MUST stay below the `!` lines: last match wins.
+# ---------------------------------------------------------------------------
+
+# Build recipes: the image does not need the instructions for building itself.
+backend/Dockerfile
+sync/Dockerfile
+**/.dockerignore
+
+# Secrets and local state. None of these are committed, and the COPY scoping
+# means a root-level .env cannot reach a layer anyway -- but a backend/.env
+# created by hand during debugging could, and this is what stops it.
 **/.env
 **/.env.*
 **/.credentials
-docker-compose.override.yml
+**/*.pem
+**/*.key
 
 # Python build/test artifacts
 **/__pycache__
@@ -36,22 +97,10 @@ docker-compose.override.yml
 **/htmlcov
 **/coverage.xml
 
-# Tests and tooling config: not needed at runtime in any image
+# Tests do not run inside a runtime image; CI runs them from the checkout.
 **/tests
-pyproject.toml
-
-# Not part of any application image
-data/
-docs/
-scripts/
-nginx/
-rsync/
-LICENSE
-README.md
-CONTRIBUTING.md
-CLAUDE.md
-.claude/
-docker-compose*.yml
+**/test_*.py
+**/conftest.py
 
 # Editor / OS noise
 **/.vscode
