@@ -70,7 +70,13 @@ docker compose stop nginx 2>/dev/null || true
 
 # Start nginx with bootstrap config (HTTP only, no SSL certs needed)
 log_info "Starting nginx in HTTP-only mode..."
-NGINX_SITE_CONF=bootstrap.conf docker compose up -d nginx
+# --force-recreate, not a plain `up -d`. Compose only recreates a container when
+# its own definition changed, and NGINX_SITE is an interpolation inside a volume
+# source: flipping it does change the resolved definition, but a container left
+# over from a previous run of this script with the SAME value would be reused
+# with whatever mounts it was created with. Recreating makes docker re-resolve
+# every bind mount, which is the only way a mount change takes effect.
+NGINX_SITE=bootstrap docker compose up -d --force-recreate nginx
 
 # Wait for nginx to be ready
 sleep 5
@@ -125,33 +131,59 @@ fi
 
 log_info "SSL certificate obtained successfully!"
 
-# Step 3: Create production SSL config with the correct domain
+# Step 3: Point .env at the production site config
 log_info "Step 3: Configuring nginx with SSL..."
 
-# Escape domain for safe use in sed
-ESCAPED_DOMAIN=$(printf '%s\n' "$DOMAIN" | sed 's/[&/\]/\\&/g')
+# This step used to do:
+#     cp nginx/sites/default.conf nginx/sites/production.conf
+#     sed -i "s/mirror.example.com/$DOMAIN/g" nginx/sites/production.conf
+#
+# That made the file which actually served production untracked. git could not
+# update it, so every nginx change committed after February reached the server
+# and stopped there; CI could only validate a fresh re-creation of it, never the
+# copy on disk; and by 2026-08-31 the real file had 5 add_header directives
+# against default.conf's 21, with nothing anywhere reporting the difference.
+#
+# nginx/sites/production/production.conf is now tracked and contains no domain.
+# The only domain-dependent lines left are the two certificate paths, which
+# scripts/nginx-apply.sh renders into nginx/snippets/tls-cert.conf.
+"$INSTALL_DIR/scripts/nginx-apply.sh" render
 
-# Copy default.conf to production.conf and substitute domain
-cp nginx/sites/default.conf nginx/sites/production.conf
-sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" nginx/sites/production.conf
-
-# Step 4: Update .env to use production config and restart nginx with SSL
+# Step 4: Update .env to use the production site and restart nginx with SSL
 log_info "Step 4: Starting nginx with SSL enabled..."
 
-# Stop bootstrap nginx
-docker compose stop nginx
-
-# Update NGINX_SITE_CONF in .env to use production config
-if grep -q "^NGINX_SITE_CONF=" "$ENV_FILE"; then
-    sed -i "s/^NGINX_SITE_CONF=.*/NGINX_SITE_CONF=production.conf/" "$ENV_FILE"
+# NGINX_SITE replaces NGINX_SITE_CONF. The old variable named a FILE under
+# nginx/sites/; the new one names a DIRECTORY there, because docker-compose.yml
+# now mounts that directory at /etc/nginx/sites-enabled rather than bind-mounting
+# an individual file (which pinned an inode and stopped config changes reaching
+# the container at all). Remove the retired key so a stale value cannot be read
+# by anything that has not been updated.
+sed -i "/^NGINX_SITE_CONF=/d" "$ENV_FILE"
+if grep -q "^NGINX_SITE=" "$ENV_FILE"; then
+    sed -i "s/^NGINX_SITE=.*/NGINX_SITE=production/" "$ENV_FILE"
 else
-    echo "NGINX_SITE_CONF=production.conf" >> "$ENV_FILE"
+    echo "NGINX_SITE=production" >> "$ENV_FILE"
 fi
 
-# Start with production SSL config
-docker compose up -d nginx
+# Legacy artifact from the cp+sed above. Left in place it is inert -- nothing
+# mounts it any more -- but it looks like the live config, which is how the
+# 2026-08-31 outage stayed invisible for six months.
+if [[ -f nginx/sites/production.conf ]]; then
+    log_warn "Removing the obsolete generated nginx/sites/production.conf"
+    rm -f nginx/sites/production.conf
+fi
+
+# --force-recreate so docker re-resolves the bind mounts against the new
+# NGINX_SITE. `docker compose up -d` alone would reuse a running container.
+docker compose up -d --force-recreate nginx
 
 sleep 5
+
+# Prove the container is serving THIS checkout before believing anything else.
+if ! "$INSTALL_DIR/scripts/nginx-apply.sh" check; then
+    log_error "nginx is running but is not serving the config in $INSTALL_DIR."
+    exit 1
+fi
 
 # Verify HTTPS is working
 if curl -sSf "https://$DOMAIN/health" > /dev/null 2>&1; then
@@ -168,7 +200,12 @@ log_info "Step 5: Setting up certificate auto-renewal..."
 
 cat > /etc/cron.d/certbot-renew << EOF
 # Renew Let's Encrypt certificates twice daily
-0 0,12 * * * root cd $INSTALL_DIR && docker compose --profile ssl run --rm certbot renew --quiet && docker compose exec nginx nginx -s reload
+# nginx-apply.sh, not a bare "nginx -s reload". The old line reloaded without
+# ever running "nginx -t", so a renewal that landed next to a broken config
+# would have taken the site down at midnight with no operator present. It also
+# could not tell a reload that picked up the new certificate from one that
+# re-read a stale file, which is the failure this repo shipped on 2026-08-31.
+0 0,12 * * * root cd $INSTALL_DIR && docker compose --profile ssl run --rm certbot renew --quiet && $INSTALL_DIR/scripts/nginx-apply.sh reload
 EOF
 
 log_info "Certificate auto-renewal configured"

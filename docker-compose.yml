@@ -19,9 +19,32 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/sites/${NGINX_SITE_CONF:-dev.conf}:/etc/nginx/sites-enabled/active.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
+      # ---------------------------------------------------------------------
+      # DIRECTORY mounts, not file mounts. This is load-bearing.
+      # ---------------------------------------------------------------------
+      #
+      # A single-file bind mount pins an inode. `git checkout` writes a new file
+      # and renames it over the old name, producing a new inode, and the
+      # container keeps the old one -- so a config change reaches the host and
+      # never reaches nginx. On 2026-08-31 the container was still serving a
+      # 2026-02-12 nginx.conf; `nginx -t` passed and `nginx -s reload` succeeded,
+      # both re-reading the February file. See nginx/loader.conf.
+      #
+      # A directory mount resolves the path on every open(), so a renamed-over
+      # file is picked up by the next `nginx -s reload` with no recreate.
+      #
+      # ./nginx is mounted whole so nginx.conf and snippets/ are both visible.
+      # sites-enabled is a SEPARATE mount of exactly one profile directory:
+      # nginx.conf globs /etc/nginx/sites-enabled/*.conf, so mounting all of
+      # ./nginx/sites there would load dev, bootstrap and production together
+      # and have them fight over `listen 80` with conflicting server_names.
+      #
+      # loader.conf is the one remaining file mount and the one file in the repo
+      # that must never change; it is a single `include` line pointing at the
+      # tree below. /etc/nginx/nginx.conf cannot be a directory.
+      - ./nginx/loader.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx:/etc/nginx/host:ro
+      - ./nginx/sites/${NGINX_SITE:-dev}:/etc/nginx/sites-enabled:ro
       - ./frontend/public:/var/www/public:ro
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
       - certbot-webroot:/var/www/certbot:ro

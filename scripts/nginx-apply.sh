@@ -1,0 +1,329 @@
+#!/usr/bin/env bash
+#
+# bsdmirror - make the running nginx match the checkout, gracefully.
+#
+# Why this exists
+# ---------------
+# On 2026-08-31 a header change was deployed, reported DEPLOYED AND VERIFIED,
+# and changed nothing. Three independent reasons, and this script closes all
+# three:
+#
+#   1. scripts/deploy.sh recreates only backend and sync (--no-deps). Nothing
+#      in the deploy path had ever touched nginx. deploy.sh now calls this
+#      script whenever a deploy moves a file under nginx/.
+#   2. The config arrived through single-file bind mounts, which pin an inode,
+#      so `nginx -s reload` re-read a February file and reported success.
+#      docker-compose.yml now uses directory mounts; `check` below proves it,
+#      by comparing host digests against in-container digests, and refuses to
+#      reload a container that cannot see the current files.
+#   3. The file that actually served production was generated and untracked.
+#      Only the two ssl_certificate lines are still generated; `render` writes
+#      them, in place, from DOMAIN.
+#
+# Every write here is truncate-in-place (`: >` then append), never
+# create-and-rename. A rename would give the file a new inode -- harmless under
+# the directory mounts this repo now uses, but this script also has to work on a
+# host that has not adopted them yet, which is the one-time migration case.
+#
+# Usage
+# -----
+#   scripts/nginx-apply.sh                 render, check, test, graceful reload
+#   scripts/nginx-apply.sh render          write snippets/tls-cert.conf only
+#   scripts/nginx-apply.sh check           prove the container sees this checkout
+#   scripts/nginx-apply.sh test            render + check + `nginx -t`
+#   scripts/nginx-apply.sh reload          the full sequence (default)
+#
+# Exit codes:
+#   0  done
+#   1  usage or preflight error
+#   2  the container is not serving this checkout -- it needs recreating
+#   3  `nginx -t` failed; nothing was reloaded and nginx keeps its old config
+#
+set -euo pipefail
+
+DEPLOY_DIR="${DEPLOY_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ACTION="${1:-reload}"
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_RED=$'\033[0;31m'; C_GRN=$'\033[0;32m'; C_YEL=$'\033[1;33m'; C_OFF=$'\033[0m'
+else
+    C_RED=""; C_GRN=""; C_YEL=""; C_OFF=""
+fi
+info() { printf '%s[INFO]%s %s\n' "$C_GRN" "$C_OFF" "$*"; }
+warn() { printf '%s[WARN]%s %s\n' "$C_YEL" "$C_OFF" "$*" >&2; }
+err()  { printf '%s[ERROR]%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; }
+ok()   { printf '  %s[ OK ]%s %s\n' "$C_GRN" "$C_OFF" "$*"; }
+bad()  { printf '  %s[FAIL]%s %s\n' "$C_RED" "$C_OFF" "$*" >&2; }
+
+cd "$DEPLOY_DIR"
+
+# Read one non-secret key from .env without sourcing it. .env holds a cron
+# expression with spaces and asterisks and four secrets; sourcing it would
+# execute the former and export the latter.
+env_get() {
+    local key="$1" default="${2:-}" value
+    [ -f .env ] || { printf '%s' "$default"; return 0; }
+    value=$(grep -m1 "^${key}=" .env 2>/dev/null | cut -d= -f2- || true)
+    printf '%s' "${value:-$default}"
+}
+
+NGINX_SITE=$(env_get NGINX_SITE "")
+if [ -z "$NGINX_SITE" ]; then
+    if [ -n "$(env_get NGINX_SITE_CONF "")" ]; then
+        err "$DEPLOY_DIR/.env sets the retired variable NGINX_SITE_CONF and not NGINX_SITE."
+        err "NGINX_SITE_CONF named a FILE under nginx/sites/. NGINX_SITE names a"
+        err "DIRECTORY there, because the site config is now a directory mount."
+        err "Fix it, then recreate nginx once:"
+        err "    sed -i 's/^NGINX_SITE_CONF=.*/NGINX_SITE=production/' .env"
+        err "    docker compose up -d --force-recreate nginx"
+        exit 1
+    fi
+    warn "NGINX_SITE is not set in .env; assuming 'dev', which is compose's default"
+    NGINX_SITE="dev"
+fi
+
+SITE_DIR="nginx/sites/$NGINX_SITE"
+[ -d "$SITE_DIR" ] || { err "NGINX_SITE=$NGINX_SITE but $DEPLOY_DIR/$SITE_DIR does not exist"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# render: the only generated nginx file left
+# ---------------------------------------------------------------------------
+TLS_CERT_SNIPPET="nginx/snippets/tls-cert.conf"
+
+render() {
+    if [ "$NGINX_SITE" != "production" ]; then
+        info "NGINX_SITE=$NGINX_SITE does not use TLS; nothing to render"
+        return 0
+    fi
+
+    local domain
+    domain=$(env_get DOMAIN "")
+    [ -n "$domain" ] || { err "DOMAIN is not set in $DEPLOY_DIR/.env; cannot render $TLS_CERT_SNIPPET"; exit 1; }
+
+    # A domain reaches this script from .env and is written into a file nginx
+    # parses. Constrain it to what a hostname may contain so a stray line in
+    # .env cannot inject an nginx directive here.
+    case "$domain" in
+        *[!A-Za-z0-9.-]*|-*|.*|"") err "DOMAIN='$domain' is not a plausible hostname; refusing to render it into nginx config"; exit 1 ;;
+    esac
+
+    local live="/etc/letsencrypt/live/$domain"
+    local desired
+    desired=$(cat <<EOF
+# GENERATED by scripts/nginx-apply.sh -- do not edit, do not commit.
+#
+# The certificate paths are the only domain-dependent lines in the nginx tree.
+# certbot writes to /etc/letsencrypt/live/<domain>/ and nginx will not take a
+# variable in ssl_certificate without moving certificate loading into every TLS
+# handshake, so this file exists. Everything else that serves production is
+# tracked in git.
+#
+# Rendered for: $domain
+ssl_certificate     $live/fullchain.pem;
+ssl_certificate_key $live/privkey.pem;
+EOF
+)
+
+    if [ -f "$TLS_CERT_SNIPPET" ] && [ "$(cat "$TLS_CERT_SNIPPET")" = "$desired" ]; then
+        ok "$TLS_CERT_SNIPPET already matches DOMAIN=$domain"
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$TLS_CERT_SNIPPET")"
+    # Truncate in place, then append. Never > a temp file and mv: that changes
+    # the inode, which is exactly the failure this whole change is about.
+    : > "$TLS_CERT_SNIPPET"
+    printf '%s\n' "$desired" >> "$TLS_CERT_SNIPPET"
+    ok "rendered $TLS_CERT_SNIPPET for $domain"
+}
+
+# ---------------------------------------------------------------------------
+# check: does the container actually see this checkout?
+# ---------------------------------------------------------------------------
+#
+# This is the check that was missing on 2026-08-31. `nginx -t` answered "is the
+# config the container can see valid", which was true and useless. This answers
+# "is the config the container can see the config in this checkout".
+compose() { docker compose "$@"; }
+
+check() {
+    local cid
+    cid=$(compose ps -q nginx 2>/dev/null || true)
+    if [ -z "$cid" ]; then
+        err "the nginx container is not running; bring the stack up first: docker compose up -d"
+        exit 2
+    fi
+
+    # Every file the container should be reading, and where it should read it.
+    local -a host_paths=() cntr_paths=()
+    host_paths+=("nginx/loader.conf");  cntr_paths+=("/etc/nginx/nginx.conf")
+    host_paths+=("nginx/nginx.conf");   cntr_paths+=("/etc/nginx/host/nginx.conf")
+
+    local f base
+    for f in nginx/snippets/*.conf; do
+        [ -e "$f" ] || continue
+        host_paths+=("$f"); cntr_paths+=("/etc/nginx/host/snippets/$(basename "$f")")
+    done
+    for f in "$SITE_DIR"/*.conf; do
+        [ -e "$f" ] || continue
+        base=$(basename "$f")
+        host_paths+=("$f"); cntr_paths+=("/etc/nginx/sites-enabled/$base")
+    done
+
+    local i n stale=0 missing=0 hsum csum
+    n=${#host_paths[@]}
+    for (( i = 0; i < n; i++ )); do
+        hsum=$(sha256sum "${host_paths[$i]}" | cut -d' ' -f1)
+        if ! csum=$(compose exec -T nginx sha256sum "${cntr_paths[$i]}" 2>/dev/null | cut -d' ' -f1); then
+            csum=""
+        fi
+        if [ -z "$csum" ]; then
+            bad "MISSING in container: ${cntr_paths[$i]}  (host ${host_paths[$i]})"
+            missing=$((missing + 1))
+        elif [ "$csum" != "$hsum" ]; then
+            bad "STALE in container:   ${cntr_paths[$i]}"
+            bad "    host      ${host_paths[$i]}  $hsum"
+            bad "    container ${cntr_paths[$i]}  $csum"
+            stale=$((stale + 1))
+        else
+            ok "${cntr_paths[$i]}  ${hsum:0:12}"
+        fi
+    done
+
+    if [ "$stale" -ne 0 ] || [ "$missing" -ne 0 ]; then
+        err "the nginx container is NOT serving this checkout ($stale stale, $missing missing)."
+        err "A reload here would succeed and change nothing -- which is what happened on"
+        err "2026-08-31. Recreate the container so docker re-resolves its mounts:"
+        err "    cd $DEPLOY_DIR && docker compose up -d --force-recreate nginx"
+        err "A recreate drops every in-flight download. A reload would not, but a"
+        err "reload cannot fix a mount -- docker resolves bind mounts when the"
+        err "container is created, and never again."
+        exit 2
+    fi
+    ok "container is serving this checkout ($n files match)"
+}
+
+# ---------------------------------------------------------------------------
+# test / reload
+# ---------------------------------------------------------------------------
+config_test() {
+    # No -c. nginx/loader.conf is mounted at /etc/nginx/nginx.conf precisely so
+    # that a bare `nginx -t` validates the real tree; if this ever needs a -c,
+    # the mount scheme has regressed.
+    if ! compose exec -T nginx nginx -t; then
+        err "nginx -t failed. NOTHING was reloaded; nginx is still running its previous"
+        err "configuration and the site is unaffected. Fix the config and re-run."
+        exit 3
+    fi
+    ok "nginx -t passed inside the running container"
+}
+
+# Worker processes, read from /proc, split by whether they are still accepting
+# new connections.
+#
+# Not `ps`: the nginx image has no procps. Not `nginx -T`: that spawns a NEW
+# process which parses the files on disk, so it reports what the config SAYS,
+# never what the running master is using -- exactly the distinction this whole
+# change exists to make.
+#
+# nginx rewrites a draining worker's process title to
+# "nginx: worker process is shutting down", which is the only externally visible
+# signal that it has stopped accepting. That distinction is load-bearing below.
+accepting_workers() {
+    # shellcheck disable=SC2016  # deliberate: $p and $c must expand in the
+    # container's shell, not in this one. Double quotes would interpolate here.
+    compose exec -T nginx sh -c '
+for p in /proc/[0-9]*; do
+    [ -r "$p/cmdline" ] || continue
+    c=$(tr "\0" " " < "$p/cmdline")
+    case "$c" in
+        *"shutting down"*) ;;
+        *"worker process"*) echo "${p#/proc/}" ;;
+    esac
+done' 2>/dev/null | tr -d "\r" | sort -n | tr "\n" " "
+}
+
+graceful_reload() {
+    # SIGHUP, not a restart. nginx starts new workers on the new config and lets
+    # the old workers finish the requests they are already serving. A mirror
+    # download is a single long-lived response, and a restart cuts every one of
+    # them the instant it happens.
+    #
+    # MEASURED, not assumed. Reloading in the middle of a rate-limited download
+    # of an 8 MiB file from /FreeBSD/, four runs per protocol:
+    #
+    #     HTTP/1.1   12/12 completed byte-identical (across all trials)
+    #     HTTP/2      1/4  completed; the other three were truncated in the
+    #                      last ~3% of the file, ~13s after the reload
+    #     HTTP/2, no reload at all
+    #                 4/4  completed -- so the truncation tracks the reload
+    #
+    # So: a reload is safe for HTTP/1.1, and can still cut a long HTTP/2
+    # transfer during the old worker's shutdown. That is a real cost, and it is
+    # named here rather than papered over. It is still strictly better than a
+    # restart, which drops every connection immediately and unconditionally.
+    #
+    # Blast radius: the BSD mirror clients that matter -- fetch(1), pkg, and
+    # rsync -- are HTTP/1.1 or not HTTP at all. HTTP/2 here means a browser
+    # downloading an ISO. And deploy.sh only reloads when a deploy actually
+    # changed something under nginx/, so this is not on the path of a routine
+    # backend deploy.
+    #
+    # Measured on Docker Desktop for Mac. The mechanism is nginx-side (the old
+    # worker finalising an HTTP/2 connection during shutdown), but the exact
+    # rate on the Linux production host has not been measured.
+    local before after waited=0
+    before=$(accepting_workers)
+    info "workers accepting before reload: ${before:-<none>}"
+
+    compose exec -T nginx nginx -s reload
+
+    # Then WAIT for proof. Two measured facts, both found while building this:
+    #
+    #   1. `nginx -s reload` only sends SIGHUP and returns. Probing the site the
+    #      instant it returns still got the OLD header value.
+    #   2. Waiting for a new worker to appear is NOT enough. Between the master
+    #      forking new workers and the old ones being told to shut down, BOTH
+    #      sets accept from the shared listen socket, so a request can still be
+    #      answered from the old configuration. Observed exactly once in six
+    #      probes, on the first one -- which is precisely the kind of 1-in-6
+    #      flake that gets written off as noise.
+    #
+    # The condition that is actually sufficient: every worker still accepting
+    # connections is a NEW one. Old workers that are draining have had their
+    # process title changed to "is shutting down" and no longer accept, so they
+    # drop out of accepting_workers() while continuing to serve the mirror
+    # downloads already in flight. That is the behaviour we want to keep.
+    while [ "$waited" -lt 30 ]; do
+        after=$(accepting_workers)
+        if [ -n "$after" ]; then
+            local pid overlap=0
+            for pid in $after; do
+                case " $before " in *" $pid "*) overlap=1 ;; esac
+            done
+            if [ "$overlap" -eq 0 ]; then
+                ok "nginx reloaded: every accepting worker is new (${after})"
+                info "old workers left behind are draining in-flight responses (see the note above on HTTP/2)"
+                return 0
+            fi
+        fi
+        sleep 1
+        waited=$((waited + 1))
+    done
+
+    err "nginx -s reload was accepted but the old workers were still accepting"
+    err "connections after ${waited}s. The master may have rejected the config"
+    err "after nginx -t passed. Check: docker compose logs --tail=50 nginx"
+    exit 3
+}
+
+case "$ACTION" in
+    render) render ;;
+    check)  check ;;
+    test)   render; check; config_test ;;
+    reload) render; check; config_test; graceful_reload ;;
+    -h|--help)
+        awk 'NR==1 {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"; exit 0 ;;
+    *)
+        err "unknown action: $ACTION  (render | check | test | reload)"; exit 1 ;;
+esac

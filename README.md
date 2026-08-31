@@ -115,6 +115,8 @@ Key environment variables in `.env`:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
+| `NGINX_SITE` | Which site profile nginx serves: a **directory** name under `nginx/sites/` — `dev`, `bootstrap` or `production`. `docker-compose.yml` mounts that directory *as* `/etc/nginx/sites-enabled`, so it decides the active config. `scripts/setup.sh` writes `dev`; `scripts/ssl-setup.sh` moves it to `production`. Changing it requires `docker compose up -d --force-recreate nginx` — docker resolves bind mounts at container creation, so a reload cannot pick it up. Replaces the retired `NGINX_SITE_CONF`, which named a file. | `dev` |
+| `DOMAIN` | Public hostname. Used by `scripts/ssl-setup.sh` for the certificate, and by `scripts/nginx-apply.sh` to render the two `ssl_certificate` lines into `nginx/snippets/tls-cert.conf`. The site configs themselves contain no domain. | *(set at setup)* |
 | `FREEBSD_UPSTREAM` | FreeBSD rsync upstream URL | `rsync://ftp.freebsd.org/FreeBSD/` |
 | `NETBSD_UPSTREAM` | NetBSD rsync upstream URL | `rsync://rsync.NetBSD.org/NetBSD/` |
 | `OPENBSD_UPSTREAM` | OpenBSD rsync upstream URL | `rsync://ftp2.eu.openbsd.org/OpenBSD/` |

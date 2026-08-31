@@ -3,10 +3,10 @@
 # This repo's first 36 commits contain 30 post-deploy "Fix ..." commits, almost
 # all of them configuration and integration failures. The jobs below are chosen
 # to catch that specific class of failure before a deploy, not to maximise
-# coverage: compose parsing, nginx config parsing (including the production
-# config that scripts/ssl-setup.sh generates at runtime), plus the lint, SAST
-# and test tooling that has been pinned in backend/requirements.txt and never
-# run.
+# coverage: compose parsing, nginx config parsing for every site profile using
+# the mounts compose itself resolves, the security headers asserted on the wire
+# from a really running nginx, plus the lint, SAST and test tooling that has
+# been pinned in backend/requirements.txt and never run.
 #
 # Every version here is derived from something already in the repo:
 #   PYTHON_VERSION  must equal the tag in backend/Dockerfile and sync/Dockerfile
@@ -507,6 +507,27 @@ jobs:
           run_config "dev overlay" -f docker-compose.yml -f docker-compose.dev.yml || rc=1
           exit "$rc"
 
+      # NGINX_SITE selects a DIRECTORY under nginx/sites/ which compose mounts as
+      # /etc/nginx/sites-enabled. A typo, or a profile directory that was renamed
+      # without updating setup.sh/ssl-setup.sh, resolves to a path that does not
+      # exist -- and docker then CREATES it as an empty directory at `up` time
+      # and starts nginx with no server block at all. Compose does not warn.
+      # Check every value the scripts can write.
+      - name: Every NGINX_SITE the scripts can write must resolve to a real profile
+        run: |
+          fail=0
+          for site in dev bootstrap production; do
+            src=$(NGINX_SITE="$site" docker compose config --format json \
+                  | python3 -c 'import json,sys; print(next(v["source"] for v in json.load(sys.stdin)["services"]["nginx"]["volumes"] if v["target"]=="/etc/nginx/sites-enabled"))')
+            if [ ! -d "$src" ]; then
+              echo "::error::NGINX_SITE=$site resolves to $src, which does not exist. docker would create it empty and nginx would start with no server block."
+              fail=1
+            else
+              echo "ok: NGINX_SITE=$site -> $src"
+            fi
+          done
+          exit "$fail"
+
   # ---------------------------------------------------------------------------
   # nginx -t
   # ---------------------------------------------------------------------------
@@ -515,99 +536,271 @@ jobs:
   # so the module set, compiled-in paths and the `nginx` user are the production
   # ones rather than an ubuntu apt build's.
   #
+  # THE MOUNT RECIPE IS DERIVED FROM docker-compose.yml, NOT WRITTEN HERE.
+  #
+  # It used to be written here, as a hardcoded pair of `-v` flags. That made this
+  # job an independent guess at what production looked like, and on 2026-08-31
+  # the guess and production turned out to have been different since February:
+  # compose mounted two INDIVIDUAL FILES (a single-file bind mount pins an inode,
+  # and git renames a new file over the old one, so config changes never reached
+  # the container) while the file that actually served the site was an untracked
+  # `cp default.conf production.conf`. This job was validating a layout that
+  # nothing ran, and reporting success.
+  #
+  # `docker compose config` is now the single source of the mount list, and the
+  # coverage assertion in scripts/ci-nginx-mounts.py fails the job if compose
+  # grows an /etc/nginx mount this job does not map. Changing the mount scheme in
+  # compose therefore cannot leave CI validating the old one.
+  #
   # What this does and does not prove:
   #   proves     syntax, directive context, unknown directives, duplicate
-  #              server/location blocks, and that every ssl_certificate path is
-  #              loadable -- nginx reads certificates during `-t`.
-  #   does not   that `backend:8000` resolves, that /data/mirrors or
-  #     prove    /var/www/public exist, or that any location returns the right
-  #              body. Those need the stack up and belong to the deploy gate.
+  #              server/location blocks, that every include resolves, that every
+  #              ssl_certificate path is loadable (nginx reads certificates
+  #              during `-t`), and -- in the last step -- that the headers come
+  #              out of a really running server on the wire.
+  #   does not   that `backend:8000` resolves, or that /data/mirrors exists.
+  #     prove    Those need the full stack and belong to the deploy gate,
+  #              scripts/deploy.sh verify_security_headers().
   nginx:
-    name: nginx -t (all site configs)
+    name: nginx -t (all site profiles)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Site configs referenced by name must exist
+      - name: Structure of nginx/ must match what compose and the scripts expect
         run: |
-          # docker-compose.yml defaults NGINX_SITE_CONF to dev.conf;
-          # scripts/ssl-setup.sh boots with bootstrap.conf and generates
-          # production.conf from default.conf. A rename breaks a deploy silently.
           fail=0
-          for required in dev.conf default.conf bootstrap.conf; do
-            if [ ! -f "nginx/sites/$required" ]; then
-              echo "::error::nginx/sites/$required is missing, but docker-compose.yml or scripts/ssl-setup.sh reference it by name"
+
+          # NGINX_SITE selects a DIRECTORY under nginx/sites/. These three are
+          # named in docker-compose.yml, scripts/setup.sh and
+          # scripts/ssl-setup.sh; a rename breaks a deploy silently.
+          for required in dev bootstrap production; do
+            if [ ! -d "nginx/sites/$required" ]; then
+              echo "::error::nginx/sites/$required/ is missing, but docker-compose.yml, scripts/setup.sh or scripts/ssl-setup.sh select it by name"
               fail=1
             fi
           done
-          exit "$fail"
 
-      - name: Build the fixtures nginx -t needs
-        run: |
-          CI_DOMAIN=ci.bsdmirror.test
-
-          # nginx loads certificates during `-t`, so default.conf cannot be
-          # validated without a readable key pair at the path it names.
-          for cn in mirror.example.com "$CI_DOMAIN"; do
-            mkdir -p "ci-fixtures/letsencrypt/live/$cn"
-            openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-              -subj "/CN=$cn" \
-              -keyout "ci-fixtures/letsencrypt/live/$cn/privkey.pem" \
-              -out    "ci-fixtures/letsencrypt/live/$cn/fullchain.pem" 2>/dev/null
-          done
-
-          # Reproduce scripts/ssl-setup.sh step 3 exactly (lines 127-131) so the
-          # config that actually serves production -- not just the template it
-          # is cut from -- gets validated.
-          mkdir -p ci-fixtures/sites
-          cp nginx/sites/default.conf ci-fixtures/sites/production.conf
-          ESCAPED_DOMAIN=$(printf '%s\n' "$CI_DOMAIN" | sed 's/[&/\]/\\&/g')
-          sed -i "s/mirror.example.com/$ESCAPED_DOMAIN/g" ci-fixtures/sites/production.conf
-
-          if grep -q 'mirror.example.com' ci-fixtures/sites/production.conf; then
-            echo "::error file=scripts/ssl-setup.sh::domain substitution left 'mirror.example.com' in the generated production.conf"
-            exit 1
-          fi
-          echo "generated ci-fixtures/sites/production.conf for $CI_DOMAIN"
-
-      - name: Pull ${{ env.NGINX_IMAGE }}
-        run: docker pull "$NGINX_IMAGE"
-
-      - name: nginx -t every site config
-        run: |
-          # Glob, not a hardcoded list: a new nginx/sites/*.conf is validated the
-          # day it lands rather than the day it is deployed.
-          configs=(nginx/sites/*.conf ci-fixtures/sites/production.conf)
-
-          rc=0
-          for conf in "${configs[@]}"; do
-            echo "::group::nginx -t  $conf"
-            set +e
-            docker run --rm \
-              -v "$PWD/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
-              -v "$PWD/$conf:/etc/nginx/sites-enabled/active.conf:ro" \
-              -v "$PWD/ci-fixtures/letsencrypt:/etc/letsencrypt:ro" \
-              "$NGINX_IMAGE" nginx -t >nginx-t.out 2>&1
-            trc=$?
-            set -e
-            cat nginx-t.out
-            echo "::endgroup::"
-            if [ "$trc" -ne 0 ]; then
-              echo "::error file=$conf::nginx -t failed"
-              rc=1
-            elif grep -q '\[warn\]' nginx-t.out; then
-              echo "::warning file=$conf::nginx -t passed with warnings"
-            else
-              echo "ok: $conf"
+          # Exactly one .conf per profile. nginx.conf globs
+          # /etc/nginx/sites-enabled/*.conf and the mount makes a profile
+          # directory *be* sites-enabled, so a second file in one of these is a
+          # second server block fighting over `listen 80` -- the kind of thing
+          # this repo has historically discovered in production.
+          for d in nginx/sites/*/; do
+            n=$(find "$d" -maxdepth 1 -name '*.conf' -type f | wc -l)
+            if [ "$n" -ne 1 ]; then
+              echo "::error::$d contains $n .conf files; exactly 1 is allowed, because that directory IS sites-enabled"
+              fail=1
             fi
           done
 
-          if [ "${#configs[@]}" -lt 4 ]; then
-            echo "::error::expected at least 4 configs (3 site configs + generated production.conf), validated ${#configs[@]}"
+          # nginx/loader.conf is the only single-file bind mount left, and it is
+          # safe only because it never changes. Enforce that it stays a stub. If
+          # real configuration ever lands in it, the inode trap comes back for
+          # that configuration and nothing will say so.
+          directives=$(grep -vc '^[[:space:]]*#\|^[[:space:]]*$' nginx/loader.conf || true)
+          if [ "$directives" -ne 1 ]; then
+            echo "::error file=nginx/loader.conf::must contain exactly 1 directive, found $directives. This file is bind-mounted individually, which pins an inode; anything that changes belongs under the directory mount."
+            fail=1
+          fi
+          if ! grep -q '^include /etc/nginx/host/nginx.conf;$' nginx/loader.conf; then
+            echo "::error file=nginx/loader.conf::must be exactly 'include /etc/nginx/host/nginx.conf;'"
+            fail=1
+          fi
+
+          # The site configs are tracked and domain-free. A domain reappearing in
+          # nginx/ means someone reintroduced the generated-config pattern that
+          # kept production invisible to git for six months.
+          if grep -rn 'mirror\.example\.com' nginx/; then
+            echo "::error::a domain is hardcoded in nginx/. Site configs are domain-free; the only domain-dependent lines are rendered into nginx/snippets/tls-cert.conf by scripts/nginx-apply.sh."
+            fail=1
+          fi
+
+          exit "$fail"
+
+      - name: Write .env fixture (placeholder values, never real secrets)
+        run: |
+          cat > .env <<'EOF'
+          DOMAIN=ci.bsdmirror.test
+          NGINX_SITE=production
+          POSTGRES_PASSWORD=ci-placeholder-not-a-secret
+          REDIS_PASSWORD=ci-placeholder-not-a-secret
+          SECRET_KEY=ci-placeholder-not-a-secret
+          ADMIN_PASSWORD=ci-placeholder-not-a-secret
+          FREEBSD_UPSTREAM=rsync://ftp.freebsd.org/FreeBSD/
+          NETBSD_UPSTREAM=rsync://rsync.NetBSD.org/NetBSD/
+          OPENBSD_UPSTREAM=rsync://ftp2.eu.openbsd.org/OpenBSD/
+          EOF
+
+      - name: Render the generated snippet with the real script
+        run: |
+          # scripts/nginx-apply.sh render is what runs on the server, called by
+          # ssl-setup.sh and by deploy.sh. Running the actual script here rather
+          # than reproducing its output is the point: the old fixture was a
+          # hand-copied `cp default.conf production.conf` + sed, and a copy of a
+          # generator is just a second thing to drift.
+          ./scripts/nginx-apply.sh render
+          echo "::group::nginx/snippets/tls-cert.conf"
+          cat nginx/snippets/tls-cert.conf
+          echo "::endgroup::"
+          if ! grep -q 'ci\.bsdmirror\.test' nginx/snippets/tls-cert.conf; then
+            echo "::error file=scripts/nginx-apply.sh::render did not substitute DOMAIN"
             exit 1
           fi
-          echo "validated ${#configs[@]} nginx configurations"
+
+      - name: Build the certificate and webroot fixtures
+        run: |
+          # nginx loads certificates during `-t`, so the production profile
+          # cannot be validated without a readable key pair where tls-cert.conf
+          # says it is.
+          d=ci-fixtures/letsencrypt/live/ci.bsdmirror.test
+          mkdir -p "$d"
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+            -subj "/CN=ci.bsdmirror.test" \
+            -keyout "$d/privkey.pem" -out "$d/fullchain.pem" 2>/dev/null
+
+          mkdir -p ci-fixtures/www/admin ci-fixtures/www/css ci-fixtures/www/img
+          echo ok      > ci-fixtures/www/index.html
+          echo notfound> ci-fixtures/www/404.html
+          echo admin   > ci-fixtures/www/admin/index.html
+          echo 'body{}'> ci-fixtures/www/css/style.css
+          echo '<svg/>'> ci-fixtures/www/img/favicon.svg
+
+      - name: Pull ${{ env.NGINX_IMAGE }}
+        run: docker pull -q "$NGINX_IMAGE"
+
+      - name: nginx -t every site profile, using compose's own mounts
+        run: |
+          set -o pipefail
+          rc=0
+          profiles=(nginx/sites/*/)
+          for d in "${profiles[@]}"; do
+            profile=$(basename "$d")
+            echo "::group::nginx -t  NGINX_SITE=$profile"
+
+            # read -r, not mapfile: mapfile is bash 4+, and this loop is also
+            # run by hand on macOS (bash 3.2) when someone is reproducing a CI
+            # failure. One argument per line, so a path containing a space
+            # cannot be split into two broken arguments the way `$args` would.
+            args=()
+            while IFS= read -r line; do args+=("$line"); done < <(python3 scripts/ci-nginx-mounts.py "$profile")
+
+            # An empty array here is the dangerous case, not a harmless one:
+            # `docker run nginx nginx -t` with no mounts validates the STOCK
+            # IMAGE config and prints "test is successful". Verified by running
+            # exactly that during development. Refuse instead.
+            if [ "${#args[@]}" -eq 0 ]; then
+              echo "::error::scripts/ci-nginx-mounts.py produced no mounts for profile '$profile'; nginx -t would have validated the stock image config and passed"
+              rc=1; echo "::endgroup::"; continue
+            fi
+            echo "mounts derived from docker-compose.yml:"
+            printf '  %s\n' "${args[@]}"
+
+            set +e
+            # nginx -T, not -t: -T additionally dumps the resolved configuration
+            # with a `# configuration file <path>:` banner per included file,
+            # which is how the assertion below proves the tree mount was really
+            # used rather than trusting an exit code.
+            #
+            # No -c. nginx/loader.conf is mounted at /etc/nginx/nginx.conf
+            # precisely so a bare `nginx -t` validates the real tree; if this
+            # ever needs -c, the mount scheme has regressed.
+            docker run --rm "${args[@]}" \
+              -v "$PWD/ci-fixtures/letsencrypt:/etc/letsencrypt:ro" \
+              "$NGINX_IMAGE" nginx -T >nginx-t.out 2>&1
+            trc=$?
+            set -e
+            grep -E '^(nginx:|# configuration file)' nginx-t.out || true
+            echo "::endgroup::"
+
+            if [ "$trc" -ne 0 ]; then
+              echo "::error file=$d::nginx -T failed for profile $profile"
+              cat nginx-t.out
+              rc=1
+              continue
+            fi
+
+            # Provenance. Without this, a job whose mounts silently stopped
+            # working still reports success -- which is the entire 2026-08-31
+            # failure, one layer up.
+            for must in /etc/nginx/host/nginx.conf /etc/nginx/host/snippets/security-headers.conf; do
+              if ! grep -q "^# configuration file $must:" nginx-t.out; then
+                echo "::error file=$d::nginx did not read $must for profile $profile -- the mounts are not reaching it, so this check proved nothing"
+                rc=1
+              fi
+            done
+            if ! grep -qE "^# configuration file /etc/nginx/sites-enabled/.*\.conf:" nginx-t.out; then
+              echo "::error file=$d::nginx read no site config from /etc/nginx/sites-enabled for profile $profile"
+              rc=1
+            fi
+
+            if grep -q '\[warn\]' nginx-t.out; then
+              echo "::warning file=$d::nginx -T passed with warnings for profile $profile"
+            fi
+            echo "ok: $profile"
+          done
+
+          if [ "${#profiles[@]}" -lt 3 ]; then
+            echo "::error::expected at least 3 site profiles (dev, bootstrap, production), found ${#profiles[@]}"
+            exit 1
+          fi
+          echo "validated ${#profiles[@]} nginx site profiles"
           exit "$rc"
+
+      # `nginx -t` proves the config parses. It does NOT prove the headers reach
+      # a client, and that is the whole failure of 2026-08-31: a container
+      # reading a six-month-old inode passes `nginx -t` happily.
+      #
+      # This step starts the production profile for real and asserts the header
+      # set on the wire, per path, using the same probes as
+      # scripts/deploy.sh verify_security_headers(). Per path because add_header
+      # does not inherit: one location adding a single header of its own drops
+      # every inherited one, which is how /admin, the static-asset location and
+      # the whole 443 server each lost the set in turn.
+      - name: Serve the production profile and assert the headers on the wire
+        run: |
+          set -o pipefail
+          args=()
+          while IFS= read -r line; do args+=("$line"); done < <(python3 scripts/ci-nginx-mounts.py production)
+          [ "${#args[@]}" -gt 0 ] || { echo "::error::no mounts derived"; exit 1; }
+
+          docker run -d --name ci-nginx -p 18443:443 "${args[@]}" \
+            -v "$PWD/ci-fixtures/letsencrypt:/etc/letsencrypt:ro" \
+            -v "$PWD/ci-fixtures/www:/var/www/public:ro" \
+            "$NGINX_IMAGE"
+
+          for _ in $(seq 1 30); do
+            curl -sk -o /dev/null "https://localhost:18443/" && break
+            sleep 1
+          done
+
+          want="x-frame-options x-content-type-options referrer-policy content-security-policy strict-transport-security"
+          fails=0
+          for path in / /admin/ /css/style.css /img/favicon.svg /404.html /nope-404; do
+            hdrs=$(curl -sk -o /dev/null -D - "https://localhost:18443$path" | tr -d '\r' | tr '[:upper:]' '[:lower:]')
+            code=$(printf '%s\n' "$hdrs" | awk '/^http\//{c=$2} END{print c}')
+            missing=""
+            for h in $want; do
+              printf '%s\n' "$hdrs" | grep -q "^$h:" || missing="$missing $h"
+            done
+            if [ -n "$missing" ]; then
+              echo "::error::$path returned $code and is missing:$missing"
+              fails=$((fails + 1))
+            else
+              printf '  %-22s %-5s 5/5 ok\n' "$path" "$code"
+            fi
+          done
+
+          echo "::group::nginx logs"
+          docker logs ci-nginx 2>&1 | tail -30
+          echo "::endgroup::"
+          docker rm -f ci-nginx >/dev/null
+
+          if [ "$fails" -ne 0 ]; then
+            echo "::error::add_header does not inherit. A block that adds any header of its own drops every inherited one; include nginx/snippets/security-headers-tls.conf in that block, then add."
+            exit 1
+          fi
+          echo "all probed paths carry the full 5-header set"
 
   # ---------------------------------------------------------------------------
   # shellcheck

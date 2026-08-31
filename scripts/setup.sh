@@ -355,13 +355,19 @@ log_info "Creating environment file..."
 
 # Set mode-specific values
 if [[ "$MODE" == "dev" ]]; then
-    NGINX_SITE_CONF="dev.conf"
+    NGINX_SITE="dev"
     JWT_EXPIRY_HOURS=24
     LETSENCRYPT_ENV="staging"
     DEBUG="true"
     CORS_ORIGINS='["http://localhost:3000","http://localhost:8080","http://localhost"]'
 else
-    NGINX_SITE_CONF="dev.conf"  # ssl-setup.sh will change this to production.conf
+    # Production starts on the dev site because there is no certificate yet.
+    # ssl-setup.sh moves this to bootstrap, obtains the certificate, then sets
+    # NGINX_SITE=production. NGINX_SITE names a DIRECTORY under nginx/sites/,
+    # not a file: docker-compose.yml mounts that directory at
+    # /etc/nginx/sites-enabled, because an individual-file bind mount pins an
+    # inode and silently stops config changes reaching the container.
+    NGINX_SITE="dev"
     JWT_EXPIRY_HOURS=8
     LETSENCRYPT_ENV="production"
     DEBUG="false"
@@ -378,7 +384,8 @@ DOMAIN=$DOMAIN
 ADMIN_EMAIL=$ADMIN_EMAIL
 
 # Nginx
-NGINX_SITE_CONF=$NGINX_SITE_CONF
+# Names a directory under nginx/sites/ -- dev, bootstrap or production.
+NGINX_SITE=$NGINX_SITE
 
 # Database
 POSTGRES_HOST=postgres

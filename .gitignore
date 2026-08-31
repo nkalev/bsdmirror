@@ -17,6 +17,19 @@ nginx/ssl/*.pem
 nginx/ssl/*.key
 nginx/ssl/*.crt
 
+# The only generated file left in the nginx tree: the two ssl_certificate lines,
+# rendered from DOMAIN by scripts/nginx-apply.sh. Host-specific, so it is not
+# committed; CI writes its own fixture copy.
+nginx/snippets/tls-cert.conf
+
+# Retired. scripts/ssl-setup.sh used to `cp default.conf production.conf` and
+# sed the domain into it, producing the untracked file that actually served
+# production -- which is why nginx changes committed after February 2026 never
+# reached the server. nginx/sites/production/production.conf replaces it and is
+# tracked. This entry only keeps a leftover copy on an already-deployed host
+# from showing up as untracked noise; ssl-setup.sh and deploy.sh both delete it.
+nginx/sites/production.conf
+
 # IDE
 .vscode/
 .idea/
