@@ -344,6 +344,10 @@ counter in the script now uses `n=$((n + 1))`.
 - Role-based access control (Admin, Operator, Readonly)
 - Non-root Docker containers with dropped capabilities
 - Internal Docker network for database isolation
+- Admin panel output is escaped by construction: markup is built with a
+  tagged template that escapes every interpolation, and `innerHTML` has a
+  single writer that rejects unescaped strings. See
+  [CONTRIBUTING.md](CONTRIBUTING.md#rendering-html-in-the-admin-panel).
 
 ## Contributing
 
