@@ -15,7 +15,7 @@ import structlog
 from app.core.database import get_db
 from app.core.redis import get_redis
 from app.core.security import (
-    verify_password,
+    verify_password_async,
     create_access_token,
     decode_access_token,
     blacklist_token,
@@ -156,34 +156,68 @@ async def login(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: AsyncSession = Depends(get_db)
 ) -> Token:
-    """Authenticate and get access token."""
+    """Authenticate and get access token.
+
+    Every rejection leaves by the same door: one bcrypt comparison, one
+    `login_failed` audit row, HTTP 401 "Incorrect username or password". Three
+    things depended on that not being true before:
+
+      * `user is None or not verify_password(...)` short-circuited, so an
+        unknown username never reached bcrypt and answered ~0.2s faster than a
+        known one. Passing `user.password_hash if user else None` into
+        verify_password_async keeps the work constant (security.py).
+      * `is_active` was checked *after* the password and raised a different
+        message, so "User account is disabled" confirmed a valid username AND a
+        valid password to anyone probing. It is now folded into the same
+        decision and the same response.
+      * bcrypt ran on the event loop. verify_password_async offloads it.
+
+    The distinction is preserved where it is safe to keep it: in the audit row,
+    which is server-side only and is the record an operator needs.
+    """
     # Get user
     result = await db.execute(
         select(User).where(User.username == form_data.username)
     )
     user = result.scalar_one_or_none()
 
-    # Verify credentials
-    if user is None or not verify_password(form_data.password, user.password_hash):
-        logger.warning("Failed login attempt", username=form_data.username)
+    # Verify credentials. Not short-circuited: `verify_password_async` accepts
+    # None and hashes against a dummy digest, so the miss path costs the same as
+    # the hit path.
+    password_ok = await verify_password_async(
+        form_data.password,
+        user.password_hash if user is not None else None
+    )
+    if user is None:
+        failure_reason = "unknown_user"
+    elif not password_ok:
+        failure_reason = "bad_password"
+    elif not user.is_active:
+        failure_reason = "account_disabled"
+    else:
+        failure_reason = None
+
+    if failure_reason is not None:
+        logger.warning(
+            "Failed login attempt",
+            username=form_data.username,
+            reason=failure_reason
+        )
         await create_audit_log(
             db=db,
+            # Stays None even when the username resolves. `user_id` is the
+            # authenticated actor, and a failed login has none; the claimed
+            # identity belongs in details, where it already is.
             user_id=None,
             action="login_failed",
             resource_type="auth",
-            details={"username": form_data.username},
+            details={"username": form_data.username, "reason": failure_reason},
             request=request
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
             headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account is disabled"
         )
 
     # Update last login

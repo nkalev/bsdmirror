@@ -84,7 +84,7 @@ const MirrorStatus = {
             desc.textContent = `${errorMirrors.join(', ')} ${errorMirrors.length === 1 ? 'is' : 'are'} experiencing issues.`;
         } else if (anySyncing) {
             indicator.className = 'status-indicator syncing';
-            if (pulse) pulse.style.background = 'var(--primary, #e85d04)';
+            if (pulse) pulse.style.background = 'var(--accent-primary)';
             title.textContent = 'Sync In Progress';
             const syncingMirrors = Object.entries(mirrors)
                 .filter(([, m]) => m.status === 'syncing')
@@ -223,6 +223,24 @@ function copyRsync(mirrorName) {
     });
 }
 
+// Wire up the "Copy rsync URL" buttons.
+//
+// These were inline onclick="copyRsync('FreeBSD')" attributes. The production
+// CSP has always carried script-src 'self', which blocks inline event handlers,
+// so all three buttons were dead for every visitor:
+//
+//   Executing inline event handler violates the following Content Security
+//   Policy directive: "script-src 'self'"
+//
+// The mirror name travels in data-copy-rsync instead. Bound per element rather
+// than by delegation to match how ThemeManager binds #themeToggle; these
+// buttons are static markup and are never re-rendered.
+function bindCopyRsyncButtons() {
+    document.querySelectorAll('[data-copy-rsync]').forEach(btn => {
+        btn.addEventListener('click', () => copyRsync(btn.dataset.copyRsync));
+    });
+}
+
 // Set hostname in UI
 function setHostname() {
     const hostname = window.location.hostname;
@@ -235,6 +253,7 @@ function setHostname() {
 document.addEventListener('DOMContentLoaded', () => {
     ThemeManager.init();
     setHostname();
+    bindCopyRsyncButtons();
     MirrorStatus.load();
 
     // Refresh status every 60 seconds

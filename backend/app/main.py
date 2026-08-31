@@ -18,7 +18,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.database import init_db, close_db, async_session_maker
 from app.core.redis import init_redis, close_redis
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.models.user import User, UserRole
 from app.models.mirror import Mirror, MirrorType, MirrorStatus
 from app.models.setting import Setting
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         if admin_user is None:
             admin_user = User(
                 username=settings.ADMIN_USERNAME,
-                password_hash=hash_password(settings.ADMIN_PASSWORD),
+                password_hash=await hash_password_async(settings.ADMIN_PASSWORD),
                 role=UserRole.ADMIN,
                 is_active=True,
             )

@@ -165,9 +165,9 @@ const router = {
         }
 
         if (state.currentPage === 'login') {
-            app.innerHTML = await route.render();
+            setHtml(app, await route.render());
         } else {
-            app.innerHTML = renderLayout(await route.render(), route.title);
+            setHtml(app, renderLayout(await route.render(), route.title));
         }
 
         attachEventListeners();
@@ -192,7 +192,7 @@ function renderLayout(content, title) {
     const isAdmin = state.user?.role === 'admin';
     const isOperator = ['admin', 'operator'].includes(state.user?.role);
 
-    return `
+    return html`
         <div class="app-layout">
             <aside class="sidebar">
                 <div class="sidebar-header">
@@ -217,7 +217,7 @@ function renderLayout(content, title) {
                             <span class="nav-item-icon">💾</span>
                             <span>Mirrors</span>
                         </a>
-                        ${isAdmin ? `
+                        ${isAdmin ? html`
                         <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" data-nav="users">
                             <span class="nav-item-icon">👥</span>
                             <span>Users</span>
@@ -225,7 +225,7 @@ function renderLayout(content, title) {
                         ` : ''}
                     </div>
                     
-                    ${isAdmin ? `
+                    ${isAdmin ? html`
                     <div class="nav-section">
                         <div class="nav-section-title">System</div>
                         <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" data-nav="audit-logs">
@@ -288,10 +288,10 @@ const Toast = {
 
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
-        toast.innerHTML = `
+        setHtml(toast, html`
             <span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
             <span>${message}</span>
-        `;
+        `);
 
         container.appendChild(toast);
 
@@ -311,7 +311,7 @@ const Modal = {
         const overlay = document.getElementById('modalOverlay');
         const modal = document.getElementById('modal');
 
-        modal.innerHTML = `
+        setHtml(modal, html`
             <div class="modal-header">
                 <h3 class="modal-title">${title}</h3>
                 <button class="modal-close" data-action="closeModal">×</button>
@@ -319,8 +319,8 @@ const Modal = {
             <div class="modal-body">
                 ${content}
             </div>
-            ${actions ? `<div class="modal-footer">${actions}</div>` : ''}
-        `;
+            ${actions ? html`<div class="modal-footer">${actions}</div>` : ''}
+        `);
 
         overlay.classList.add('active');
     },
@@ -335,7 +335,7 @@ const Modal = {
 // ===========================================
 
 function renderLoginPage() {
-    return `
+    return html`
         <div class="login-page">
             <div class="login-card">
                 <div class="login-header">
@@ -366,12 +366,12 @@ async function renderDashboard() {
     try {
         state.data.dashboard = await api.get('/admin/dashboard');
     } catch (error) {
-        return `<div class="card"><p>Error loading dashboard: ${error.message}</p></div>`;
+        return html`<div class="card"><p>Error loading dashboard: ${error.message}</p></div>`;
     }
 
     const d = state.data.dashboard;
 
-    return `
+    return html`
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-card-header">
@@ -412,7 +412,7 @@ async function renderDashboard() {
                     <h3 class="card-title">Recent Sync Jobs</h3>
                 </div>
                 <ul class="activity-list">
-                    ${d.recent_syncs.length ? d.recent_syncs.map(sync => `
+                    ${d.recent_syncs.length ? d.recent_syncs.map(sync => html`
                         <li class="activity-item">
                             <div class="activity-icon">🔄</div>
                             <div class="activity-content">
@@ -423,7 +423,7 @@ async function renderDashboard() {
                                 <div class="activity-time">${formatDate(sync.created_at)}</div>
                             </div>
                         </li>
-                    `).join('') : '<li class="activity-item"><div class="activity-content">No recent sync jobs</div></li>'}
+                    `) : html`<li class="activity-item"><div class="activity-content">No recent sync jobs</div></li>`}
                 </ul>
             </div>
             
@@ -432,7 +432,7 @@ async function renderDashboard() {
                     <h3 class="card-title">Recent Activity</h3>
                 </div>
                 <ul class="activity-list">
-                    ${d.recent_activity.length ? d.recent_activity.map(log => `
+                    ${d.recent_activity.length ? d.recent_activity.map(log => html`
                         <li class="activity-item">
                             <div class="activity-icon">${getActivityIcon(log.action)}</div>
                             <div class="activity-content">
@@ -440,7 +440,7 @@ async function renderDashboard() {
                                 <div class="activity-time">${formatDate(log.created_at)}</div>
                             </div>
                         </li>
-                    `).join('') : '<li class="activity-item"><div class="activity-content">No recent activity</div></li>'}
+                    `) : html`<li class="activity-item"><div class="activity-content">No recent activity</div></li>`}
                 </ul>
             </div>
         </div>
@@ -451,10 +451,10 @@ async function renderMirrors() {
     try {
         state.data.mirrors = await api.get('/mirrors/');
     } catch (error) {
-        return `<div class="card"><p>Error loading mirrors: ${error.message}</p></div>`;
+        return html`<div class="card"><p>Error loading mirrors: ${error.message}</p></div>`;
     }
 
-    return `
+    return html`
         <div class="card">
             <div class="card-header">
                 <h3 class="card-title">Mirror Status</h3>
@@ -471,7 +471,7 @@ async function renderMirrors() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${state.data.mirrors.map(mirror => `
+                        ${state.data.mirrors.map(mirror => html`
                             <tr>
                                 <td>
                                     <strong>${mirror.name}</strong>
@@ -494,7 +494,7 @@ async function renderMirrors() {
                                     </button>
                                 </td>
                             </tr>
-                        `).join('')}
+                        `)}
                     </tbody>
                 </table>
             </div>
@@ -506,10 +506,10 @@ async function renderUsers() {
     try {
         state.data.users = await api.get('/admin/users');
     } catch (error) {
-        return `<div class="card"><p>Error loading users: ${error.message}</p></div>`;
+        return html`<div class="card"><p>Error loading users: ${error.message}</p></div>`;
     }
 
-    return `
+    return html`
         <div class="card">
             <div class="card-header">
                 <h3 class="card-title">User Management</h3>
@@ -530,7 +530,7 @@ async function renderUsers() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${state.data.users.map(user => `
+                        ${state.data.users.map(user => html`
                             <tr>
                                 <td><strong>${user.username}</strong></td>
                                 <td>${user.email || '--'}</td>
@@ -547,14 +547,14 @@ async function renderUsers() {
                                     <button class="btn btn-secondary btn-sm" data-action="editUser" data-id="${user.id}">
                                         Edit
                                     </button>
-                                    ${user.id !== state.user?.id ? `
+                                    ${user.id !== state.user?.id ? html`
                                     <button class="btn btn-danger btn-sm" data-action="deleteUser" data-id="${user.id}">
                                         Delete
                                     </button>
                                     ` : ''}
                                 </td>
                             </tr>
-                        `).join('')}
+                        `)}
                     </tbody>
                 </table>
             </div>
@@ -566,10 +566,10 @@ async function renderAuditLogs() {
     try {
         state.data.auditLogs = await api.get('/admin/audit-logs?limit=50');
     } catch (error) {
-        return `<div class="card"><p>Error loading audit logs: ${error.message}</p></div>`;
+        return html`<div class="card"><p>Error loading audit logs: ${error.message}</p></div>`;
     }
 
-    return `
+    return html`
         <div class="card">
             <div class="card-header">
                 <h3 class="card-title">Audit Logs</h3>
@@ -586,15 +586,15 @@ async function renderAuditLogs() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${state.data.auditLogs.map(log => `
+                        ${state.data.auditLogs.map(log => html`
                             <tr>
                                 <td>${formatDate(log.created_at)}</td>
                                 <td>${log.username || 'System'}</td>
                                 <td>${formatAction(log.action)}</td>
-                                <td>${log.resource_type}${log.resource_id ? ` #${log.resource_id}` : ''}</td>
+                                <td>${log.resource_type}${log.resource_id ? html` #${log.resource_id}` : ''}</td>
                                 <td><code>${log.ip_address || '--'}</code></td>
                             </tr>
-                        `).join('')}
+                        `)}
                     </tbody>
                 </table>
             </div>
@@ -606,7 +606,7 @@ async function renderSettings() {
     try {
         state.data.settings = await api.get('/admin/settings');
     } catch (error) {
-        return `<div class="card"><p>Error loading settings: ${error.message}</p></div>`;
+        return html`<div class="card"><p>Error loading settings: ${error.message}</p></div>`;
     }
 
     const settings = {};
@@ -614,7 +614,7 @@ async function renderSettings() {
         settings[s.key] = s;
     }
 
-    return `
+    return html`
         <div class="card">
             <div class="card-header">
                 <h3 class="card-title">Sync Settings</h3>
@@ -623,23 +623,23 @@ async function renderSettings() {
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_schedule">Sync Schedule (Cron)</label>
                     <input type="text" id="setting_sync_schedule" class="form-input"
-                        value="${escapeHtml(settings.sync_schedule?.value || '0 4 * * *')}"
+                        value="${settings.sync_schedule?.value || '0 4 * * *'}"
                         placeholder="0 4 * * *">
-                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_schedule?.description || '')}</small>
+                    <small style="color: var(--text-muted);">${settings.sync_schedule?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_bandwidth_limit">Bandwidth Limit (KB/s)</label>
                     <input type="number" id="setting_sync_bandwidth_limit" class="form-input"
-                        value="${escapeHtml(settings.sync_bandwidth_limit?.value || '0')}"
+                        value="${settings.sync_bandwidth_limit?.value || '0'}"
                         min="0" placeholder="0">
-                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_bandwidth_limit?.description || '')}</small>
+                    <small style="color: var(--text-muted);">${settings.sync_bandwidth_limit?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_timeout">Sync Timeout (seconds)</label>
                     <input type="number" id="setting_sync_timeout" class="form-input"
-                        value="${escapeHtml(settings.sync_timeout?.value || '600')}"
+                        value="${settings.sync_timeout?.value || '600'}"
                         min="60" placeholder="600">
-                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_timeout?.description || '')}</small>
+                    <small style="color: var(--text-muted);">${settings.sync_timeout?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_on_startup">Sync on Startup</label>
@@ -647,7 +647,7 @@ async function renderSettings() {
                         <option value="false" ${(settings.sync_on_startup?.value || 'false') === 'false' ? 'selected' : ''}>Disabled</option>
                         <option value="true" ${settings.sync_on_startup?.value === 'true' ? 'selected' : ''}>Enabled</option>
                     </select>
-                    <small style="color: var(--text-muted);">${escapeHtml(settings.sync_on_startup?.description || '')}</small>
+                    <small style="color: var(--text-muted);">${settings.sync_on_startup?.description || ''}</small>
                 </div>
                 <div style="display: flex; gap: 12px; margin-top: 24px;">
                     <button type="button" class="btn btn-primary" data-action="saveSettings">Save Settings</button>
@@ -665,7 +665,7 @@ async function renderSettings() {
                     Changes to the sync schedule will take effect at the next scheduler iteration (within ~10 seconds).
                     Some settings may require a service restart to fully apply.
                 </p>
-                ${state.data.settings.length ? `
+                ${state.data.settings.length ? html`
                 <table style="margin-top: 12px; width: 100%;">
                     <thead>
                         <tr>
@@ -674,12 +674,12 @@ async function renderSettings() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${state.data.settings.map(s => `
+                        ${state.data.settings.map(s => html`
                             <tr>
-                                <td><code>${escapeHtml(s.key)}</code></td>
+                                <td><code>${s.key}</code></td>
                                 <td>${formatDate(s.updated_at)}</td>
                             </tr>
-                        `).join('')}
+                        `)}
                     </tbody>
                 </table>
                 ` : ''}
@@ -734,25 +734,25 @@ const actions = {
             const history = await api.get(`/mirrors/${mirrorId}/sync-history`);
             const isOperator = ['admin', 'operator'].includes(state.user?.role);
 
-            Modal.show(`Mirror: ${mirror.name}`, `
+            Modal.show(`Mirror: ${mirror.name}`, html`
                 <div class="form-group">
                     <label class="form-label">Upstream URL</label>
-                    ${isOperator ? `
+                    ${isOperator ? html`
                     <div style="display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="mirrorUpstreamUrl" class="form-input" value="${escapeHtml(mirror.upstream_url)}" style="flex: 1;">
+                        <input type="text" id="mirrorUpstreamUrl" class="form-input" value="${mirror.upstream_url}" style="flex: 1;">
                         <button class="btn btn-primary btn-sm" data-action="saveMirrorUpstream" data-id="${mirror.id}">Save</button>
                     </div>
                     <small style="color: var(--text-muted);">Change the rsync upstream URL (e.g. rsync://mirror.example.com/FreeBSD/)</small>
-                    ` : `
+                    ` : html`
                     <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                        ${escapeHtml(mirror.upstream_url)}
+                        ${mirror.upstream_url}
                     </code>
                     `}
                 </div>
                 <div class="form-group">
                     <label class="form-label">Local Path</label>
                     <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
-                        ${escapeHtml(mirror.local_path)}
+                        ${mirror.local_path}
                     </code>
                 </div>
                 <div class="form-group">
@@ -762,13 +762,13 @@ const actions = {
                 <div class="form-group">
                     <label class="form-label">Recent Sync History</label>
                     <ul class="activity-list">
-                        ${history.map(h => `
+                        ${history.length ? history.map(h => html`
                             <li class="activity-item">
                                 <div class="activity-icon">${h.status === 'completed' ? '✅' : h.status === 'failed' ? '❌' : h.status === 'running' ? '🔄' : '⏳'}</div>
                                 <div class="activity-content">
                                     <div class="activity-text">
-                                        ${escapeHtml(h.status)}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
-                                        ${h.triggered_by ? ' <small>(by ' + escapeHtml(h.triggered_by) + ')</small>' : ''}
+                                        ${h.status}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
+                                        ${h.triggered_by ? html` <small>(by ${h.triggered_by})</small>` : ''}
                                     </div>
                                     <div class="activity-time">${formatDate(h.completed_at || h.started_at || h.created_at)}</div>
                                 </div>
@@ -778,10 +778,10 @@ const actions = {
                                     </button>
                                 </div>
                             </li>
-                        `).join('') || '<li>No history</li>'}
+                        `) : html`<li>No history</li>`}
                     </ul>
                 </div>
-            `, `<button class="btn btn-secondary" data-action="closeModal">Close</button>`);
+            `, html`<button class="btn btn-secondary" data-action="closeModal">Close</button>`);
         } catch (error) {
             Toast.show(error.message, 'error');
         }
@@ -816,15 +816,15 @@ const actions = {
             const statusIcon = job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : job.status === 'running' ? '🔄' : '⏳';
             const isRunning = job.status === 'running' || job.status === 'pending';
 
-            Modal.show(`${statusIcon} Sync Job #${job.id}`, `
+            Modal.show(`${statusIcon} Sync Job #${job.id}`, html`
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
                     <div>
                         <label class="form-label">Status</label>
-                        <span class="status-badge ${job.status}">${escapeHtml(job.status)}</span>
+                        <span class="status-badge ${job.status}">${job.status}</span>
                     </div>
                     <div>
                         <label class="form-label">Triggered By</label>
-                        <p>${escapeHtml(job.triggered_by || 'unknown')}</p>
+                        <p>${job.triggered_by || 'unknown'}</p>
                     </div>
                     <div>
                         <label class="form-label">Started</label>
@@ -834,28 +834,28 @@ const actions = {
                         <label class="form-label">Completed</label>
                         <p>${job.completed_at ? formatDate(job.completed_at) : '--'}</p>
                     </div>
-                    ${job.files_transferred != null ? `
+                    ${job.files_transferred != null ? html`
                     <div>
                         <label class="form-label">Files Transferred</label>
                         <p>${job.files_transferred.toLocaleString()}</p>
                     </div>` : ''}
-                    ${job.bytes_transferred != null ? `
+                    ${job.bytes_transferred != null ? html`
                     <div>
                         <label class="form-label">Bytes Transferred</label>
                         <p>${formatBytes(job.bytes_transferred)}</p>
                     </div>` : ''}
                 </div>
-                ${job.error_message ? `
+                ${job.error_message ? html`
                 <div class="form-group">
-                    <label class="form-label" style="color: var(--danger);">Error</label>
-                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: var(--danger); max-height: 150px; overflow-y: auto;">${escapeHtml(job.error_message)}</pre>
+                    <label class="form-label" style="color: var(--status-error);">Error</label>
+                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: var(--status-error); max-height: 150px; overflow-y: auto;">${job.error_message}</pre>
                 </div>` : ''}
                 <div class="form-group">
                     <label class="form-label">Rsync Output</label>
-                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">${escapeHtml(job.rsync_output || (isRunning ? 'Sync is in progress... click Refresh to update.' : 'No output available.'))}</pre>
+                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">${job.rsync_output || (isRunning ? 'Sync is in progress... click Refresh to update.' : 'No output available.')}</pre>
                 </div>
-            `, `
-                ${isRunning ? `<button class="btn btn-primary btn-sm" data-action="viewSyncLogs" data-id="${job.id}">Refresh</button>` : ''}
+            `, html`
+                ${isRunning ? html`<button class="btn btn-primary btn-sm" data-action="viewSyncLogs" data-id="${job.id}">Refresh</button>` : ''}
                 <button class="btn btn-secondary" data-action="closeModal">Close</button>
             `);
         } catch (error) {
@@ -864,7 +864,7 @@ const actions = {
     },
 
     showAddUser() {
-        Modal.show('Add User', `
+        Modal.show('Add User', html`
             <form id="addUserForm">
                 <div class="form-group">
                     <label class="form-label">Username</label>
@@ -887,7 +887,7 @@ const actions = {
                     </select>
                 </div>
             </form>
-        `, `
+        `, html`
             <button class="btn btn-secondary" data-action="closeModal">Cancel</button>
             <button class="btn btn-primary" data-action="submitAddUser">Add User</button>
         `);
@@ -952,15 +952,15 @@ const actions = {
             return;
         }
 
-        Modal.show('Edit User', `
+        Modal.show('Edit User', html`
             <form id="editUserForm">
                 <div class="form-group">
                     <label class="form-label">Username</label>
-                    <input type="text" class="form-input" value="${escapeHtml(user.username)}" disabled>
+                    <input type="text" class="form-input" value="${user.username}" disabled>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Email</label>
-                    <input type="email" class="form-input" name="email" value="${escapeHtml(user.email || '')}">
+                    <input type="email" class="form-input" name="email" value="${user.email || ''}">
                 </div>
                 <div class="form-group">
                     <label class="form-label">Role</label>
@@ -979,7 +979,7 @@ const actions = {
                 </div>
                 <input type="hidden" name="user_id" value="${user.id}">
             </form>
-        `, `
+        `, html`
             <button class="btn btn-secondary" data-action="closeModal">Cancel</button>
             <button class="btn btn-primary" data-action="submitEditUser" data-id="${user.id}">Save Changes</button>
         `);
@@ -1061,11 +1061,91 @@ function setupGlobalEventDelegation() {
 // Utilities
 // ===========================================
 
-function escapeHtml(str) {
-    if (!str) return '';
-    const div = document.createElement('div');
-    div.textContent = str;
-    return div.innerHTML;
+/**
+ * A string that is already escaped and may be injected as HTML.
+ *
+ * The only ways to obtain one are html`...` and trustedHtml(). setHtml()
+ * accepts nothing else, so "forgot to escape" is a TypeError at the sink
+ * rather than an injection.
+ */
+class SafeHtml {
+    constructor(value) {
+        this.value = value;
+    }
+
+    toString() {
+        return this.value;
+    }
+}
+
+const HTML_ESCAPES = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+    '`': '&#96;'
+};
+
+/**
+ * Escape for element text AND for quoted attribute values.
+ *
+ * Quotes are escaped, not just angle brackets: this file interpolates into
+ * value="..." and class="..." in a dozen places, and a text-only escaper
+ * leaves `" onfocus=alert(1) autofocus x="` intact in those.
+ *
+ * Not sufficient for: unquoted attribute values, href/src (javascript: URLs
+ * survive HTML escaping), on* handlers, or <script>/<style> bodies. None of
+ * those interpolate here, and tests/test_admin_js_escaping.py fails the build
+ * if one appears.
+ *
+ * null and undefined render as ''. 0 and false render as "0" and "false" --
+ * do not reintroduce a falsy check here.
+ */
+function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value).replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);
+}
+
+/**
+ * Tagged template literal for building HTML. Every ${...} is escaped unless it
+ * is already a SafeHtml, which makes escaping the default rather than a call
+ * the next person has to remember.
+ *
+ *   html`<td>${user.username}</td>`   escaped
+ *   html`<tr>${rows}</tr>`            SafeHtml / arrays of SafeHtml pass through
+ */
+function html(strings, ...values) {
+    let out = strings[0];
+    for (let i = 0; i < values.length; i++) {
+        out += interpolateHtml(values[i]) + strings[i + 1];
+    }
+    return new SafeHtml(out);
+}
+
+function interpolateHtml(value) {
+    if (value instanceof SafeHtml) return value.value;
+    if (Array.isArray(value)) return value.map(interpolateHtml).join('');
+    return escapeHtml(value);
+}
+
+/**
+ * Escape hatch: assert that a string is already safe HTML. Deliberately ugly
+ * and greppable. There are currently zero uses; adding one is a review point.
+ */
+function trustedHtml(value) {
+    return new SafeHtml(String(value));
+}
+
+/**
+ * The only writer to innerHTML in this file. Rejects plain strings so an
+ * untagged template literal fails loudly instead of injecting.
+ */
+function setHtml(el, content) {
+    if (!(content instanceof SafeHtml)) {
+        throw new TypeError('setHtml() requires html`...`, got ' + typeof content);
+    }
+    el.innerHTML = content.value;
 }
 
 function formatBytes(bytes) {
