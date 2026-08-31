@@ -1,9 +1,8 @@
 /* BSD Mirror - Main Stylesheet */
 /* BSD-themed palette: Orange / Red / Dark Navy */
 /* Design tokens live in css/tokens.css, linked ahead of this file in index.html.
-   Do not declare custom properties here. */
-
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+   Do not declare custom properties here.
+   Web fonts are self-hosted in css/fonts.css, also linked ahead of this file. */
 
 /* Reset */
 *, *::before, *::after {
