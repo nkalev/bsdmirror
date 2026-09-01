@@ -32,13 +32,13 @@ This repo's first 36 commits include 30 `Fix ...` commits, almost all config/int
 
 Read these before touching anything; several are load-bearing.
 
-- **No migrations.** Schema comes from `Base.metadata.create_all` (`backend/app/core/database.py:43`). Alembic is installed but unconfigured. Column changes are silently ignored on existing deployments.
+- **Schema is owned by Alembic.** `create_all` is gone; `init_db()` only verifies `alembic_version` and logs the revision. Migrations run from `scripts/deploy.sh` between build and recreate, so a bad one stops the deploy with the old containers still serving. `scripts/migrate.sh upgrade` renders the SQL for review before applying. A fresh install must run `migrate.sh upgrade` before the backend will start; an existing database is adopted once with `migrate.sh adopt`, which refuses unless the live schema already matches `shared/models/` exactly.
 - **Models live in one place.** `shared/models/` is imported by both `backend/app/` and `sync/sync_service.py`. They used to be declared twice and had drifted 17 ways, including a `VARCHAR(20)` where production has an enum and a missing `ON DELETE CASCADE`. Do not reintroduce a second definition. The sync service imports the models but deliberately not `Base`, so `create_all` is unreachable from it; AST tests enforce that.
 - **Tooling is installed but never runs.** `ruff`, `bandit`, `pytest`, `pytest-asyncio`, `pytest-cov` are in `backend/requirements.txt`; there is no CI, `pyproject.toml`, Makefile, or pre-commit, and zero test files.
 - **nginx `add_header` does not inherit.** A lower level defining any `add_header` drops all inherited ones. `location /admin` (`nginx/sites/default.conf:112`) therefore serves the admin panel with **no CSP and no HSTS**.
 - **The Google Fonts imports depend on that bug.** Both stylesheets `@import` Google Fonts, which the CSP at `default.conf:55` does not permit. Fixing the header inheritance breaks admin fonts — treat them as one change.
-- **A stuck sync is unrecoverable.** If the sync container dies mid-`rsync`, the mirror stays `SYNCING` and `backend/app/api/admin.py:301` rejects every retry. No reaper exists.
-- **Settings are unvalidated.** `backend/app/api/admin.py:513` accepts arbitrary strings; an invalid cron value wedges the scheduler in a silent 10-second retry loop.
+- **Orphaned syncs are reaped by ownership, not by a timer.** The sync service tracks its own active job ids; a `RUNNING` row it does not own is one nothing will advance. There is deliberately no elapsed-time threshold — job 615 was a healthy 15h43m transfer and any timer would eventually kill one. The reaper does not cover a container that dies and never returns; that is the health check's job.
+- **Settings are validated at the write boundary and defended at the reader.** Rules live once in `shared/settings_spec.py`. The API rejects an unusable value with a 422 before touching the ORM, and the sync service independently refuses a bad value that reached the database by another route, keeping the previous one and warning — it used to be `except ValueError: pass`.
 
 ## Commands
 

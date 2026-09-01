@@ -455,20 +455,29 @@ def python_files():
 
 
 def test_create_all_has_exactly_one_caller():
-    """`Base.metadata.create_all` may be called from one place only.
+    """`Base.metadata.create_all` must be called from NOWHERE in the shipped code.
 
-    Not style -- consequence. create_all creates missing TABLES and nothing
-    else, so on an existing database the first caller to run fixes the schema
-    permanently and every later disagreement is silent. The backend and sync
-    containers also start together, so a second caller races: two concurrent
-    `CREATE TYPE mirror_status ...` and the loser raises DuplicateObject.
+    This assertion used to name one permitted caller,
+    `backend/app/core/database.py::init_db`. It now permits none, because
+    Alembic owns the schema: backend/alembic/versions/ builds it, and
+    scripts/migrate.sh applies it.
 
-    Now that both services import the same Base, adding that second caller is a
-    one-line change with no visible symptom in development. This is the thing
-    that stops it.
+    Not style -- consequence, and the same consequence as before. create_all
+    creates missing TABLES and nothing else, so on an existing database the
+    first caller to run fixes the schema permanently and every later
+    disagreement is silent. What changes with migrations in the repo is that a
+    surviving create_all is now actively harmful rather than merely limited: on
+    a fresh install it would build the schema before `alembic upgrade head`
+    ran, and the baseline migration would then fail trying to CREATE TABLE over
+    tables that already exist. Two mechanisms, one database, and the winner
+    decided by startup order.
+
+    The name of this test is kept deliberately. It is the string someone greps
+    for after `create_all` reappears in a diff.
 
     Test code is excluded: tests/conftest.py and tests/test_sync_job.py build a
-    throwaway in-memory SQLite schema per test, which is the intended use.
+    throwaway in-memory SQLite schema per test, which is the intended use --
+    those never touch Postgres and never touch alembic_version.
     """
     callers = []
     for path in python_files():
@@ -499,9 +508,11 @@ def test_create_all_has_exactly_one_caller():
                 callers.append("%s::%s" % (path.relative_to(REPO_ROOT),
                                            enclosing.get(node, "<module>")))
 
-    assert callers == ["backend/app/core/database.py::init_db"], (
-        "create_all/drop_all must be called from init_db() and nowhere else; found: %s"
-        % callers
+    assert callers == [], (
+        "create_all/drop_all must not be called outside the test suite -- Alembic "
+        "owns the schema (backend/alembic/, scripts/migrate.sh). A second "
+        "mechanism that creates tables makes the schema depend on which process "
+        "starts first. Found: %s" % callers
     )
 
 
@@ -515,12 +526,28 @@ def test_sync_service_does_not_import_base():
     """
     source = (REPO_ROOT / "sync" / "sync_service.py").read_text()
     tree = ast.parse(source)
-    imported = set()
+
+    from_shared = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("shared"):
-            imported.update(alias.name for alias in node.names)
-    assert "Base" not in imported, "sync_service imported Base; it must not create tables"
-    assert imported == {"Mirror", "MirrorStatus", "Setting", "SyncJob", "SyncStatus"}
+            from_shared.setdefault(node.module, set()).update(
+                alias.name for alias in node.names
+            )
+
+    every_name = set().union(*from_shared.values()) if from_shared else set()
+    assert "Base" not in every_name, "sync_service imported Base; it must not create tables"
+
+    # Pinned per module, not as one flat set across all of shared/.
+    #
+    # The flat version failed the moment sync_service started importing
+    # shared.settings_spec -- which is a module it SHOULD import; validating a
+    # settings value against the same spec the API writes it through is the
+    # whole point of that package. What must stay pinned is the model surface:
+    # the schema names this service touches, and specifically that Base is not
+    # among them.
+    assert from_shared.get("shared.models") == {
+        "Mirror", "MirrorStatus", "Setting", "SyncJob", "SyncStatus"
+    }
 
 
 def test_exactly_one_declarative_base_in_the_repo():

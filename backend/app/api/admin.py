@@ -24,6 +24,7 @@ from shared.models import (
     UserRole,
 )
 from app.api.auth import require_admin, require_operator, get_current_user, create_audit_log
+from shared.settings_spec import validate_settings
 
 logger = structlog.get_logger(__name__)
 router = APIRouter()
@@ -504,6 +505,31 @@ class SettingsUpdateRequest(BaseModel):
         description="Key-value pairs of settings to update"
     )
 
+    @field_validator("settings")
+    @classmethod
+    def _values_must_be_usable(cls, values: dict[str, str]) -> dict[str, str]:
+        """Reject unusable values before the route body runs.
+
+        This is the fix for a real outage shape: `sync_schedule` is handed
+        straight to `croniter()` inside the sync service's scheduler_loop try
+        block, so a malformed value raised, got swallowed by the generic
+        handler, and the loop retried every 10 seconds forever -- never
+        syncing. The write boundary is the last place that string is still
+        attached to a person who can be told it is wrong.
+
+        Running as a pydantic validator rather than inside the handler buys
+        atomicity for free: a batch with one bad value is rejected in its
+        entirety, with a 422, before a single ORM object is touched. See
+        shared/settings_spec.py for the bounds and why they are what they are.
+
+        Values are replaced with their canonical form ('  0 4 * * * ' ->
+        '0 4 * * *', 'TRUE' -> 'true', '0600' -> '600') so the row holds what
+        the parser produced. Unknown keys pass through untouched -- whether a
+        key exists is a database question, answered with a 404 by the handler.
+        """
+        canonical = validate_settings(values)
+        return {**values, **canonical}
+
 
 @router.get("/settings", response_model=List[SettingResponse])
 async def get_settings(
@@ -522,8 +548,22 @@ async def update_settings(
     current_user: Annotated[User, Depends(require_admin)],
     db: AsyncSession = Depends(get_db)
 ) -> dict:
-    """Update settings (admin only)."""
-    changes = {}
+    """Update settings (admin only).
+
+    Two passes, resolve then write, so a batch is all-or-nothing.
+
+    The single-pass version mutated each Setting as it went and only then
+    discovered that a later key did not exist, leaving the earlier mutations
+    pending in the session. They were rolled back by get_db's exception
+    handler, which made the outcome correct but only by accident -- nothing in
+    this function said so, and autoflush or an intervening commit would have
+    broken it silently. Resolving every row first means the write loop cannot
+    fail partway.
+
+    Value validation happens earlier still, in SettingsUpdateRequest, so an
+    unusable value never reaches this function at all.
+    """
+    resolved = []
 
     for key, value in data.settings.items():
         result = await db.execute(select(Setting).where(Setting.key == key))
@@ -535,10 +575,14 @@ async def update_settings(
                 detail=f"Setting '{key}' not found"
             )
 
-        old_value = setting.value
+        resolved.append((setting, value))
+
+    changes = {}
+    now = datetime.now(timezone.utc)
+    for setting, value in resolved:
+        changes[setting.key] = {"old": setting.value, "new": value}
         setting.value = value
-        setting.updated_at = datetime.now(timezone.utc)
-        changes[key] = {"old": old_value, "new": value}
+        setting.updated_at = now
 
     await db.commit()
 

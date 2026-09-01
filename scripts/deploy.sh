@@ -56,12 +56,47 @@
 #   scripts/deploy.sh --ci-check-only <REF> evaluate the CI gate and exit
 #   scripts/deploy.sh --help
 #
+# Database migrations
+# -------------------
+# As of the Alembic adoption, the schema is no longer created by the backend at
+# startup -- `Base.metadata.create_all` is gone, and create_all only ever
+# created missing TABLES anyway, silently ignoring every column, type and
+# constraint change on a table that already existed.
+#
+# Migrations therefore run HERE, from scripts/migrate.sh, and specifically
+# BETWEEN the build and the recreate:
+#
+#     build images  ->  MIGRATE  ->  recreate backend and sync  ->  verify
+#
+# That order is chosen, not incidental:
+#
+#   * A failed migration must not leave new code running against an old schema.
+#     Migrating first means a failure stops the deploy with the OLD containers
+#     still serving (exit 3) -- the same failure shape as a failed build.
+#   * The reverse order -- recreate, then migrate -- boots the new code against
+#     a schema it does not have, which is a crash loop on a live site.
+#   * env.py wraps the whole upgrade in one transaction and Postgres has
+#     transactional DDL, so a failure rolls the schema back rather than leaving
+#     it half applied.
+#
+# The cost of migrating first is real and worth naming: for the length of one
+# rebuild, the OLD containers serve traffic against the NEW schema. Additive
+# migrations (add a nullable column, add a table, add an index) are safe there.
+# A destructive one is not, and the review checklist in every generated
+# migration's docstring asks about exactly that.
+#
+# The alternative -- migrating from the app on startup -- was rejected: it
+# couples schema changes to container restarts, races if there is ever more
+# than one backend replica, and turns a bad migration into a crash loop instead
+# of a deploy that stopped.
+#
 # Exit codes -- these are the contract, do not renumber casually:
 #   0  deployed and verified
 #   1  usage or preflight error, nothing touched
 #   2  a gate refused, nothing touched
 #   3  deploy step failed; git may have moved, but the running containers
-#      were NOT replaced -- the service is still up on the old images
+#      were NOT replaced -- the service is still up on the old images.
+#      A failed migration lands here, with the schema unchanged.
 #   4  deploy succeeded but verification failed -- NEW CODE IS SERVING
 #
 set -euo pipefail
@@ -86,6 +121,8 @@ FORCE_NO_CI=0
 FORCE_SYNC_RESTART=0
 SKIP_NGINX=0
 NGINX_TOUCHED=0
+SKIP_MIGRATIONS=0
+MIGRATIONS_TOUCHED=0
 ASSUME_YES=0
 DRY_RUN=0
 INSECURE_TLS=0
@@ -154,6 +191,11 @@ Escape hatches. Each prints a loud banner naming what it bypassed:
                           files under nginx/. The change will not take effect
                           and the header verification will report the old
                           values.
+  --skip-migrations       Do not run scripts/migrate.sh. The new code will be
+                          recreated against the CURRENT schema. Only correct
+                          when you have already migrated by hand; the schema
+                          verification at the end will report the mismatch if
+                          you have not.
 
 Environment: DEPLOY_DIR REPO_SLUG REQUIRED_CHECK BASE_URL HEALTH_TIMEOUT
              SYNC_SETTLE API_TIMEOUT GITHUB_API GITHUB_TOKEN NO_COLOR
@@ -187,6 +229,21 @@ on_exit() {
             banner "$C_YEL" "STOPPED DURING BUILD" \
                 "Images were being rebuilt. No container was recreated, so the" \
                 "stack is still serving the old code -- users are unaffected." \
+                "" \
+                "The checkout is now at ${TARGET_SHA:-<target>}; it was at ${PREV_SHA:-<unknown>}." \
+                "  cd $DEPLOY_DIR && git checkout ${PREV_SHA:-<previous sha>}"
+            ;;
+        migrating)
+            banner "$C_YEL" "STOPPED WHILE MIGRATING THE DATABASE" \
+                "The migration was running. env.py wraps the whole upgrade in one" \
+                "transaction and Postgres has transactional DDL, so the schema is" \
+                "either fully applied or fully unchanged -- never half." \
+                "" \
+                "NO CONTAINER WAS RECREATED. backend and sync are still serving the" \
+                "old code, which is why this is a warning and not an incident." \
+                "" \
+                "Find out which of the two happened:" \
+                "  cd $DEPLOY_DIR && scripts/migrate.sh status" \
                 "" \
                 "The checkout is now at ${TARGET_SHA:-<target>}; it was at ${PREV_SHA:-<unknown>}." \
                 "  cd $DEPLOY_DIR && git checkout ${PREV_SHA:-<previous sha>}"
@@ -230,6 +287,7 @@ while [ $# -gt 0 ]; do
         --force-no-ci)       FORCE_NO_CI=1; shift ;;
         --force-sync-restart) FORCE_SYNC_RESTART=1; shift ;;
         --skip-nginx)        SKIP_NGINX=1; shift ;;
+        --skip-migrations)   SKIP_MIGRATIONS=1; shift ;;
         -y|--yes)            ASSUME_YES=1; shift ;;
         -h|--help)           usage; exit 0 ;;
         --) shift; break ;;
@@ -738,11 +796,14 @@ move_checkout() {
     fi
 }
 
-build_and_up() {
+build_images() {
     PHASE="building"
     step "Building images for: $SERVICES"
-    # Build first, recreate second. A failed build then leaves the running
-    # containers alone, so the mirror keeps serving while it is investigated.
+    # Build first, migrate second, recreate third. A failed build leaves the
+    # running containers alone, so the mirror keeps serving while it is
+    # investigated -- and the migration below runs out of the image that was
+    # just built, so the migration scripts and the code that needs them are
+    # always from the same commit.
     # shellcheck disable=SC2086  # SERVICES is a deliberate word-split list
     if ! run docker compose build $SERVICES; then
         PHASE="build-failed"
@@ -755,7 +816,118 @@ build_and_up() {
         exit 3
     fi
     ok "images built"
+}
 
+# ---------------------------------------------------------------------------
+# Database migrations
+# ---------------------------------------------------------------------------
+#
+# See the header for why this sits between the build and the recreate.
+# Delegated to scripts/migrate.sh so an operator running it by hand during an
+# incident runs the identical sequence, including the offline SQL render.
+
+# Did this deploy add or change a migration? Compared between the two SHAs, so
+# redeploying the same SHA correctly reports "no migration change".
+#
+# This is reporting only. `migrate.sh upgrade` is a no-op when the database is
+# already at head, and it runs either way -- because a deploy that skipped
+# migrations "because the diff looked empty" is exactly how the nginx change of
+# 2026-08-31 was reported as applied when it was not.
+detect_migration_change() {
+    [ "$PREV_SHA" = "$TARGET_SHA" ] && return 0
+    local changed
+    changed=$(git diff --name-only "$PREV_SHA" "$TARGET_SHA" -- backend/alembic/ 2>/dev/null || true)
+    [ -z "$changed" ] && return 0
+    MIGRATIONS_TOUCHED=1
+    step "This deploy changes database migrations"
+    printf '%s\n' "$changed" | sed 's/^/        /'
+}
+
+deploy_migrations() {
+    PHASE="migrating"
+
+    if [ "$SKIP_MIGRATIONS" -eq 1 ]; then
+        banner "$C_YEL" "SKIPPING MIGRATIONS (--skip-migrations)" \
+            "The new code will be recreated against the schema as it is now." \
+            "" \
+            "If a migration in this deploy has not been applied by hand, the" \
+            "backend will run against a schema it does not match. The schema" \
+            "verification at the end of this script reports that; it does not" \
+            "prevent it."
+        return 0
+    fi
+
+    if [ ! -x scripts/migrate.sh ]; then
+        banner "$C_RED" "scripts/migrate.sh IS MISSING OR NOT EXECUTABLE" \
+            "Migrations cannot run, and this script will not recreate containers" \
+            "against an unmigrated database." \
+            "" \
+            "The checkout is at ${TARGET_SHA:-<target>}. Restore it with:" \
+            "  cd $DEPLOY_DIR && git checkout $PREV_SHA"
+        exit 3
+    fi
+
+    if [ "$DRY_RUN" -eq 1 ]; then
+        # Deliberately NOT wrapped in `run`, which prints and skips. `migrate.sh
+        # sql` renders offline and applies nothing by construction, so there is
+        # nothing to skip -- and --dry-run is precisely when an operator wants
+        # to read the SQL a real deploy would run.
+        step "Migrations (--dry-run: rendering the SQL, applying nothing)"
+        scripts/migrate.sh sql || warn "could not render the pending SQL (exit $?)"
+        return 0
+    fi
+
+    step "Applying database migrations (render, review, apply, re-check)"
+    # -y: the operator already confirmed this deploy, and the SQL migrate.sh
+    # renders is printed above the apply either way. A second prompt inside a
+    # script that has one is a prompt people learn to hit blindly.
+    local rc=0
+    scripts/migrate.sh upgrade -y || rc=$?
+
+    case "$rc" in
+        0) ok "database is at head" ;;
+        2)
+            banner "$C_RED" "MIGRATIONS REFUSED TO RUN - NOTHING WAS RECREATED" \
+                "A gate in scripts/migrate.sh stopped before applying anything." \
+                "The most likely cause on a first deploy after the Alembic adoption" \
+                "is that this database has never been stamped:" \
+                "" \
+                "  cd $DEPLOY_DIR && scripts/migrate.sh adopt" \
+                "" \
+                "That records the existing schema as revision 0001_baseline and runs" \
+                "no DDL. Then deploy again." \
+                "" \
+                "backend and sync were NOT recreated; the old code is still serving."
+            exit 3 ;;
+        3)
+            banner "$C_RED" "MIGRATION FAILED - SCHEMA UNCHANGED, NOTHING RECREATED" \
+                "The upgrade ran inside one transaction and rolled back. The schema" \
+                "is exactly as it was, and backend and sync are still serving the" \
+                "old code. Users are unaffected." \
+                "" \
+                "The checkout has moved to $TARGET_SHA (was $PREV_SHA)." \
+                "  cd $DEPLOY_DIR && scripts/migrate.sh status" \
+                "  cd $DEPLOY_DIR && git checkout $PREV_SHA"
+            exit 3 ;;
+        4)
+            banner "$C_RED" "MIGRATION APPLIED BUT THE SCHEMA STILL DOES NOT MATCH" \
+                "alembic check is not clean after the upgrade, which means the" \
+                "migration is incomplete -- there is a model change with no" \
+                "corresponding operation in it." \
+                "" \
+                "Nothing was recreated. The old code is serving, against a schema" \
+                "that has now moved. Investigate before deploying again:" \
+                "  cd $DEPLOY_DIR && scripts/migrate.sh check"
+            exit 3 ;;
+        *)
+            banner "$C_RED" "scripts/migrate.sh EXITED $rc - NOTHING WAS RECREATED" \
+                "Unexpected exit code. Treated as a failure on purpose." \
+                "  cd $DEPLOY_DIR && scripts/migrate.sh status"
+            exit 3 ;;
+    esac
+}
+
+recreate_services() {
     PHASE="recreating"
     step "Recreating: $SERVICES  (--no-deps: nginx, postgres and redis untouched)"
     # shellcheck disable=SC2086
@@ -1216,10 +1388,34 @@ verify_security_headers() {
     fi
 }
 
+# The check that would have caught the whole class of problem this change
+# exists for: after the deploy, does the schema the containers are running
+# against actually match the models in the image that is serving?
+#
+# `migrate.sh check` runs `alembic check` inside the freshly built backend
+# image, so it compares THIS commit's shared/models/ against the live database.
+# A missing migration, a --skip-migrations that should not have been used, or a
+# migration that did not cover every model change all surface here rather than
+# as a 500 on the first request that touches the new column.
+verify_schema_at_head() {
+    if [ ! -x scripts/migrate.sh ]; then
+        vfail "scripts/migrate.sh missing; cannot verify the schema"
+        return 0
+    fi
+    local rc=0
+    scripts/migrate.sh check >/dev/null 2>&1 || rc=$?
+    case "$rc" in
+        0) ok "schema matches shared/models/ (alembic check clean)" ;;
+        4) vfail "the live schema does NOT match shared/models/ -- run: scripts/migrate.sh check" ;;
+        *) vfail "scripts/migrate.sh check exited $rc" ;;
+    esac
+}
+
 verify_all() {
     PHASE="verifying"
     step "Verifying"
     verify_container_health "$HEALTH_TIMEOUT"
+    verify_schema_at_head
     verify_api_health
     verify_health_endpoint
     verify_login_roundtrip
@@ -1328,13 +1524,16 @@ main() {
     info "verification base URL: $BASE_URL"
 
     detect_nginx_change
+    detect_migration_change
 
     if [ "$DRY_RUN" -eq 0 ]; then
         confirm "Deploy $TARGET_SHA to $DEPLOY_DIR?" || die_gate "aborted by operator; nothing was done"
     fi
 
     move_checkout
-    build_and_up
+    build_images
+    deploy_migrations
+    recreate_services
     deploy_nginx
 
     if [ "$DRY_RUN" -eq 1 ]; then
@@ -1351,11 +1550,16 @@ main() {
     [ "$NGINX_TOUCHED" -eq 1 ] && nginx_note="nginx  config applied and gracefully reloaded"
     [ "$NGINX_TOUCHED" -eq 1 ] && [ "$SKIP_NGINX" -eq 1 ] && nginx_note="nginx  CHANGED BUT SKIPPED (--skip-nginx)"
 
+    local db_note="db     no migration in this deploy; schema verified at head"
+    [ "$MIGRATIONS_TOUCHED" -eq 1 ] && db_note="db     migration applied; schema verified at head"
+    [ "$SKIP_MIGRATIONS" -eq 1 ] && db_note="db     MIGRATIONS SKIPPED (--skip-migrations)"
+
     banner "$C_GRN" "DEPLOYED AND VERIFIED" \
         "$PREV_SHA" \
         "  -> $TARGET_SHA" \
         "" \
         "$nginx_note" \
+        "$db_note" \
         "" \
         "Roll back with:" \
         "  cd $DEPLOY_DIR && scripts/deploy.sh --rollback $PREV_SHA"

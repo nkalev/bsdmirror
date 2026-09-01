@@ -30,13 +30,13 @@ os.environ.setdefault("ADMIN_PASSWORD", "pytest-not-a-real-password")
 os.environ.setdefault("DEBUG", "false")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
 
-from datetime import timedelta  # noqa: E402
+from datetime import datetime, timedelta, timezone  # noqa: E402
 from functools import lru_cache  # noqa: E402
 from typing import Optional  # noqa: E402
 
 import httpx  # noqa: E402
 import pytest  # noqa: E402
-from sqlalchemy import create_engine  # noqa: E402
+from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
@@ -57,6 +57,8 @@ from shared.models import (  # noqa: E402
     User,
     UserRole,
 )
+from sync import sync_service  # noqa: E402
+from sync.sync_service import SyncService  # noqa: E402
 
 # Passwords used by the seeded fixtures. >= 12 chars so they also satisfy
 # UserCreateRequest's min_length when reused in create-user tests.
@@ -280,3 +282,170 @@ def token_for(user: User, expires_delta: Optional[timedelta] = None) -> str:
 
 def auth_header(user: User, expires_delta: Optional[timedelta] = None) -> dict:
     return {"Authorization": f"Bearer {token_for(user, expires_delta)}"}
+
+
+# ===========================================================================
+# The sync service
+#
+# A second seam, for the half of the codebase that is not FastAPI. These are
+# in conftest rather than in a test module because two modules need them --
+# tests/test_sync_job.py (rsync exit codes and job persistence) and
+# tests/test_orphan_reaper.py (abandoned jobs) -- and importing a fixture from
+# one test module into another makes every use look like a redefinition.
+#
+# Same constraints as above: no aiosqlite, no Postgres, no network, no rsync.
+# ===========================================================================
+
+class FakeProcess:
+    """The slice of asyncio.subprocess.Process that run_rsync touches."""
+
+    def __init__(self, returncode: int, output: str) -> None:
+        self.returncode = returncode
+        self._output = output
+        self.terminated = False
+
+    async def communicate(self):
+        return self._output.encode("utf-8"), None
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
+class _SessionContext:
+    """`async with self.session_maker() as session:` -- one fresh Session per
+    context, matching async_sessionmaker's contract closely enough that
+    sync_mirror_job cannot tell the difference."""
+
+    def __init__(self, factory):
+        self._factory = factory
+        self._session = None
+
+    async def __aenter__(self):
+        self._session = self._factory()
+        return _AsyncSessionShim(self._session)
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self._session.close()
+        return False
+
+
+# The last time the OpenBSD mirror below was known good. Every assertion about
+# last_sync_completed is "still this" or "later than this".
+PREVIOUS_SYNC = datetime(2026, 8, 27, 4, 0, tzinfo=timezone.utc)
+
+
+@pytest.fixture
+def engine():
+    eng = create_engine(
+        "sqlite+pysqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(eng)
+    try:
+        yield eng
+    finally:
+        Base.metadata.drop_all(eng)
+        eng.dispose()
+
+
+@pytest.fixture
+def factory(engine):
+    return sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+
+
+@pytest.fixture
+def service(factory):
+    """A SyncService with no async engine and no network.
+
+    __init__ builds a real asyncpg engine against a host that does not exist in
+    this environment, so it is bypassed and only the attributes the methods
+    under test read are set. Keep this list matching SyncService.__init__.
+    """
+    svc = object.__new__(SyncService)
+    svc.running = True
+    svc.current_sync = None
+    # The reaper's ownership set: the ids of the jobs this process is executing
+    # right now. Everything in tests/test_orphan_reaper.py turns on it.
+    svc.active_job_ids = set()
+    svc.sync_schedule = "0 4 * * *"
+    svc.sync_bandwidth_limit = 0
+    svc.sync_timeout = 600
+    svc.session_maker = lambda: _SessionContext(factory)
+    return svc
+
+
+@pytest.fixture
+def rsync(monkeypatch):
+    """Replace asyncio.create_subprocess_exec. Returns a setter; the argv of
+    each call is recorded in `calls`."""
+    calls = []
+
+    def configure(returncode: int, output: str):
+        async def fake_exec(*cmd, **kwargs):
+            calls.append(list(cmd))
+            return FakeProcess(returncode, output)
+
+        monkeypatch.setattr(sync_service.asyncio, "create_subprocess_exec", fake_exec)
+        return calls
+
+    configure.calls = calls
+    return configure
+
+
+@pytest.fixture
+def mirror(factory, tmp_path):
+    """An OpenBSD mirror that has already synced successfully once.
+
+    last_sync_completed, total_size_bytes and file_count are pre-populated so
+    every test can tell "left alone" apart from "overwritten" and from
+    "cleared". The numbers are job 615's.
+    """
+    session = factory()
+    row = Mirror(
+        name="OpenBSD",
+        # The column is the Postgres enum `mirror_type`; SQLAlchemy persists
+        # the member NAME, so this stores the label 'OPENBSD'. It read
+        # mirror_type="openbsd" while sync_service had its own VARCHAR(20)
+        # copy of this table, which stored that string as-is.
+        mirror_type=MirrorType.OPENBSD,
+        upstream_url="rsync://ftp2.eu.openbsd.org/OpenBSD/",
+        local_path=str(tmp_path / "openbsd"),
+        enabled=True,
+        status=MirrorStatus.ACTIVE,
+        last_sync_started=PREVIOUS_SYNC,
+        last_sync_completed=PREVIOUS_SYNC,
+        last_sync_error=None,
+        total_size_bytes=2_594_831_248_502,
+        file_count=567_277,
+    )
+    session.add(row)
+    session.commit()
+    job = SyncJob(mirror_id=row.id, status=SyncStatus.PENDING, triggered_by="manual")
+    session.add(job)
+    session.commit()
+    result = {"mirror_id": row.id, "job_id": job.id, "local_path": row.local_path,
+              "upstream": row.upstream_url}
+    session.close()
+    return result
+
+
+def reload(factory, mirror_id, job_id):
+    """Re-read a mirror and a job through a fresh session."""
+    session = factory()
+    try:
+        m = session.execute(select(Mirror).where(Mirror.id == mirror_id)).scalar_one()
+        j = session.execute(select(SyncJob).where(SyncJob.id == job_id)).scalar_one()
+        return m, j
+    finally:
+        session.close()
+
+
+async def run_job(service, mirror):
+    await service.sync_mirror_job(
+        job_id=mirror["job_id"],
+        mirror_id=mirror["mirror_id"],
+        name="OpenBSD",
+        upstream=mirror["upstream"],
+        local_path=mirror["local_path"],
+    )

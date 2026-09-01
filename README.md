@@ -36,17 +36,81 @@ A self-hosted mirror platform for FreeBSD, NetBSD, and OpenBSD distributions wit
    ```
    This generates a `.env` file with secure random passwords and configures upstream mirrors.
 
-3. Start the services:
+3. Create the database schema:
+   ```bash
+   docker compose up -d postgres
+   ./scripts/migrate.sh upgrade
+   ```
+   The schema is owned by Alembic (`backend/alembic/`), not by the application.
+   The backend used to create its own tables at startup with
+   `Base.metadata.create_all`; that is gone, because create_all creates missing
+   *tables* only — it silently ignores every column, type and constraint change
+   on a table that already exists, which made schema changes undeployable.
+
+   `migrate.sh` prints the SQL it is about to run before it runs it.
+
+4. Start the services:
    ```bash
    docker compose up -d --build
    ```
 
-4. Access the services:
+   If you skip step 3, the backend refuses to start and says so:
+   `The database has no alembic_version table...`. It is not a crash; it is the
+   check that replaced create_all.
+
+5. Access the services:
    - **Web UI**: https://your-domain.com
    - **Admin Panel**: https://your-domain.com/admin
    - **rsync**: rsync://your-domain.com/
 
    Admin credentials are displayed during setup and saved to `.credentials`.
+
+### Adopting Alembic on a database that already exists
+
+Only relevant once, and only on a deployment that predates the Alembic
+adoption — its schema was built by `Base.metadata.create_all` and has no
+`alembic_version` table.
+
+**Do not run `migrate.sh upgrade` there.** The baseline revision contains the
+full `CREATE TABLE` for all five tables; against a populated database it would
+try to create tables over live data. Stamp it instead:
+
+```bash
+cd /opt/bsdmirror
+./scripts/migrate.sh adopt
+```
+
+`adopt` writes one row into a new `alembic_version` table and executes no DDL —
+no table is created, altered or dropped. Before it does, it refuses unless:
+
+1. the live schema matches `shared/models/` exactly (`schema_diff.py`, which
+   works before adoption where `alembic check` cannot), and
+2. `0001_baseline` is still the only revision in the checkout.
+
+Afterwards `./scripts/migrate.sh upgrade` is a no-op and every later migration
+applies normally. If you get the wrong command, `migrate.sh upgrade` detects a
+populated, unstamped database and refuses with a pointer to `adopt`.
+
+### Database migrations
+
+```bash
+./scripts/migrate.sh status              # where the database is, where head is
+./scripts/migrate.sh check               # does shared/models/ match the schema?
+./scripts/migrate.sh sql                 # print the pending SQL, apply nothing
+./scripts/migrate.sh upgrade             # print it, confirm, apply
+./scripts/migrate.sh downgrade <REV>     # print it, confirm, apply
+./scripts/migrate.sh revision -m "text"  # autogenerate (development only)
+./scripts/migrate.sh --help
+```
+
+Everything runs inside the `backend` image, because the `backend` compose
+network is `internal: true` and postgres is not reachable from the host. Every
+command except `revision` therefore reports on the **built image**; if it does
+not match your working tree, the read-only commands warn and the ones that
+change something refuse, naming `docker compose build backend` as the fix.
+
+`scripts/deploy.sh` runs migrations automatically, between the build and the
+container recreate. See below.
 
 ### SSL Setup
 
@@ -74,6 +138,27 @@ cd /opt/bsdmirror
 Only `backend` and `sync` are rebuilt and recreated; `nginx`, `postgres` and
 `redis` are never touched. The CI status comes from the public GitHub
 check-runs API, so no token or deploy key is required.
+
+Migrations run inside that sequence, in this order:
+
+```
+build images  ->  MIGRATE  ->  recreate backend and sync  ->  verify
+```
+
+Migrating before the recreate means a bad migration stops the deploy with the
+**old containers still serving** (exit 3), rather than booting new code against
+a schema it does not have. `env.py` wraps the upgrade in one transaction and
+Postgres has transactional DDL, so a failure leaves the schema unchanged rather
+than half applied. The cost is real and worth knowing: for the length of one
+rebuild, the old code serves traffic against the new schema — fine for additive
+migrations, which is what the review checklist in every generated migration
+asks you to confirm. The SQL is rendered offline and printed before it is
+applied, and `--dry-run` prints it without applying anything.
+
+Post-deploy verification now includes `alembic check` against the freshly built
+image, so a missing migration is a failed deploy rather than a 500 on the first
+request that touches the new column. `--skip-migrations` opts out and says so
+loudly in the final banner.
 
 Exit codes: `0` deployed and verified, `1` preflight error, `2` a gate
 refused and nothing was touched, `3` the deploy failed but the old containers
@@ -144,6 +229,34 @@ Key environment variables in `.env`:
 
 Upstream URLs can also be changed from the admin panel without restarting services.
 
+### Settings, and what the admin panel will not let you save
+
+Four rows in the `settings` table are editable from the admin panel and read
+back by the sync service. Every one of them is validated at the write boundary
+(`PATCH /api/admin/settings`), and validated *again* by the sync service before
+it is adopted. An unusable value is rejected with a `422` naming the key and the
+value; a batch containing one is rejected in its entirety, so a save either
+lands completely or not at all. An unknown key is still a `404`.
+
+| Setting | Accepted | Why the bound |
+|---|---|---|
+| `sync_schedule` | Any cron expression `croniter` can advance: five or six fields, or a nickname such as `@daily`. `@reboot` is rejected. | Validated by running the exact call the scheduler runs. This is the one that used to take mirroring down: an invalid value threw inside the scheduler's `try`, the generic handler swallowed it, and the loop retried every ten seconds forever without syncing. |
+| `sync_timeout` | `60`–`86400` seconds. `0` is rejected. | rsync's `--timeout` measures *I/O inactivity*, so the floor has to clear the quiet phases of a healthy run — file-list generation, and the `--delay-updates` / `--delete-delay` passes over half a million files. `0` means "no timeout" to rsync, which removes the only thing bounding a hung transfer. The `600` default remains the recommendation. |
+| `sync_bandwidth_limit` | `0` (unlimited), or `128`–`10000000` KB/s. | A full OpenBSD file list is ~14 MB. Below ~128 KB/s that list alone takes longer to transfer than the default `--timeout`, so the sync aborts on its own metadata before moving a file. |
+| `sync_on_startup` | `true`/`false` (also `1`/`0`, `yes`/`no`, `on`/`off`, `enabled`/`disabled`; case-insensitive). | Previously compared with `.lower() == "true"`, so any typo silently meant `false`. **Note:** the sync service currently reads the `SYNC_ON_STARTUP` *environment variable*, not this row — toggling it in the panel has no effect yet. |
+
+Values are stored canonically: `  0 4 * * *  ` becomes `0 4 * * *`, `TRUE`
+becomes `true`, `0600` becomes `600`. The rules live in
+`shared/settings_spec.py`, imported by both the API and the sync service, so
+there is one definition rather than one per service.
+
+A value that reaches the table by some other route — `psql`, a restore from an
+older dump, a deployment that predates the validation — is refused on read with
+a `WARNING` naming the key, and the previous value is kept. If the schedule is
+unusable at the moment it is used, the scheduler falls back to `0 4 * * *` and
+logs an `ERROR`. A wrong schedule is a wrong schedule; a scheduler that never
+runs again is an outage.
+
 ### Sync results
 
 Pulling from a public mirror that is itself syncing means racing it. Upstream
@@ -178,6 +291,46 @@ Every other non-zero exit is a failure outright.
 
 **A failed sync no longer clears "last synced".** The timestamp records when the
 mirror was last known good, which is the one thing worth keeping when a sync fails.
+
+### Abandoned syncs
+
+If the sync container stops mid-`rsync` — OOM kill, host reboot, `SIGKILL` — the
+job's completion step never runs. The `sync_jobs` row stays `running` and the
+mirror stays `syncing`, and every manual retry is then refused with *"Mirror is
+already syncing"*. Recovery used to be a hand-written `UPDATE`.
+
+The sync service now clears these itself. The job is marked `failed` with an
+explanation, and the mirror moves to `error` so it can be retried from the
+panel. `last_sync_completed`, `total_size_bytes` and `file_count` are left
+alone: a sync that died has no better answer to "when was this last good".
+
+**It does not use elapsed time, and that is the whole design.** Duration cannot
+tell a dead sync from a slow one. A full OpenBSD sync has run for 15 hours 43
+minutes while perfectly healthy; the same mirror, incremental, finishes in 13
+minutes. Any threshold either kills the first or never fires. Instead the
+service asks whether *it* is running the job: it runs jobs one at a time and
+knows their ids, so a `running` row it does not own is one that nothing is going
+to advance. There is no threshold to tune and no way for a long transfer to be
+mistaken for a corpse.
+
+It runs at two moments:
+
+- **on startup**, which is where a crash's leftovers get cleared — a process
+  that has just started owns nothing, so every `running` row belongs to a
+  process that is gone;
+- **every ~5 minutes while running**, which covers a job stranded while the
+  process kept going (an error between marking it started and marking it
+  finished). Startup-only reaping would need a restart to clear those.
+
+**What it does not cover:** a sync container that dies and never comes back.
+Nothing inside the service can fix that. `restart: unless-stopped` brings it
+back after a crash; a down host or an image that will not start needs the
+external health check above.
+
+It also assumes a **single** sync-service process, which `docker-compose.yml`
+enforces by pinning the container name. Running two against one database would
+let each reap the other's live jobs; doing that safely needs a claim both
+processes can see, which means a new column, which means migrations.
 The failure is visible in the mirror's status and error message and in the sync job
 row instead.
 
@@ -266,9 +419,11 @@ endpoint's own top-level `status` field is deliberately ignored: it collapses to
 `healthy`/`updating`/`degraded` and reports `healthy` for a mirror that has not
 synced in two months. The per-mirror `last_sync` is what is read.
 
-A mirror stuck in `SYNCING` — the unrecoverable case in `backend/app/api/admin.py`
-— is caught for free here: its `last_sync_completed` stops advancing, so it goes
-stale like any other.
+A mirror stuck in `SYNCING` is caught for free here too: its
+`last_sync_completed` stops advancing, so it goes stale like any other. It is no
+longer unrecoverable — see [Abandoned syncs](#abandoned-syncs) — but the alert
+still fires if the sync service is not running to clear it, which is exactly the
+case the reaper cannot cover.
 
 ### Not crying wolf
 

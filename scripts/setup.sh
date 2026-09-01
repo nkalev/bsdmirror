@@ -517,9 +517,14 @@ if [[ "$MODE" == "dev" ]]; then
     echo "  NEXT STEPS (Development):"
     echo "========================================="
     echo
-    echo "Start all services:"
+    echo "Create the database schema, then start all services:"
     echo "  cd $INSTALL_DIR"
+    echo "  docker compose up -d postgres"
+    echo "  ./scripts/migrate.sh upgrade      # Alembic owns the schema"
     echo "  docker compose up -d"
+    echo
+    echo "The backend no longer creates its own tables. If you skip the"
+    echo "migrate step it refuses to start and tells you so."
     echo
     echo "Access:"
     echo "  - Website: http://localhost"
@@ -531,14 +536,24 @@ else
     echo "  NEXT STEPS (Production):"
     echo "========================================="
     echo
-    echo "Step 1: Start the database and backend services:"
+    echo "Step 1: Create the database schema (Alembic owns it, not the app):"
     echo "  cd $INSTALL_DIR"
+    echo "  docker compose up -d postgres"
+    echo "  ./scripts/migrate.sh upgrade"
+    echo
+    echo "        On a deployment that PREDATES the Alembic adoption -- one whose"
+    echo "        schema was built by the backend at startup -- run this instead:"
+    echo "          ./scripts/migrate.sh adopt"
+    echo "        It stamps the existing schema and runs no DDL. 'upgrade' would"
+    echo "        try to CREATE TABLE over live data, and refuses to."
+    echo
+    echo "Step 2: Start the database and backend services:"
     echo "  docker compose up -d"
     echo
-    echo "Step 2: Obtain SSL certificate and switch to production nginx:"
+    echo "Step 3: Obtain SSL certificate and switch to production nginx:"
     echo "  ./scripts/ssl-setup.sh"
     echo
-    echo "Step 3: (Optional) Enable rsync server for other mirrors:"
+    echo "Step 4: (Optional) Enable rsync server for other mirrors:"
     echo "  docker compose --profile rsync up -d"
     echo
     echo "After SSL setup, access:"

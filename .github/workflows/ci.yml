@@ -104,7 +104,7 @@ jobs:
       # low-severity findings stay visible in the log instead of being silently
       # filtered out by the gate below. The gate is the next step.
       - name: Bandit full report (informational, does not gate)
-        run: bandit -r backend/app sync || true
+        run: bandit -r backend/app sync backend/alembic || true
 
       # Gate: MEDIUM severity and above.
       #
@@ -122,8 +122,12 @@ jobs:
       # Suppressing these at the source with `# nosec` would be the better fix
       # and would let the floor drop to LOW, but backend/app/** and the body of
       # sync_service.py belong to the `developer` agent. Handed over, not edited.
+      # backend/alembic is in scope: a migration is code that runs against the
+      # production database, with more privilege than a route handler. It is
+      # clean at LOW today, so it costs nothing to include and would cost a lot
+      # to add later, after something in it needed a suppression.
       - name: Bandit gate (medium severity and above)
-        run: bandit -r backend/app sync --severity-level medium --skip B104
+        run: bandit -r backend/app sync backend/alembic --severity-level medium --skip B104
 
   # ---------------------------------------------------------------------------
   # pytest
@@ -446,6 +450,249 @@ jobs:
                   fail = 1
           sys.exit(fail)
           PYSKIP
+
+  # ---------------------------------------------------------------------------
+  # alembic
+  # ---------------------------------------------------------------------------
+  #
+  # The schema used to come from `Base.metadata.create_all` at backend startup,
+  # which creates missing TABLES and nothing else -- no column, no type, no
+  # constraint, no complaint. Alembic now owns it, and this job is what stops
+  # the migration chain and the models drifting apart the way the two model
+  # definitions did before they were merged.
+  #
+  # Everything below runs INSIDE THE BACKEND IMAGE, against a real Postgres of
+  # the version compose runs. That is deliberate. A migration that works from a
+  # checkout and not from the image is the exact failure this repo keeps having:
+  # backend/alembic.ini, backend/alembic/versions/ and shared/models/ all have
+  # to arrive together, at the right paths, for `scripts/migrate.sh` to work on
+  # the server -- and only building the image proves that.
+  #
+  # What each step proves, in order:
+  #   1. the versions/ tree is a single linear chain with one head
+  #   2. the image contains a working alembic setup at /app/alembic.ini
+  #   3. `alembic upgrade head` builds the schema on an empty database
+  #      (this is the fresh-install path -- `setup.sh --clean`)
+  #   4. `alembic check` finds nothing left to do afterwards
+  #   5. the schema Alembic builds is BYTE-FOR-BYTE the schema
+  #      Base.metadata.create_all builds -- which is how production got its
+  #      schema, and is what tests/test_shared_models.py pins to the live dump.
+  #      Step 4 cannot see column comments or index methods; this can.
+  #   6. the three copies of the database URL agree
+  migrations:
+    name: alembic (image build, fresh upgrade, empty diff)
+    runs-on: ubuntu-24.04
+    env:
+      # docker-compose.yml, service `postgres`. Asserted below, not trusted.
+      POSTGRES_IMAGE: postgres:16-bookworm
+      PGPASSWORD: ci-placeholder-not-a-secret
+      COMPOSE_PROJECT_NAME: bsdmirror
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The Postgres version here must be the one compose runs
+        run: |
+          want=$(grep -A2 '^  postgres:' docker-compose.yml | awk '/image:/ {print $2; exit}')
+          if [ "$want" != "$POSTGRES_IMAGE" ]; then
+            echo "::error file=docker-compose.yml::this job pins POSTGRES_IMAGE=$POSTGRES_IMAGE but compose runs $want. Migrating against a different major version proves nothing about production."
+            exit 1
+          fi
+          echo "ok: $POSTGRES_IMAGE matches docker-compose.yml"
+
+      # A branched history means `alembic upgrade head` is ambiguous and
+      # `migrate.sh` renders SQL for a range that does not exist. Two people
+      # generating a migration from the same parent produces exactly this, and
+      # nothing else in the repo would notice.
+      - name: Exactly one head, and every revision reachable from it
+        run: |
+          python3 - <<'PYHEADS'
+          import pathlib, re, sys
+
+          versions = pathlib.Path("backend/alembic/versions")
+          files = sorted(p for p in versions.glob("*.py") if p.name != "__init__.py")
+          if not files:
+              print("::error::backend/alembic/versions/ is empty. The baseline migration is what the production database is stamped at; losing it makes every deployment un-migratable.")
+              sys.exit(1)
+
+          revs, downs, problems = {}, {}, []
+          for path in files:
+              src = path.read_text()
+              rev = re.search(r'^revision: str = [\'"]([^\'"]+)[\'"]', src, re.M)
+              down = re.search(r'^down_revision: Union\[str, None\] = (.+)$', src, re.M)
+              if not rev or not down:
+                  problems.append("%s: cannot parse revision/down_revision" % path)
+                  continue
+              revs[rev.group(1)] = path.name
+              raw = down.group(1).strip()
+              downs[rev.group(1)] = None if raw == "None" else raw.strip("'\"")
+
+          heads = [r for r in revs if r not in set(downs.values())]
+          roots = [r for r, d in downs.items() if d is None]
+
+          if len(heads) != 1:
+              problems.append("expected exactly 1 head, found %d: %s" % (len(heads), heads))
+          if len(roots) != 1:
+              problems.append("expected exactly 1 root, found %d: %s" % (len(roots), roots))
+          for rev, down in downs.items():
+              if down is not None and down not in revs:
+                  problems.append("%s revises %r, which is not a revision in this tree" % (rev, down))
+
+          for problem in problems:
+              print("::error::%s" % problem)
+          if problems:
+              sys.exit(1)
+          print("ok: %d revision(s), root %s, head %s" % (len(revs), roots[0], heads[0]))
+          PYHEADS
+
+      - name: Write .env fixture (placeholder values, never real secrets)
+        run: |
+          cat > .env <<'EOF'
+          POSTGRES_PASSWORD=ci-placeholder-not-a-secret
+          REDIS_PASSWORD=ci-placeholder-not-a-secret
+          SECRET_KEY=ci-placeholder-not-a-secret
+          ADMIN_PASSWORD=ci-placeholder-not-a-secret
+          FREEBSD_UPSTREAM=rsync://ftp.freebsd.org/FreeBSD/
+          NETBSD_UPSTREAM=rsync://rsync.NetBSD.org/NetBSD/
+          OPENBSD_UPSTREAM=rsync://ftp2.eu.openbsd.org/OpenBSD/
+          EOF
+
+      - name: Build the backend image (the one migrations actually run from)
+        run: docker compose build backend
+
+      # Not `services:` -- that maps a port to the runner, and every step below
+      # runs INSIDE a container. A user-defined network is what lets the backend
+      # image reach it by name, exactly as the compose `backend` network does.
+      - name: Start Postgres and apply backend/init.sql
+        run: |
+          docker network create ci-alembic
+          docker run -d --name ci-pg --network ci-alembic \
+            -e POSTGRES_USER=bsdmirrors \
+            -e POSTGRES_DB=bsdmirrors \
+            -e POSTGRES_PASSWORD="$PGPASSWORD" \
+            -v "$PWD/backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro" \
+            "$POSTGRES_IMAGE"
+          for i in $(seq 1 60); do
+            if docker exec ci-pg pg_isready -U bsdmirrors -d bsdmirrors >/dev/null 2>&1; then
+              echo "postgres ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+          docker exec ci-pg pg_isready -U bsdmirrors -d bsdmirrors
+          # A second, independent database for the create_all control below.
+          docker exec ci-pg psql -U bsdmirrors -d postgres -c 'CREATE DATABASE control OWNER bsdmirrors;'
+          docker exec ci-pg psql -U bsdmirrors -d control -f /docker-entrypoint-initdb.d/init.sql
+
+      - name: Alembic must work from inside the image, at the image's paths
+        run: |
+          run() {
+            docker run --rm --network ci-alembic \
+              -e POSTGRES_HOST=ci-pg \
+              -e POSTGRES_USER=bsdmirrors \
+              -e POSTGRES_DB=bsdmirrors \
+              -e POSTGRES_PASSWORD="$PGPASSWORD" \
+              "$@"
+          }
+          echo "::group::alembic heads, from /app/alembic.ini"
+          run bsdmirror-backend alembic -c /app/alembic.ini heads --verbose
+          echo "::endgroup::"
+
+          echo "::group::alembic upgrade head on an EMPTY database (the fresh-install path)"
+          run bsdmirror-backend alembic -c /app/alembic.ini upgrade head
+          echo "::endgroup::"
+
+          echo "::group::alembic check -- must find nothing to do"
+          run bsdmirror-backend alembic -c /app/alembic.ini check
+          echo "::endgroup::"
+
+          echo "::group::schema_diff.py -- the same claim, one level lower"
+          run bsdmirror-backend python /app/alembic/schema_diff.py
+          echo "::endgroup::"
+
+          echo "::group::offline render must work too (this is the review path)"
+          run bsdmirror-backend alembic -c /app/alembic.ini upgrade base:head --sql | head -40
+          echo "::endgroup::"
+
+      # THE CONTROL EXPERIMENT.
+      #
+      # `Base.metadata.create_all` is how the production database got its
+      # schema, and tests/test_shared_models.py pins those models against a dump
+      # of the live database. So "alembic upgrade head == create_all" closes the
+      # chain: migrations -> models -> production.
+      #
+      # This is the ONLY create_all left anywhere near this repo and it exists
+      # to be compared against, not to build anything. Do not copy it into the
+      # application: tests/test_shared_models.py::test_create_all_has_exactly_one_caller
+      # asserts there are zero callers in Python source.
+      - name: The migrated schema must equal the create_all schema, byte for byte
+        run: |
+          docker run --rm --network ci-alembic \
+            -e ALEMBIC_DATABASE_URL="postgresql+asyncpg://bsdmirrors:$PGPASSWORD@ci-pg:5432/control" \
+            bsdmirror-backend python -c '
+          import asyncio, os
+          from sqlalchemy.ext.asyncio import create_async_engine
+          from shared.models import Base
+          async def main():
+              e = create_async_engine(os.environ["ALEMBIC_DATABASE_URL"])
+              async with e.begin() as c:
+                  await c.run_sync(Base.metadata.create_all)
+              await e.dispose()
+          asyncio.run(main())
+          print("control schema built by create_all")
+          '
+          # The migrated database carries an alembic_version table the control
+          # one does not; that is the only permitted difference, so it is
+          # excluded from both sides rather than tolerated in a diff.
+          dump() {
+            docker exec ci-pg pg_dump -U bsdmirrors -d "$1" --schema-only --no-owner --no-privileges \
+              --exclude-table=alembic_version \
+              | grep -v '^--' | grep -v '^\\restrict' | grep -v '^\\unrestrict' | grep -v '^$'
+          }
+          dump bsdmirrors > /tmp/alembic.sql
+          dump control    > /tmp/create_all.sql
+          echo "alembic upgrade head: $(wc -l < /tmp/alembic.sql) lines"
+          echo "create_all:           $(wc -l < /tmp/create_all.sql) lines"
+          if ! diff -u /tmp/create_all.sql /tmp/alembic.sql; then
+            echo "::error::backend/alembic/versions/ does not build the schema shared/models/ describes. The migration chain and the models have drifted; a fresh install and an existing deployment would end up with different databases."
+            exit 1
+          fi
+          echo "ok: identical"
+
+      # backend/alembic/runtime.py builds the database URL from POSTGRES_* by
+      # hand rather than importing app.core.config, for the reasons in its
+      # docstring. That makes it the third copy of one f-string (the others are
+      # backend/app/core/config.py and sync/sync_service.py). Copies drift; this
+      # is the thing that makes them fail loudly instead.
+      - name: The alembic URL builder and Settings.DATABASE_URL must agree
+        run: |
+          docker run --rm \
+            -e POSTGRES_USER=someuser \
+            -e POSTGRES_PASSWORD=somepassword \
+            -e POSTGRES_HOST=somehost \
+            -e POSTGRES_PORT=15432 \
+            -e POSTGRES_DB=somedb \
+            -e REDIS_PASSWORD=ci-placeholder-not-a-secret \
+            -e SECRET_KEY=ci-placeholder-not-a-secret \
+            -e ADMIN_PASSWORD=ci-placeholder-not-a-secret \
+            bsdmirror-backend python -c '
+          import sys
+          sys.path.insert(0, "/app/alembic")
+          from runtime import database_url
+          from app.core.config import Settings
+          alembic_url = database_url()
+          app_url = Settings().DATABASE_URL
+          print("alembic/runtime.py :", alembic_url)
+          print("app/core/config.py :", app_url)
+          if alembic_url != app_url:
+              print("::error file=backend/alembic/runtime.py::database_url() and Settings.DATABASE_URL disagree. Migrations would run against a different database than the application.")
+              sys.exit(1)
+          print("ok: identical")
+          '
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker rm -f ci-pg >/dev/null 2>&1 || true
+          docker network rm ci-alembic >/dev/null 2>&1 || true
 
   # ---------------------------------------------------------------------------
   # docker compose config
@@ -1374,7 +1621,7 @@ jobs:
   ci:
     name: CI
     if: always()
-    needs: [ruff, bandit, pytest, compose, nginx, docker-build, shellcheck, systemd]
+    needs: [ruff, bandit, pytest, migrations, compose, nginx, docker-build, shellcheck, systemd]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4

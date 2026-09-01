@@ -63,11 +63,15 @@ Thank you for your interest in contributing to the BSD Mirror project! This docu
 ```
 bsdmirror/
 ├── shared/           # Code imported by BOTH Python services
-│   └── models/       # The SQLAlchemy schema. One definition, see below.
+│   ├── models/       # The SQLAlchemy schema. One definition, see below.
+│   └── settings_spec.py  # What a `settings` row may hold. See below.
 ├── backend/          # FastAPI backend API
 │   ├── app/
 │   │   ├── api/      # API route handlers
 │   │   └── core/     # Configuration, security, database engine/session
+│   ├── alembic/      # Migrations. Owns the schema; see below.
+│   │   └── versions/
+│   ├── alembic.ini
 │   └── Dockerfile
 ├── frontend/         # Static frontend files
 │   └── public/
@@ -113,13 +117,16 @@ Three things about this package are load-bearing:
   one scoped `COPY shared/ ./shared` into its `/app` WORKDIR. The sync image
   contains no `backend/`, so the package could not have lived under it.
 
-- **`Base.metadata.create_all` has exactly one caller**: `init_db()` in
-  `backend/app/core/database.py`. The sync service imports the models but
-  deliberately not `Base`. create_all creates missing *tables* only, so with no
-  migrations the first process to run it fixes the schema permanently, and both
-  containers start together, so a second caller is also a race on `CREATE TYPE`.
-  `tests/test_shared_models.py::test_create_all_has_exactly_one_caller` walks
-  the AST of every file in the repo and fails if a second one appears.
+- **`Base.metadata.create_all` has no callers at all.** It used to have exactly
+  one, `init_db()` in `backend/app/core/database.py`. Alembic now owns the
+  schema, so that call is gone and `init_db()` only *verifies* that the database
+  is under Alembic's control. create_all creates missing *tables* only, so
+  keeping it alongside migrations would mean two mechanisms defining one
+  database with the winner decided by startup order — on a fresh install it
+  would build the schema and the baseline migration would then fail trying to
+  `CREATE TABLE` over it. `tests/test_shared_models.py::test_create_all_has_exactly_one_caller`
+  walks the AST of every file in the repo and fails if any caller appears
+  outside the test suite (the SQLite fixtures in `tests/` are the intended use).
 
 - **Enums are stored by NAME, not by value.** Every enum is
   `class X(str, Enum)` with lowercase values (`ACTIVE = "active"`), but
@@ -129,10 +136,96 @@ Three things about this package are load-bearing:
   every existing row unreadable. `tests/test_shared_models.py` pins the labels,
   their order, and the round trip in both directions.
 
-Changing the schema still needs care for the reason that has not gone away:
-there are no migrations, and `create_all` will not alter an existing table.
-Adding a column to a model changes nothing in a database that already has that
-table. That is the next task, not this one.
+### Changing the schema
+
+Editing a model is half a change. The other half is a migration, and CI fails
+without it: the `migrations` job runs `alembic upgrade head` on an empty
+database and then `alembic check`, which reports any model change with no
+corresponding operation.
+
+```bash
+docker compose up -d postgres
+docker compose build backend                    # migrate.sh runs from the image
+$EDITOR shared/models/mirror.py                 # 1. edit the model
+./scripts/migrate.sh revision -m "what changed" # 2. autogenerate
+$EDITOR backend/alembic/versions/2026*_*.py     # 3. READ IT. Fill in the
+                                                #    checklist in its docstring.
+./scripts/migrate.sh sql                        # 4. read the SQL it will run
+./scripts/migrate.sh upgrade                    # 5. apply it locally
+pytest                                          # 6. and the suite still passes
+```
+
+Step 3 is not optional. Autogenerate is a first draft: it does not see data
+migrations, it renders `server_default` changes it cannot always express, and
+it will happily generate a `DROP COLUMN` for a rename. The template in
+`backend/alembic/script.py.mako` puts four questions in every new migration's
+docstring — whether it touches populated tables, whether it takes a long lock,
+whether it is safe for the code that is *currently* running, and whether
+`downgrade()` loses data. Answer them in the file.
+
+Two things are structural rather than advisory:
+
+- **`revision` reads your working tree; everything else reads the built image.**
+  `migrate.sh` runs alembic inside the `backend` image, because the `backend`
+  compose network is `internal: true`. `revision` bind-mounts `shared/` and
+  `backend/alembic/` from the checkout so it generates against the model you
+  just edited; without that it compares the *image's* models, finds no
+  difference, and writes a migration whose `upgrade()` is `pass`, successfully.
+  Every other command fingerprints both and warns — or, if it would change
+  something, refuses.
+
+- **`0001_baseline` cannot be downgraded.** Its `downgrade()` raises. It exists
+  to be *stamped* onto the production database, which already has the schema,
+  not to be run there and not to be unapplied from there. Every later revision
+  must implement a real `downgrade()`; the deploy path depends on it.
+
+### Settings are validated in `shared/settings_spec.py`, not at the call site
+
+The `settings` table is written by the API and read by the sync service. Both
+import the same spec, and neither trusts the other.
+
+If you add a settings key, add it to `SETTING_SPECS` and nowhere else.
+`backend/app/main.py` seeds its default and description from there, the
+`PATCH /api/admin/settings` validator accepts values through it, and
+`SyncService.reload_settings` refuses anything it rejects. Three copies of "the
+default schedule is `0 4 * * *`" is how they drift; one is how they cannot.
+
+Two rules that are easy to get wrong:
+
+- **Bound the value, not just its type.** `sync_timeout=1` is a valid integer
+  and breaks every sync as surely as a malformed one. Every bound in that file
+  is derived from an observed run and carries the derivation in a comment; a new
+  one should too.
+- **Name the key in the error message.** The admin panel renders pydantic's
+  `msg` field and nothing else — not `loc` — so `"must be positive"` reaches the
+  operator as a sentence about nothing.
+
+`tests/test_settings_validation.py` covers all three layers, including values
+written straight to the table with the API bypassed.
+
+### The sync service owns the jobs it is running
+
+`SyncService.active_job_ids` holds the ids of the jobs this process is currently
+executing, and `reap_orphaned_jobs` treats any `running` row that is *not* in it
+as abandoned. That set is the entire basis for deciding whether a sync is dead,
+so:
+
+- **`sync_mirror_job` is the only thing that may write to it.** A structural
+  test enforces that. Adding a second writer is a way to protect a dead job or
+  expose a live one.
+- **The claim is taken before the row is marked `running`, and released after it
+  is marked finished**, with no `await` in between either time. The reaper is a
+  coroutine on the same event loop, so it can only observe the pair in a
+  consistent state. Reorder that and a live sync becomes reapable.
+- **Do not add an elapsed-time condition.** A healthy full sync has run for
+  15h43m; an incremental of the same mirror takes 13 minutes. There is no
+  threshold that separates them, and a false positive kills a 2.5 TB transfer at
+  hour fifteen. `_orphan_verdict` reports elapsed time for the log line and is
+  structurally prevented from consulting it.
+
+`tests/test_orphan_reaper.py` mutation-tests that decision: it rewrites
+`_orphan_verdict` with each plausible wrong version — including the naive
+one-hour threshold — and fails if the decision table does not go red.
 
 ### Key Technologies
 
@@ -144,21 +237,22 @@ table. That is the next task, not this one.
 ## Continuous Integration
 
 `.github/workflows/ci.yml` runs on every push and on pull requests into `main`.
-Seven jobs, all independent, plus a `ci` job that aggregates them:
+Nine jobs, all independent, plus a `ci` job that aggregates them:
 
 | Job | Command | Catches |
 |---|---|---|
 | `ruff` | `ruff check .` | lint and dead-code errors |
-| `bandit` | `bandit -r backend/app sync` | insecure Python patterns |
+| `bandit` | `bandit -r backend/app sync backend/alembic` | insecure Python patterns |
 | `pytest` | `pytest` | the test suite in `tests/` |
+| `migrations` | `alembic upgrade head` + `alembic check` | a model change with no migration, a branched revision history, and an `alembic.ini`/`versions/` tree that does not work *from inside the built image* |
 | `compose` | `docker compose config -q` | compose syntax, and `${VAR}` references that exist nowhere |
 | `nginx` | `nginx -t` | every site profile under `nginx/sites/*/`, mounted the way `docker-compose.yml` mounts them, plus the headers on the wire |
 | `shellcheck` | `shellcheck scripts/*.sh` | quoting and `set -e` bugs in the deploy-time shell |
 | `systemd` | `systemd-analyze verify` | unit files that would fail at `systemctl start`, not at install |
 | `ci` | — | **the one check to require in branch protection**; fails unless every job above succeeded |
 
-`ci` is the check to put in the branch protection rule. Requiring the seven
-individually means remembering to add the eighth by hand, which is exactly the
+`ci` is the check to put in the branch protection rule. Requiring them
+individually means remembering to add the next one by hand, which is exactly the
 step that gets skipped — so `ci` `needs:` all of them, and a step in that job
 parses this workflow and fails if a job exists that `needs` does not name.
 
@@ -167,7 +261,7 @@ Run the whole Python side locally before pushing:
 ```bash
 pip install -r backend/requirements.txt   # ruff, bandit and pytest are already pinned in it
 ruff check .
-bandit -r backend/app sync --severity-level medium --skip B104
+bandit -r backend/app sync backend/alembic --severity-level medium --skip B104
 pytest
 ```
 
@@ -186,6 +280,17 @@ them:
   it is only reachable from the compose networks. The full unfiltered report is
   still printed in the job log. If you fix these at the source with `# nosec`,
   drop the floor to LOW in the same change.
+- **The `migrations` job runs everything inside the built backend image,**
+  against a real Postgres of the version `docker-compose.yml` pins. A migration
+  that works from a checkout and not from the image is the exact failure this
+  repo keeps having, and only building the image proves the difference. Its last
+  step is a control experiment: it builds a second database with
+  `Base.metadata.create_all` — which is how the production database got its
+  schema — and `pg_dump`s both, requiring them to be identical. That closes the
+  chain *migrations → models → production*, because
+  `tests/test_shared_models.py` separately pins the models against a dump of the
+  live database. It is the only `create_all` left anywhere near this repo, and
+  it exists to be compared against, not to build anything.
 - **The `compose` job writes a placeholder `.env`** containing exactly the
   variables that have no default in `docker-compose.yml`, then fails if compose
   warns about any *other* unset variable. Adding a `${VAR}` to compose therefore

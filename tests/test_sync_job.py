@@ -35,17 +35,13 @@ Same Python input, two different rows. The fixture now passes MirrorType.OPENBSD
 so the intent is explicit rather than resting on that coercion.
 """
 import logging
-from datetime import datetime, timezone
+from datetime import datetime
 
 import pytest
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from shared.models import Base, Mirror, MirrorStatus, MirrorType, SyncJob, SyncStatus
+from shared.models import MirrorStatus, SyncStatus
 from sync import sync_service
 from sync.sync_service import (
-    SyncService,
     _classify_partial_transfer,
     _is_rsync_temp_path,
     _VANISHED_RE,
@@ -175,186 +171,25 @@ Total transferred file size: 12 B
 
 
 # ---------------------------------------------------------------------------
-# Test doubles
+# Test doubles and fixtures
+#
+# FakeProcess, _SessionContext, the engine/factory/service/rsync/mirror
+# fixtures and the reload/run_job helpers all live in tests/conftest.py now.
+# They were defined here until a second module -- tests/test_orphan_reaper.py,
+# which drives the same SyncService against the same OpenBSD mirror -- needed
+# them. Importing fixtures across test modules works but makes ruff report
+# every use as F811 (a parameter shadowing an imported name), and pytest's own
+# answer to "two modules need the same fixture" is conftest.
+#
+# The non-fixture helpers still have to be imported; only fixtures are
+# auto-discovered.
 # ---------------------------------------------------------------------------
-
-class FakeProcess:
-    """The slice of asyncio.subprocess.Process that run_rsync touches."""
-
-    def __init__(self, returncode: int, output: str) -> None:
-        self.returncode = returncode
-        self._output = output
-        self.terminated = False
-
-    async def communicate(self):
-        return self._output.encode("utf-8"), None
-
-    def terminate(self) -> None:
-        self.terminated = True
-
-
-class _AsyncSessionShim:
-    """Async facade over a synchronous Session. Same approach as conftest.py."""
-
-    def __init__(self, session):
-        self._session = session
-
-    def __getattr__(self, name):
-        return getattr(self._session, name)
-
-    async def execute(self, *args, **kwargs):
-        return self._session.execute(*args, **kwargs)
-
-    async def commit(self) -> None:
-        self._session.commit()
-
-    async def rollback(self) -> None:
-        self._session.rollback()
-
-    async def refresh(self, instance, *args, **kwargs) -> None:
-        self._session.refresh(instance, *args, **kwargs)
-
-    async def close(self) -> None:
-        self._session.close()
-
-
-class _SessionContext:
-    """`async with self.session_maker() as session:` -- one fresh Session per
-    context, matching async_sessionmaker's contract closely enough that
-    sync_mirror_job cannot tell the difference."""
-
-    def __init__(self, factory):
-        self._factory = factory
-        self._session = None
-
-    async def __aenter__(self):
-        self._session = self._factory()
-        return _AsyncSessionShim(self._session)
-
-    async def __aexit__(self, exc_type, exc, tb):
-        self._session.close()
-        return False
-
-
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
-# The last time this mirror was known good. Every assertion about
-# last_sync_completed is "still this" or "later than this".
-PREVIOUS_SYNC = datetime(2026, 8, 27, 4, 0, tzinfo=timezone.utc)
-
-@pytest.fixture
-def engine():
-    eng = create_engine(
-        "sqlite+pysqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(eng)
-    try:
-        yield eng
-    finally:
-        Base.metadata.drop_all(eng)
-        eng.dispose()
-
-
-@pytest.fixture
-def factory(engine):
-    return sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
-
-
-@pytest.fixture
-def service(factory):
-    """A SyncService with no async engine and no network.
-
-    __init__ builds a real asyncpg engine against a host that does not exist in
-    this environment, so it is bypassed and only the attributes run_rsync and
-    sync_mirror_job read are set.
-    """
-    svc = object.__new__(SyncService)
-    svc.running = True
-    svc.current_sync = None
-    svc.sync_schedule = "0 4 * * *"
-    svc.sync_bandwidth_limit = 0
-    svc.sync_timeout = 600
-    svc.session_maker = lambda: _SessionContext(factory)
-    return svc
-
-
-@pytest.fixture
-def rsync(monkeypatch):
-    """Replace asyncio.create_subprocess_exec. Returns a setter; the argv of
-    each call is recorded in `calls`."""
-    calls = []
-
-    def configure(returncode: int, output: str):
-        async def fake_exec(*cmd, **kwargs):
-            calls.append(list(cmd))
-            return FakeProcess(returncode, output)
-
-        monkeypatch.setattr(sync_service.asyncio, "create_subprocess_exec", fake_exec)
-        return calls
-
-    configure.calls = calls
-    return configure
-
-
-@pytest.fixture
-def mirror(factory, tmp_path):
-    """An OpenBSD mirror that has already synced successfully once.
-
-    last_sync_completed, total_size_bytes and file_count are pre-populated so
-    every test can tell "left alone" apart from "overwritten" and from
-    "cleared".
-    """
-    session = factory()
-    row = Mirror(
-        name="OpenBSD",
-        # The column is the Postgres enum `mirror_type`; SQLAlchemy persists
-        # the member NAME, so this stores the label 'OPENBSD'. It read
-        # mirror_type="openbsd" while sync_service had its own VARCHAR(20)
-        # copy of this table, which stored that string as-is.
-        mirror_type=MirrorType.OPENBSD,
-        upstream_url="rsync://ftp2.eu.openbsd.org/OpenBSD/",
-        local_path=str(tmp_path / "openbsd"),
-        enabled=True,
-        status=MirrorStatus.ACTIVE,
-        last_sync_started=PREVIOUS_SYNC,
-        last_sync_completed=PREVIOUS_SYNC,
-        last_sync_error=None,
-        total_size_bytes=2_594_831_248_502,
-        file_count=567_277,
-    )
-    session.add(row)
-    session.commit()
-    job = SyncJob(mirror_id=row.id, status=SyncStatus.PENDING, triggered_by="manual")
-    session.add(job)
-    session.commit()
-    result = {"mirror_id": row.id, "job_id": job.id, "local_path": row.local_path,
-              "upstream": row.upstream_url}
-    session.close()
-    return result
-
-
-def reload(factory, mirror_id, job_id):
-    session = factory()
-    try:
-        m = session.execute(select(Mirror).where(Mirror.id == mirror_id)).scalar_one()
-        j = session.execute(select(SyncJob).where(SyncJob.id == job_id)).scalar_one()
-        return m, j
-    finally:
-        session.close()
-
-
-async def run_job(service, mirror):
-    await service.sync_mirror_job(
-        job_id=mirror["job_id"],
-        mirror_id=mirror["mirror_id"],
-        name="OpenBSD",
-        upstream=mirror["upstream"],
-        local_path=mirror["local_path"],
-    )
+from tests.conftest import (  # noqa: E402
+    PREVIOUS_SYNC,
+    FakeProcess,
+    reload,
+    run_job,
+)
 
 
 # ---------------------------------------------------------------------------

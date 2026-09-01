@@ -10,7 +10,7 @@ import os
 import re
 import signal
 from datetime import datetime, timezone
-from typing import NamedTuple, Optional
+from typing import AbstractSet, ClassVar, Dict, NamedTuple, Optional
 
 from aiohttp import web
 from croniter import croniter
@@ -31,6 +31,12 @@ import structlog
 # NOT IMPORTED, deliberately: Base. This service must never create the schema.
 # create_all belongs to the backend alone -- see shared/models/base.py.
 from shared.models import Mirror, MirrorStatus, Setting, SyncJob, SyncStatus
+from shared.settings_spec import (
+    DEFAULT_SYNC_SCHEDULE,
+    SettingError,
+    UnknownSettingKey,
+    parse_setting,
+)
 
 # Configure stdlib logging before structlog: structlog's filter_by_level checks
 # the *stdlib* logger's effective level, and the root logger defaults to WARNING,
@@ -65,6 +71,18 @@ logger = structlog.get_logger(__name__)
 
 # How often to poll for pending jobs (seconds)
 POLL_INTERVAL = 10
+
+# How many poll cycles between settings reloads and reaper passes. At
+# POLL_INTERVAL=10 that is one of each every five minutes.
+SETTINGS_RELOAD_INTERVAL_CYCLES = 30
+REAP_INTERVAL_CYCLES = 30
+
+# A reaped job that had been running longer than this is logged at WARNING
+# rather than INFO. It does not change the decision -- nothing about elapsed
+# time does -- it just makes an unexpected reap of a long transfer loud instead
+# of a line in the noise. Job 615 ran 15h43m legitimately; if this service ever
+# reaps something that shape, the operator should not have to go looking.
+LONG_RUNNING_REAP_WARN_SECONDS = 3600
 
 # rsync exit codes that mean "the mirror on disk is good".
 #
@@ -347,6 +365,116 @@ def _regular_file_count(value: str) -> Optional[int]:
     return total
 
 
+# ---------------------------------------------------------------------------
+# Orphaned sync jobs
+#
+# If this container dies mid-rsync -- OOM kill, host reboot, SIGKILL -- the
+# completion block in sync_mirror_job never runs. The SyncJob row stays RUNNING
+# and the Mirror row stays SYNCING forever, and admin.py's trigger_sync then
+# refuses every manual retry with "Mirror is already syncing". Recovery was a
+# hand-written UPDATE.
+#
+# WHAT THIS DELIBERATELY DOES NOT USE: elapsed time.
+#
+# Duration cannot separate a dead sync from a slow one, and the production
+# record says so outright. Job 615 ran for 15 hours 43 minutes: a healthy,
+# actively progressing 2.58 TB transfer of 567,277 files. Job 624 was the same
+# mirror, incremental, and finished in 13 minutes. Any elapsed-time threshold
+# is either short enough to kill job 615 at hour fifteen or long enough to be
+# useless. There is no value in between, so no value is used.
+#
+# WHAT IT USES INSTEAD: ownership.
+#
+# The sync service is a single process that runs its jobs strictly one at a
+# time -- poll_pending_jobs awaits each sync_mirror_job in a for loop, and
+# scheduler_loop awaits poll_pending_jobs. So the process knows the id of every
+# job it is working on, and a RUNNING row whose id is not in that set is a row
+# nothing is going to advance. That is not a heuristic about a job; it is the
+# absence of the only thing that could ever move it.
+#
+# The claim is ordered so the window cannot open the wrong way:
+#
+#   sync_mirror_job()    add(job_id)          <- synchronous, before any await
+#                        UPDATE ... RUNNING   <- row becomes RUNNING after
+#                        run_rsync(...)
+#                        UPDATE ... COMPLETED <- row stops being RUNNING first
+#                        discard(job_id)      <- claim released after
+#
+# Both mutations are plain set operations with no await between them and the
+# statement they guard, and the reaper is a coroutine on the same event loop,
+# so it can only observe the pair in a consistent state. "RUNNING and claimed"
+# and "not RUNNING and unclaimed" are the only two things it can see for a job
+# this process is handling. A false positive against a live local sync is not
+# unlikely here, it is unrepresentable.
+#
+# The one case that does read as an orphan without being a crash is a job that
+# raised between the two commits -- a database blip, a cancellation. The finally
+# releases the claim while the row still says RUNNING, so the next reaper pass
+# clears it. That is correct: nothing is going to finish that job either.
+#
+# ASSUMPTION, stated because it is load-bearing: exactly one sync-service
+# process talks to this database. docker-compose.yml pins the container name
+# (bsdmirrors-sync), so Docker refuses a second copy and Compose replaces
+# rather than duplicates. If that ever stops being true, ownership has to move
+# out of this process's memory and into a claim both processes can see -- which
+# means a column, which means migrations, which this repo does not have. Adding
+# replicas without doing that would let one process reap another's live job.
+# ---------------------------------------------------------------------------
+
+class OrphanVerdict(NamedTuple):
+    """Whether one sync job is abandoned, and why.
+
+    elapsed_seconds is reported, never consulted. It exists for the log line so
+    an operator can see what was reaped; see the note above on why it is not
+    allowed anywhere near the decision.
+    """
+
+    reap: bool
+    reason: str
+    elapsed_seconds: Optional[float]
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Postgres hands back an aware datetime; SQLite hands back a naive one.
+
+    The columns are DateTime(timezone=True) and every writer uses
+    datetime.now(timezone.utc), so a naive value read back is UTC that lost its
+    tzinfo in transit, not local time.
+    """
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _orphan_verdict(
+    job_id: int,
+    job_status: SyncStatus,
+    started_at: Optional[datetime],
+    active_job_ids: AbstractSet[int],
+    now: datetime,
+) -> OrphanVerdict:
+    """Decide whether a sync job has been abandoned.
+
+    Pure, and pure on purpose: everything it needs is an argument, so the
+    decision can be tested exhaustively -- including against job 615's real
+    shape -- without a database, a subprocess or a clock.
+
+    A job with no started_at cannot be one of ours: this process writes
+    started_at in the same statement that sets RUNNING. If the row says RUNNING
+    with started_at NULL it was written by something else and is not being
+    advanced by anything.
+    """
+    elapsed = None
+    if started_at is not None:
+        elapsed = (now - _as_utc(started_at)).total_seconds()
+
+    if job_status != SyncStatus.RUNNING:
+        return OrphanVerdict(False, f"status is {job_status.value}, not running", elapsed)
+
+    if job_id in active_job_ids:
+        return OrphanVerdict(False, "this process is running it", elapsed)
+
+    return OrphanVerdict(True, "no process in this service is running it", elapsed)
+
+
 class SyncConfig:
     """Configuration from environment variables."""
 
@@ -390,34 +518,80 @@ class SyncService:
         self.engine = create_async_engine(config.database_url, pool_size=5)
         self.session_maker = async_sessionmaker(self.engine, expire_on_commit=False)
         self.current_sync: Optional[asyncio.subprocess.Process] = None
+        # Job ids this process is executing right now. The reaper's entire
+        # decision rests on this set -- see the block above OrphanVerdict.
+        # sync_mirror_job is the only writer.
+        self.active_job_ids: set = set()
         # Runtime settings (reloaded from DB)
         self.sync_schedule = config.SYNC_SCHEDULE
         self.sync_bandwidth_limit = config.SYNC_BANDWIDTH_LIMIT
         self.sync_timeout = config.SYNC_TIMEOUT
 
+    # Which settings row feeds which attribute. Everything about a key -- how
+    # it parses, what range it may hold -- lives in shared/settings_spec.py,
+    # which the backend's PATCH /api/admin/settings validates against too.
+    _SETTING_ATTRS: ClassVar[Dict[str, str]] = {
+        "sync_schedule": "sync_schedule",
+        "sync_bandwidth_limit": "sync_bandwidth_limit",
+        "sync_timeout": "sync_timeout",
+    }
+
     async def reload_settings(self) -> None:
-        """Reload settings from the database settings table (if it exists)."""
+        """Reload settings from the database settings table (if it exists).
+
+        Every value is validated before it is adopted, and one that fails is
+        refused with a WARNING rather than taken or dropped in silence.
+
+        The API validates on write, but the API is not the only way a row gets
+        written: a psql session, a restore from an older dump, or a deployment
+        that predates the validation all reach this table without passing
+        through it. A value that wedges the scheduler is not less wedging for
+        having arrived by another route, so the reader checks too.
+
+        This used to be `int(...)` under a bare `except ValueError: pass`, which
+        kept the previous value and said nothing -- an operator who typed "60O"
+        into the timeout box saw it saved, saw it listed, and had no way to find
+        out it was being ignored. sync_schedule had no guard at all: it went
+        straight to croniter() in scheduler_loop, raised inside the generic
+        handler, and left the loop retrying every ten seconds forever.
+        """
         try:
             async with self.session_maker() as session:
                 result = await session.execute(select(Setting))
                 settings_rows = result.scalars().all()
-
-                for s in settings_rows:
-                    if s.key == "sync_schedule" and s.value:
-                        self.sync_schedule = s.value
-                    elif s.key == "sync_bandwidth_limit" and s.value:
-                        try:
-                            self.sync_bandwidth_limit = int(s.value)
-                        except ValueError:
-                            pass
-                    elif s.key == "sync_timeout" and s.value:
-                        try:
-                            self.sync_timeout = int(s.value)
-                        except ValueError:
-                            pass
         except Exception as e:
-            # Settings table may not exist yet — use env defaults
+            # Settings table may not exist yet -- use env defaults
             logger.debug("Could not reload settings from DB", error=str(e))
+            return
+
+        for row in settings_rows:
+            attr = self._SETTING_ATTRS.get(row.key)
+            if attr is None or row.value is None:
+                continue
+            try:
+                value = parse_setting(row.key, row.value)
+            except UnknownSettingKey:
+                # _SETTING_ATTRS is a subset of SETTING_SPECS, so this cannot
+                # happen -- and tests/test_settings_validation.py pins that.
+                # Caught rather than allowed to propagate because an exception
+                # escaping here lands in scheduler_loop's generic handler,
+                # which retries every ten seconds forever: the exact wedge this
+                # whole change exists to close. Loud, not fatal.
+                logger.error(
+                    "Settings key has no spec; not adopting it",
+                    key=row.key,
+                )
+                continue
+            except SettingError as exc:
+                logger.warning(
+                    "Ignoring unusable setting, keeping current value",
+                    key=row.key,
+                    rejected=row.value,
+                    current=getattr(self, attr),
+                    reason=str(exc),
+                )
+                continue
+            setattr(self, attr, value)
 
     async def run_rsync(
         self,
@@ -599,6 +773,23 @@ class SyncService:
 
     async def sync_mirror_job(self, job_id: int, mirror_id: int, name: str, upstream: str, local_path: str) -> None:
         """Execute a sync for a pre-existing SyncJob record."""
+        # Claim the job before anything writes RUNNING to its row, and hold the
+        # claim until after something writes a terminal status. This ordering is
+        # what makes the reaper safe; the long comment above OrphanVerdict lays
+        # out why. Both statements are plain set operations with no await
+        # between them and the database write they bracket, so the reaper --
+        # another coroutine on this same loop -- cannot catch them half-applied.
+        self.active_job_ids.add(job_id)
+        try:
+            await self._sync_mirror_job(job_id, mirror_id, name, upstream, local_path)
+        finally:
+            # finally, not "after the happy path": if the body raised between
+            # the two commits the row still says RUNNING and nothing is going
+            # to finish it. Releasing the claim here is what lets the next
+            # reaper pass clear it without waiting for a restart.
+            self.active_job_ids.discard(job_id)
+
+    async def _sync_mirror_job(self, job_id: int, mirror_id: int, name: str, upstream: str, local_path: str) -> None:
         async with self.session_maker() as session:
             # Mark job as running
             await session.execute(
@@ -688,6 +879,132 @@ class SyncService:
 
         await self.sync_mirror_job(job_id, mirror_id, name, upstream, local_path)
 
+    REAPED_JOB_MESSAGE = (
+        "Sync job abandoned: no sync-service process was running it. The most "
+        "likely cause is the sync container stopping mid-rsync. The mirror on "
+        "disk is whatever rsync had written when it stopped -- incomplete, but "
+        "not corrupt -- and the next sync will resume from there."
+    )
+
+    async def reap_orphaned_jobs(self, trigger: str) -> int:
+        """Close out sync jobs that no process is running. Returns the count.
+
+        Two things get fixed, in this order:
+
+          1. SyncJob rows stuck at RUNNING -> FAILED, with completed_at and an
+             error_message saying what happened. The mirror they belong to
+             comes out of SYNCING at the same time.
+          2. Mirror rows stuck at SYNCING with no RUNNING job anywhere. Step 1
+             cannot produce this state, but a deleted job row or a hand-edited
+             table can, and it blocks trigger_sync just as effectively.
+
+        Deliberately NOT touched: last_sync_completed, total_size_bytes and
+        file_count. They answer "when was this mirror last known good and how
+        big was it then", and a sync that died has no better answer to offer --
+        the same reasoning that keeps sync_mirror_job from clearing them on an
+        ordinary failure.
+
+        The mirror goes to ERROR rather than ACTIVE because the tree on disk is
+        a partial transfer. ERROR is also what the admin panel surfaces as
+        needing attention, which is true here.
+
+        The job goes to FAILED rather than CANCELLED: CANCELLED reads as "a
+        person stopped this", and nobody did.
+        """
+        now = datetime.now(timezone.utc)
+        reaped = 0
+
+        async with self.session_maker() as session:
+            result = await session.execute(
+                select(SyncJob).where(SyncJob.status == SyncStatus.RUNNING)
+            )
+            running_jobs = result.scalars().all()
+
+            orphans = []
+            for job in running_jobs:
+                verdict = _orphan_verdict(
+                    job_id=job.id,
+                    job_status=job.status,
+                    started_at=job.started_at,
+                    active_job_ids=self.active_job_ids,
+                    now=now,
+                )
+                if verdict.reap:
+                    orphans.append((job, verdict))
+
+            for job, verdict in orphans:
+                await session.execute(
+                    update(SyncJob)
+                    .where(SyncJob.id == job.id)
+                    .values(
+                        status=SyncStatus.FAILED,
+                        completed_at=now,
+                        error_message=self.REAPED_JOB_MESSAGE,
+                    )
+                )
+                await session.execute(
+                    update(Mirror)
+                    .where(Mirror.id == job.mirror_id)
+                    .where(Mirror.status == MirrorStatus.SYNCING)
+                    .values(
+                        status=MirrorStatus.ERROR,
+                        last_sync_error=self.REAPED_JOB_MESSAGE,
+                    )
+                )
+                reaped += 1
+
+                # Elapsed time does not decide anything, but a reap of
+                # something that had been running for hours is worth being
+                # loud about: if this service ever gets a job 615 wrong, the
+                # operator should find it in the log rather than in the size
+                # of the mirror.
+                elapsed = verdict.elapsed_seconds
+                log = logger.info
+                if elapsed is not None and elapsed >= LONG_RUNNING_REAP_WARN_SECONDS:
+                    log = logger.warning
+                log(
+                    "Reaped orphaned sync job",
+                    job_id=job.id,
+                    mirror_id=job.mirror_id,
+                    trigger=trigger,
+                    reason=verdict.reason,
+                    elapsed_seconds=elapsed,
+                )
+
+            # Step 2. A mirror still claiming to sync with nothing running it.
+            # Recomputed from the database after the updates above, so a mirror
+            # this process is genuinely syncing is excluded by the same fact
+            # that protects its job: its job row still says RUNNING.
+            still_running = await session.execute(
+                select(SyncJob.mirror_id).where(SyncJob.status == SyncStatus.RUNNING)
+            )
+            busy_mirror_ids = set(still_running.scalars().all())
+
+            stuck = await session.execute(
+                select(Mirror).where(Mirror.status == MirrorStatus.SYNCING)
+            )
+            for mirror in stuck.scalars().all():
+                if mirror.id in busy_mirror_ids:
+                    continue
+                await session.execute(
+                    update(Mirror)
+                    .where(Mirror.id == mirror.id)
+                    .values(
+                        status=MirrorStatus.ERROR,
+                        last_sync_error=self.REAPED_JOB_MESSAGE,
+                    )
+                )
+                logger.warning(
+                    "Cleared mirror stuck in SYNCING with no running job",
+                    mirror_id=mirror.id,
+                    mirror=mirror.name,
+                    trigger=trigger,
+                )
+
+            await session.commit()
+
+        return reaped
+
     async def poll_pending_jobs(self) -> int:
         """Check for pending sync jobs and execute them. Returns count of jobs processed."""
         processed = 0
@@ -739,12 +1056,40 @@ class SyncService:
                 local_path=mirror.local_path
             )
 
+    def _next_scheduled_run(self, base: datetime) -> datetime:
+        """The next fire time for self.sync_schedule, falling back if it cannot.
+
+        This is the last line of defence on the wedge. croniter() used to be
+        called inline in the loop below, inside the try block, so an unusable
+        schedule raised, hit the generic handler, and put the whole loop into a
+        ten-second retry that never polled a job or ran a sync -- with the
+        scheduler broken by a string an operator typed into a text box.
+
+        Both earlier layers can be bypassed. The API validates on write, but a
+        row can be written by psql; reload_settings validates on read, but
+        self.sync_schedule also comes from the SYNC_SCHEDULE environment
+        variable, which nothing validates at all. So the value is checked once
+        more at the point of use, and an unusable one is replaced by the seeded
+        default instead of taking the service down. A mirror syncing at 04:00
+        when someone meant 03:00 is a wrong schedule; a mirror that never syncs
+        again is an outage.
+        """
+        try:
+            return croniter(self.sync_schedule, base).get_next(datetime)
+        except Exception as exc:
+            logger.error(
+                "Unusable sync schedule, falling back to the default",
+                rejected=self.sync_schedule,
+                fallback=DEFAULT_SYNC_SCHEDULE,
+                error=str(exc),
+            )
+            self.sync_schedule = DEFAULT_SYNC_SCHEDULE
+            return croniter(DEFAULT_SYNC_SCHEDULE, base).get_next(datetime)
+
     async def scheduler_loop(self) -> None:
         """Main scheduler loop — polls for pending jobs every POLL_INTERVAL seconds
         and runs scheduled syncs at the configured cron schedule."""
-        cron = croniter(self.sync_schedule, datetime.now())
-        next_run = cron.get_next(datetime)
-        settings_reload_interval = 30  # Reload settings every 30 cycles (~5 min)
+        next_run = self._next_scheduled_run(datetime.now())
         poll_count = 0
 
         logger.info("Next scheduled sync", next_run=next_run.isoformat())
@@ -760,15 +1105,24 @@ class SyncService:
                 poll_count += 1
 
                 # Reload settings periodically to pick up admin panel changes
-                if poll_count % settings_reload_interval == 0:
+                if poll_count % SETTINGS_RELOAD_INTERVAL_CYCLES == 0:
                     old_schedule = self.sync_schedule
                     await self.reload_settings()
                     # If schedule changed, recalculate next run
                     if self.sync_schedule != old_schedule:
                         logger.info("Sync schedule changed", old=old_schedule, new=self.sync_schedule)
-                        cron = croniter(self.sync_schedule, datetime.now())
-                        next_run = cron.get_next(datetime)
+                        next_run = self._next_scheduled_run(datetime.now())
                         logger.info("Next scheduled sync recalculated", next_run=next_run.isoformat())
+
+                # Reap jobs abandoned by a process that is no longer running
+                # them. Also done once at startup, which is where a crash's
+                # orphans get cleared; this pass exists for the case the
+                # startup one cannot reach -- a job stranded while this process
+                # kept running, e.g. an exception between marking it RUNNING
+                # and marking it finished. Without it that job would need a
+                # container restart to clear.
+                if poll_count % REAP_INTERVAL_CYCLES == 0:
+                    await self.reap_orphaned_jobs(trigger="scheduler")
 
                 # Poll for manually triggered pending jobs
                 processed = await self.poll_pending_jobs()
@@ -786,8 +1140,7 @@ class SyncService:
                     await self.run_scheduled_sync()
 
                     # Advance to next cron time
-                    cron = croniter(self.sync_schedule, datetime.now())
-                    next_run = cron.get_next(datetime)
+                    next_run = self._next_scheduled_run(datetime.now())
                     logger.info("Next scheduled sync", next_run=next_run.isoformat())
 
             except asyncio.CancelledError:
@@ -847,6 +1200,27 @@ class SyncService:
         # Load settings from database
         await self.reload_settings()
 
+        # Clear jobs abandoned by the previous incarnation of this process.
+        #
+        # This is the moment the reaper is most obviously right: a process that
+        # has just started owns no jobs, so every RUNNING row in the table
+        # belongs to a process that is gone. Nothing here is a judgement call.
+        #
+        # It must run BEFORE poll_pending_jobs, or a mirror stuck in SYNCING
+        # from the crash stays stuck for the whole first cycle.
+        #
+        # What this does not cover: a container that dies and never comes back.
+        # Nothing inside the sync service can fix that -- compose's
+        # `restart: unless-stopped` is what brings it back after a crash, and
+        # if the host is down or the image will not start, no code in this file
+        # runs at all. That case needs an external watchdog, not a reaper.
+        try:
+            reaped = await self.reap_orphaned_jobs(trigger="startup")
+            if reaped:
+                logger.warning("Reaped orphaned sync jobs on startup", count=reaped)
+        except Exception as e:
+            logger.warning("Could not reap orphaned jobs on startup", error=str(e))
+
         # Process any pending jobs on startup
         try:
             pending = await self.poll_pending_jobs()
@@ -855,7 +1229,16 @@ class SyncService:
         except Exception as e:
             logger.warning("Could not poll pending jobs on startup (tables may not exist yet)", error=str(e))
 
-        # Run initial sync on startup (optional)
+        # Run initial sync on startup (optional).
+        #
+        # NOTE, unresolved and deliberately left alone by this change: this
+        # reads the SYNC_ON_STARTUP *environment variable*, not the
+        # `sync_on_startup` row that backend/app/main.py seeds and that the
+        # admin panel offers a dropdown for. Toggling it in the UI therefore
+        # does nothing. The API now validates that row (shared/settings_spec.py)
+        # so it can no longer hold a typo that reads as false, but wiring it up
+        # is a behaviour change to scheduled syncing and belongs in its own
+        # change with its own tests, not smuggled into a validation fix.
         if os.getenv("SYNC_ON_STARTUP", "false").lower() == "true":
             await self.run_scheduled_sync()
 

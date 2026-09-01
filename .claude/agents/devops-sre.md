@@ -33,11 +33,11 @@ Application logic in `backend/app/**` or `frontend/**` — that is the `develope
 
 ## Known state — read before proposing work
 
-- **No migrations exist.** Schema is created by `Base.metadata.create_all` in `backend/app/core/database.py:43`. `alembic==1.13.1` is in `backend/requirements.txt` but there is no `alembic.ini` and no migrations directory. Any column change is silently ignored on an existing deployment.
-- **Models live in `shared/models/`**, imported by both services, and the builds use a repo-root context so that package reaches both images. There is still no Alembic: schema comes from `Base.metadata.create_all`, which creates missing *tables* only and silently ignores column or type changes on tables that already exist.
+- **Schema is owned by Alembic.** `create_all` is gone; `init_db()` only verifies `alembic_version` and logs the revision. Migrations run from `scripts/deploy.sh` between build and recreate, so a bad one stops the deploy with the old containers still serving. `scripts/migrate.sh upgrade` renders the SQL for review before applying. A fresh install must run `migrate.sh upgrade` before the backend will start; an existing database is adopted once with `migrate.sh adopt`, which refuses unless the live schema already matches `shared/models/` exactly.
+- **Models live in `shared/models/`**, imported by both services, and the builds use a repo-root context so that package reaches both images.
 - **`ruff`, `bandit`, `pytest`, `pytest-asyncio`, `pytest-cov` are installed and never invoked.** No CI, no `pyproject.toml`, no Makefile, no pre-commit.
 - **`limit_conn_zone` is declared at `nginx/nginx.conf:64` and used nowhere.**
-- **A stuck sync is unrecoverable.** If the sync container dies mid-`rsync`, the mirror stays at `MirrorStatus.SYNCING` forever and `backend/app/api/admin.py:301` then rejects every manual retry. There is no reaper and no stale-job timeout.
+- **Orphaned syncs are reaped by ownership, not by a timer.** The sync service tracks its own active job ids; a `RUNNING` row it does not own is one nothing will advance. There is deliberately no elapsed-time threshold — job 615 was a healthy 15h43m transfer and any timer would eventually kill one. The reaper does not cover a container that dies and never returns; that is the health check's job.
 - **An invalid cron string wedges the scheduler.** `backend/app/api/admin.py:513` accepts arbitrary setting values; `sync/sync_service.py:352` then throws inside the loop, the generic handler swallows it, and the service retries every 10s forever without syncing.
 - **`nginx` `add_header` does not inherit.** See the `appsec-reviewer` agent — coordinate with it before touching security headers.
 

@@ -29,7 +29,7 @@ case "$rel" in
   backend/app/models/*|sync/sync_service.py)
     owner="developer (schema) — with devops-sre if migrations are involved"
     gate="Schema shape verified against the real Postgres schema, not just SQLite; tests pass."
-    trap_note="Models live once in shared/models/, imported by both services. They were duplicated until the copies had drifted 17 ways (commit 798ae79 was one such break). Do not reintroduce a second definition. There are still no migrations: create_all creates missing tables only and silently ignores column or type changes to existing ones." ;;
+    trap_note="Models live once in shared/models/, imported by both services. They were duplicated until the copies had drifted 17 ways (commit 798ae79 was one such break). Do not reintroduce a second definition. Alembic owns the schema now: a column or type change needs a reviewed migration, not a model edit alone." ;;
   backend/*|sync/*)
     owner="developer"
     gate="Tests written and passing, ruff clean, no blocking call in an async path."

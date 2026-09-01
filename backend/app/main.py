@@ -20,6 +20,7 @@ from app.core.database import init_db, close_db, async_session_maker
 from app.core.redis import init_redis, close_redis
 from app.core.security import hash_password_async
 from shared.models import Mirror, MirrorStatus, MirrorType, Setting, User, UserRole
+from shared.settings_spec import SETTING_SPECS
 from app.api import health, auth, mirrors, admin, stats
 
 # Configure stdlib logging before structlog: structlog's filter_by_level checks
@@ -123,36 +124,24 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 existing.upstream_url = mirror_data["upstream_url"]
                 logger.info("Mirror upstream updated", name=mirror_data["name"], upstream=mirror_data["upstream_url"])
 
-        # Default settings
-        default_settings = [
-            {
-                "key": "sync_schedule",
-                "value": "0 4 * * *",
-                "description": "Cron schedule for automatic mirror synchronization",
-            },
-            {
-                "key": "sync_bandwidth_limit",
-                "value": "0",
-                "description": "Rsync bandwidth limit in KB/s (0 = unlimited)",
-            },
-            {
-                "key": "sync_timeout",
-                "value": "600",
-                "description": "Rsync timeout in seconds",
-            },
-            {
-                "key": "sync_on_startup",
-                "value": "false",
-                "description": "Run full sync when sync service starts",
-            },
-        ]
-        for setting_data in default_settings:
+        # Default settings.
+        #
+        # Seeded from shared/settings_spec.py rather than from a literal list
+        # here, because that module is also what validates a PATCH to
+        # /api/admin/settings and what the sync service checks a value against
+        # before adopting it. Three copies of "the default schedule is 0 4 * * *"
+        # is how they drift; one is how they cannot.
+        for key, spec in SETTING_SPECS.items():
             result = await session.execute(
-                select(Setting).where(Setting.key == setting_data["key"])
+                select(Setting).where(Setting.key == key)
             )
             if result.scalar_one_or_none() is None:
-                session.add(Setting(**setting_data))
-                logger.info("Default setting created", key=setting_data["key"])
+                session.add(Setting(
+                    key=key,
+                    value=spec.render(spec.default),
+                    description=spec.description,
+                ))
+                logger.info("Default setting created", key=key)
 
         await session.commit()
 
