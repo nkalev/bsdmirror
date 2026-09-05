@@ -371,6 +371,7 @@ def service(factory):
     svc.sync_schedule = "0 4 * * *"
     svc.sync_bandwidth_limit = 0
     svc.sync_timeout = 600
+    svc.sync_on_startup = False
     svc.session_maker = lambda: _SessionContext(factory)
     return svc
 
