@@ -294,6 +294,20 @@ jobs:
           sys.exit(fail)
           PYVERIFY
 
+      # Pin Node, rather than inheriting whatever the runner ships.
+      #
+      # tests/js/csp_click_harness.mjs:93 drives Chrome over the DevTools
+      # protocol using a global `WebSocket`, which Node did not ship as a global
+      # until 22. This job had no version pin at all: it passed because the
+      # ubuntu-24.04 image happened to be new enough, and would have started
+      # failing on a runner-image bump with a ReferenceError six tests deep.
+      # Debian bookworm's nodejs is 20.19, which is exactly where that breaks --
+      # Dockerfile.test hit it and pins 22 for the same reason.
+      - name: Pin Node (the CSP harness needs a global WebSocket, Node >= 22)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       # -----------------------------------------------------------------------
       # The browser-driven suites must RUN here, never skip
       # -----------------------------------------------------------------------
