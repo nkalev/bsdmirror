@@ -1,7 +1,7 @@
 # FastAPI and web framework
 fastapi==0.109.2
 uvicorn[standard]==0.27.1
-python-multipart==0.0.9
+python-multipart==0.0.32
 
 # Database
 asyncpg==0.29.0
@@ -12,7 +12,7 @@ alembic==1.13.1
 redis==5.0.1
 
 # Authentication
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 # Pinned exactly, not >=. A rebuild on 2026-08-30 silently moved this from
 # 4.x to 5.0.0 -- a major version, in the login path (core/security.py calls
 # bcrypt.checkpw on every request to /api/auth/token), with no review. It was
@@ -23,7 +23,7 @@ pydantic[email]==2.6.1
 
 # Configuration
 pydantic-settings==2.1.0
-python-dotenv==1.0.1
+python-dotenv==1.2.3
 
 # HTTP client (for health checks)
 httpx==0.26.0
@@ -36,8 +36,8 @@ croniter==2.0.1
 humanize==4.9.0
 
 # Testing
-pytest==7.4.4
-pytest-asyncio==0.23.4
+pytest==9.1.1
+pytest-asyncio==1.4.0
 pytest-cov==4.1.0
 
 # Security scanning
