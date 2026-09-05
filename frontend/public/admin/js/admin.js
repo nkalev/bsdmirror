@@ -248,7 +248,7 @@ function renderLayout(content, title) {
                             <div class="user-role">${state.user?.role || 'Unknown'}</div>
                         </div>
                     </div>
-                    <button class="btn btn-secondary btn-sm" style="width: 100%; margin-top: 12px;" data-action="logout">
+                    <button class="btn btn-secondary btn-sm u-full-width u-mt-sm" data-action="logout">
                         Logout
                     </button>
                 </div>
@@ -353,7 +353,7 @@ function renderLoginPage() {
                         <label class="form-label" for="password">Password</label>
                         <input type="password" id="password" class="form-input" placeholder="Enter password" required>
                     </div>
-                    <button type="submit" class="btn btn-primary" style="width: 100%;">
+                    <button type="submit" class="btn btn-primary u-full-width">
                         Sign In
                     </button>
                 </form>
@@ -406,7 +406,7 @@ async function renderDashboard() {
             </div>
         </div>
         
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+        <div class="u-grid-2">
             <div class="card">
                 <div class="card-header">
                     <h3 class="card-title">Recent Sync Jobs</h3>
@@ -475,7 +475,7 @@ async function renderMirrors() {
                             <tr>
                                 <td>
                                     <strong>${mirror.name}</strong>
-                                    <br><small style="color: var(--text-muted)">${mirror.url_path}</small>
+                                    <br><small class="u-text-muted">${mirror.url_path}</small>
                                 </td>
                                 <td>
                                     <span class="status-badge ${mirror.status}">
@@ -619,27 +619,27 @@ async function renderSettings() {
             <div class="card-header">
                 <h3 class="card-title">Sync Settings</h3>
             </div>
-            <form id="settingsForm" style="padding: 0 24px 24px;">
+            <form id="settingsForm" class="u-pad-body">
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_schedule">Sync Schedule (Cron)</label>
                     <input type="text" id="setting_sync_schedule" class="form-input"
                         value="${settings.sync_schedule?.value || '0 4 * * *'}"
                         placeholder="0 4 * * *">
-                    <small style="color: var(--text-muted);">${settings.sync_schedule?.description || ''}</small>
+                    <small class="u-text-muted">${settings.sync_schedule?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_bandwidth_limit">Bandwidth Limit (KB/s)</label>
                     <input type="number" id="setting_sync_bandwidth_limit" class="form-input"
                         value="${settings.sync_bandwidth_limit?.value || '0'}"
                         min="0" placeholder="0">
-                    <small style="color: var(--text-muted);">${settings.sync_bandwidth_limit?.description || ''}</small>
+                    <small class="u-text-muted">${settings.sync_bandwidth_limit?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_timeout">Sync Timeout (seconds)</label>
                     <input type="number" id="setting_sync_timeout" class="form-input"
                         value="${settings.sync_timeout?.value || '600'}"
                         min="60" placeholder="600">
-                    <small style="color: var(--text-muted);">${settings.sync_timeout?.description || ''}</small>
+                    <small class="u-text-muted">${settings.sync_timeout?.description || ''}</small>
                 </div>
                 <div class="form-group">
                     <label class="form-label" for="setting_sync_on_startup">Sync on Startup</label>
@@ -647,26 +647,26 @@ async function renderSettings() {
                         <option value="false" ${(settings.sync_on_startup?.value || 'false') === 'false' ? 'selected' : ''}>Disabled</option>
                         <option value="true" ${settings.sync_on_startup?.value === 'true' ? 'selected' : ''}>Enabled</option>
                     </select>
-                    <small style="color: var(--text-muted);">${settings.sync_on_startup?.description || ''}</small>
+                    <small class="u-text-muted">${settings.sync_on_startup?.description || ''}</small>
                 </div>
-                <div style="display: flex; gap: 12px; margin-top: 24px;">
+                <div class="u-row-12 u-mt-md">
                     <button type="button" class="btn btn-primary" data-action="saveSettings">Save Settings</button>
                 </div>
             </form>
         </div>
 
-        <div class="card" style="margin-top: 24px;">
+        <div class="card u-mt-md">
             <div class="card-header">
                 <h3 class="card-title">Settings Info</h3>
             </div>
-            <div style="padding: 0 24px 24px;">
-                <p style="color: var(--text-muted); font-size: 14px;">
+            <div class="u-pad-body">
+                <p class="u-text-muted u-text-sm">
                     Settings are stored in the database and applied by the sync service.
                     Changes to the sync schedule will take effect at the next scheduler iteration (within ~10 seconds).
                     Some settings may require a service restart to fully apply.
                 </p>
                 ${state.data.settings.length ? html`
-                <table style="margin-top: 12px; width: 100%;">
+                <table class="u-mt-sm u-full-width">
                     <thead>
                         <tr>
                             <th>Key</th>
@@ -738,20 +738,20 @@ const actions = {
                 <div class="form-group">
                     <label class="form-label">Upstream URL</label>
                     ${isOperator ? html`
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <input type="text" id="mirrorUpstreamUrl" class="form-input" value="${mirror.upstream_url}" style="flex: 1;">
+                    <div class="u-row-8">
+                        <input type="text" id="mirrorUpstreamUrl" class="form-input u-flex-1" value="${mirror.upstream_url}">
                         <button class="btn btn-primary btn-sm" data-action="saveMirrorUpstream" data-id="${mirror.id}">Save</button>
                     </div>
-                    <small style="color: var(--text-muted);">Change the rsync upstream URL (e.g. rsync://mirror.example.com/FreeBSD/)</small>
+                    <small class="u-text-muted">Change the rsync upstream URL (e.g. rsync://mirror.example.com/FreeBSD/)</small>
                     ` : html`
-                    <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
+                    <code class="code-block">
                         ${mirror.upstream_url}
                     </code>
                     `}
                 </div>
                 <div class="form-group">
                     <label class="form-label">Local Path</label>
-                    <code style="display: block; padding: 8px; background: var(--bg-tertiary); border-radius: 6px;">
+                    <code class="code-block">
                         ${mirror.local_path}
                     </code>
                 </div>
@@ -772,7 +772,7 @@ const actions = {
                                     </div>
                                     <div class="activity-time">${formatDate(h.completed_at || h.started_at || h.created_at)}</div>
                                 </div>
-                                <div style="margin-left: auto;">
+                                <div class="u-push-right">
                                     <button class="btn btn-secondary btn-sm" data-action="viewSyncLogs" data-id="${h.id}">
                                         View Logs
                                     </button>
@@ -817,7 +817,7 @@ const actions = {
             const isRunning = job.status === 'running' || job.status === 'pending';
 
             Modal.show(`${statusIcon} Sync Job #${job.id}`, html`
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                <div class="u-grid-2-tight">
                     <div>
                         <label class="form-label">Status</label>
                         <span class="status-badge ${job.status}">${job.status}</span>
@@ -847,12 +847,12 @@ const actions = {
                 </div>
                 ${job.error_message ? html`
                 <div class="form-group">
-                    <label class="form-label" style="color: var(--status-error);">Error</label>
-                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; color: var(--status-error); max-height: 150px; overflow-y: auto;">${job.error_message}</pre>
+                    <label class="form-label u-text-error">Error</label>
+                    <pre class="log-pre log-pre-error">${job.error_message}</pre>
                 </div>` : ''}
                 <div class="form-group">
                     <label class="form-label">Rsync Output</label>
-                    <pre style="background: var(--bg-tertiary); padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 12px; max-height: 400px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;">${job.rsync_output || (isRunning ? 'Sync is in progress... click Refresh to update.' : 'No output available.')}</pre>
+                    <pre class="log-pre log-pre-output">${job.rsync_output || (isRunning ? 'Sync is in progress... click Refresh to update.' : 'No output available.')}</pre>
                 </div>
             `, html`
                 ${isRunning ? html`<button class="btn btn-primary btn-sm" data-action="viewSyncLogs" data-id="${job.id}">Refresh</button>` : ''}
