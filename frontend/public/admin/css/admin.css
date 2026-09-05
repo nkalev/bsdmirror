@@ -678,3 +678,68 @@ tr:hover td {
         margin-left: 0;
     }
 }
+
+/* ===========================================================================
+   Utilities and small components
+   ===========================================================================
+
+   These exist to get the inline style="..." attributes out of admin.js. Every
+   declaration below was moved verbatim from the attribute it replaces, so the
+   rendered result is unchanged by construction -- this is a mechanical lift,
+   not a restyle.
+
+   Why it matters beyond tidiness: the CSP cannot drop `style-src
+   'unsafe-inline'` while a single inline style attribute remains, and every
+   one of them is a place where a future interpolation could carry attacker
+   input into a style context.
+
+   Appended at the end on purpose. A utility and a component class have equal
+   specificity, so source order decides, and a utility spelled out at the call
+   site should win over the component default it is there to override.
+
+   tests/test_admin_inline_styles.py holds the line: it fails if a class used
+   in admin.js markup is not defined here, and if the inline-style count goes
+   back up. */
+
+/* --- spacing --------------------------------------------------------- */
+.u-mt-sm        { margin-top: 12px; }
+.u-mt-md        { margin-top: 24px; }
+.u-push-right   { margin-left: auto; }
+.u-pad-body     { padding: 0 24px 24px; }
+
+/* --- sizing ---------------------------------------------------------- */
+.u-full-width   { width: 100%; }
+.u-flex-1       { flex: 1; }
+
+/* --- text ------------------------------------------------------------ */
+.u-text-muted   { color: var(--text-muted); }
+.u-text-error   { color: var(--status-error); }
+.u-text-sm      { font-size: 14px; }
+
+/* --- layout ---------------------------------------------------------- */
+.u-row-8        { display: flex; gap: 8px; align-items: center; }
+.u-row-12       { display: flex; gap: 12px; }
+
+.u-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.u-grid-2-tight { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+
+/* --- components ------------------------------------------------------ */
+.code-block {
+    display: block;
+    padding: 8px;
+    background: var(--bg-tertiary);
+    border-radius: 6px;
+}
+
+/* Shared by the error and output panes of the sync-job detail view. They
+   differ only in colour and how tall they are allowed to get. */
+.log-pre {
+    background: var(--bg-tertiary);
+    padding: 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    overflow-y: auto;
+    font-size: 12px;
+}
+.log-pre-error  { color: var(--status-error); max-height: 150px; }
+.log-pre-output { max-height: 400px; white-space: pre-wrap; word-break: break-all; }
