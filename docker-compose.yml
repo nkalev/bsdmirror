@@ -286,6 +286,54 @@ services:
     profiles:
       - ssl
 
+  # ===========================================
+  # Test Runner
+  # ===========================================
+  #
+  #     docker compose run --rm test
+  #
+  # Behind a profile so it never starts with `docker compose up`. `compose run`
+  # enables a service's own profiles implicitly, which is why this lives in the
+  # base file rather than in docker-compose.dev.yml: the command documented in
+  # .claude/agents/developer.md has to be the command that actually works, with
+  # no --profile flag and no -f overlay to remember. There was no `test` service
+  # at all until now, so that documented gate could never be satisfied.
+  test:
+    profiles:
+      - test
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    # The repo is MOUNTED, never baked in -- see the header of Dockerfile.test
+    # for why an image that copies the suite would run zero tests and pass.
+    # Read-only: a test that needs to write to the checkout is a test that has
+    # escaped its own contract.
+    volumes:
+      - .:/repo:ro
+    working_dir: /repo
+    # HOME, pytest's temp files and chromium's --user-data-dir all land here.
+    tmpfs:
+      - /tmp
+    # No depends_on, and no database. pyproject.toml:8-12 states this suite runs
+    # from a bare checkout with no Docker, no Postgres and no Redis; `none`
+    # leaves only loopback, which is all tests/js/csp_click_harness.mjs needs to
+    # serve its fixture to chromium. If a future test needs Postgres, that is a
+    # design decision to argue for explicitly, not something to discover when
+    # this line stops working.
+    network_mode: none
+    # Chromium's sandbox creates user namespaces, and Docker's default seccomp
+    # profile blocks the clone() flags it uses. The alternative is passing
+    # --no-sandbox in tests/js/csp_click_harness.mjs:115, which would weaken the
+    # harness in CI and on developer machines to work around a setting that
+    # belongs here.
+    security_opt:
+      - seccomp:unconfined
+    cap_drop:
+      - ALL
+    # -p no:cacheprovider because /repo is read-only and .pytest_cache is the
+    # only thing a default run wants to write into the tree.
+    command: ["pytest", "-q", "-p", "no:cacheprovider"]
+
 networks:
   frontend:
     driver: bridge

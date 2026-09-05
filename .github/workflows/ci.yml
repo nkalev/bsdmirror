@@ -732,7 +732,7 @@ jobs:
             desc="$1"; shift
             echo "::group::docker compose $* config -q  --  $desc"
             set +e
-            docker compose "$@" --profile rsync --profile ssl config -q 2>.compose.err
+            docker compose "$@" --profile rsync --profile ssl --profile test config -q 2>.compose.err
             rc=$?
             set -e
             cat .compose.err

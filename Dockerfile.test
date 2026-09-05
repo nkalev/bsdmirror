@@ -1,0 +1,82 @@
+# ---------------------------------------------------------------------------
+# Test runner image. Built by the `test` service in docker-compose.yml.
+# ---------------------------------------------------------------------------
+#
+#     docker compose run --rm test
+#
+# This image installs DEPENDENCIES ONLY and copies no source on purpose. The
+# root .dockerignore excludes `**/tests`, `**/test_*.py` and `**/conftest.py`
+# from every build context in this repo, so an image that tried to bake the
+# suite in would receive an empty tests/ directory and then pass by running
+# nothing -- a green build proving only that pytest starts. The compose service
+# bind-mounts the repo at /repo instead, which also means an edited test runs
+# without a rebuild; the slow part, resolving two requirement sets, stays in a
+# cached layer.
+#
+# The interpreter matches the base image the backend and sync services actually
+# run (python:3.12-slim, backend/Dockerfile:3). CI asserts that equality for the
+# same reason: a suite green on a different minor version proves less than it
+# looks like it does.
+# Node 22, not Debian's.
+#
+# tests/js/csp_click_harness.mjs:93 drives Chrome over the DevTools protocol
+# using a global `WebSocket`, which Node did not ship as a global until 22.
+# Debian bookworm's `nodejs` package is v20.19.2, where that line raises
+# `ReferenceError: WebSocket is not defined` and takes six tests with it. The
+# harnesses import nothing outside the `node:` built-ins, so the bare binary is
+# the whole dependency -- no npm, no node_modules.
+#
+# CI does NOT pin a Node version; it uses whatever the ubuntu-24.04 runner
+# ships, which happens to be new enough today. That is a real divergence from
+# this image and worth closing with actions/setup-node, as the comment at
+# .github/workflows/ci.yml:350 already anticipates.
+FROM node:22-bookworm-slim AS node
+
+FROM python:3.12-slim
+COPY --from=node /usr/local/bin/node /usr/local/bin/node
+
+# chromium is not optional here.
+#
+# tests/test_admin_js_escaping.py:79 and tests/test_public_page_csp.py:71 each
+# carry a pytest.mark.skipif for a missing `node` / Chrome. That is correct for
+# a contributor on a bare checkout and exactly wrong for a gate: it turns "the
+# XSS-escaping and CSP coverage did not run" into a silent pass. CI installs
+# both for that reason (.github/workflows/ci.yml:323), and so does this image.
+#
+# `chromium` is the binary name test_public_page_csp.py:52 resolves through
+# shutil.which. Do not swap in a package that installs under a different name
+# without updating that candidate list.
+RUN apt-get update \
+ && apt-get install --no-install-recommends -y chromium \
+ && rm -rf /var/lib/apt/lists/*
+
+# Both requirement sets in ONE pip invocation, deliberately.
+#
+# Two sequential `pip install -r` calls both exit 0 when the files pin the same
+# package to different versions: the second quietly overwrites the first and the
+# suite runs against a combination neither service ships. One call makes pip
+# resolve them together and fail loudly instead. This repo has already been bitten
+# by the two-call form once, in CI, on aiohttp.
+COPY backend/requirements.txt /tmp/backend-requirements.txt
+COPY sync/requirements.txt /tmp/sync-requirements.txt
+RUN python -m pip install --no-cache-dir --upgrade pip \
+ && python -m pip install --no-cache-dir \
+        -r /tmp/backend-requirements.txt \
+        -r /tmp/sync-requirements.txt \
+ && rm /tmp/backend-requirements.txt /tmp/sync-requirements.txt
+
+# Chromium refuses to start as uid 0 unless it is given --no-sandbox, and
+# tests/js/csp_click_harness.mjs:115 deliberately does not pass that flag -- it
+# drives the browser the way a visitor's browser runs. Run as an ordinary user
+# so Chromium's own sandbox initialises, rather than weakening the harness
+# everywhere to accommodate a container setting.
+RUN useradd --create-home --uid 1000 runner
+USER runner
+
+# HOME and the chromium --user-data-dir both resolve into /tmp, which the
+# compose service backs with a tmpfs; /repo itself is mounted read-only.
+ENV HOME=/tmp \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /repo
