@@ -20,13 +20,13 @@ trap_note=""
 case "$rel" in
   frontend/public/admin/js/admin.js)
     owner="developer (logic) + web-designer (appearance) — SHARED FILE"
-    gate="developer: tests pass, ruff clean, escaping via the helper. web-designer: both themes, AA contrast, no new hardcoded values."
-    trap_note="456 of 1162 lines are HTML markup. Logic vs appearance is a hard boundary: do not restyle while fixing logic, and do not change escaping while restyling. renderUsers (:535), renderAuditLogs (:589) and Toast.show (:291) still interpolate raw." ;;
-  nginx/*|nginx/sites/*)
+    gate="developer: tests pass (docker compose run --rm test), ruff clean, markup built with the html`` tagged template. web-designer: both themes, AA contrast, no new hardcoded values."
+    trap_note="Most of this 1242-line file is HTML markup, with 24 inline style= attributes still to migrate to classes. Logic vs appearance is a hard boundary: do not restyle while fixing logic, and do not change escaping while restyling. Markup is built with the html`` tagged template (:1118), which escapes every interpolation — do not downgrade one to a plain template literal, and do not introduce SafeHtml (zero uses, deliberately)." ;;
+  nginx/*)
     owner="devops-sre"
     gate="nginx -t on EVERY site config touched, then stack healthy + /health responding. Paste real output."
-    trap_note="add_header does NOT inherit: any add_header at a lower level drops all inherited ones. location /admin (default.conf:112) already serves the admin panel with no CSP and no HSTS. Fixing that also breaks the Google Fonts @import in both stylesheets — one change, not two. Loop in appsec-reviewer." ;;
-  backend/app/models/*|sync/sync_service.py)
+    trap_note="add_header does NOT inherit: any add_header at a level drops every inherited one. Headers live in nginx/snippets/security-headers*.conf and are included at each level that needs them — if you add an add_header here, re-include the snippet here too. Site configs are DIRECTORIES: nginx/sites/{bootstrap,dev,production}/*.conf, so a sites/*.conf glob matches nothing and reports clean. Fonts are self-hosted under /fonts/; do not reintroduce a Google @import. Loop in appsec-reviewer." ;;
+  shared/models/*|sync/sync_service.py)
     owner="developer (schema) — with devops-sre if migrations are involved"
     gate="Schema shape verified against the real Postgres schema, not just SQLite; tests pass."
     trap_note="Models live once in shared/models/, imported by both services. They were duplicated until the copies had drifted 17 ways (commit 798ae79 was one such break). Do not reintroduce a second definition. Alembic owns the schema now: a column or type change needs a reviewed migration, not a model edit alone." ;;
