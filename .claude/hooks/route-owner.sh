@@ -26,7 +26,7 @@ case "$rel" in
     owner="devops-sre"
     gate="nginx -t on EVERY site config touched, then stack healthy + /health responding. Paste real output."
     trap_note="add_header does NOT inherit: any add_header at a level drops every inherited one. Headers live in nginx/snippets/security-headers*.conf and are included at each level that needs them — if you add an add_header here, re-include the snippet here too. Site configs are DIRECTORIES: nginx/sites/{bootstrap,dev,production}/*.conf, so a sites/*.conf glob matches nothing and reports clean. Fonts are self-hosted under /fonts/; do not reintroduce a Google @import. Loop in appsec-reviewer." ;;
-  backend/app/models/*|sync/sync_service.py)
+  shared/models/*|sync/sync_service.py)
     owner="developer (schema) — with devops-sre if migrations are involved"
     gate="Schema shape verified against the real Postgres schema, not just SQLite; tests pass."
     trap_note="Models live once in shared/models/, imported by both services. They were duplicated until the copies had drifted 17 ways (commit 798ae79 was one such break). Do not reintroduce a second definition. Alembic owns the schema now: a column or type change needs a reviewed migration, not a model edit alone." ;;

@@ -33,7 +33,8 @@ reading a 1254-line file whole.
 
 ## Scope of Ownership
 
-- `backend/app/**` — API routes, models, security, database sessions, Redis caching.
+- `backend/app/**` — API routes, security, database sessions, Redis caching. Note there is no
+  `backend/app/models/` any more; the models moved to `shared/models/`.
 - `sync/sync_service.py` — Python sync logic (operational scheduling and systemd belong to `devops-sre`).
 - `frontend/public/admin/js/admin.js` — Control flow, state, API calls, event delegation, and escaping logic.
 - `frontend/public/js/main.js` — Client-side interaction logic.
