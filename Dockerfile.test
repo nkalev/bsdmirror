@@ -75,7 +75,13 @@ USER runner
 
 # HOME and the chromium --user-data-dir both resolve into /tmp, which the
 # compose service backs with a tmpfs; /repo itself is mounted read-only.
+# RUFF_CACHE_DIR because /repo is mounted read-only and ruff writes its cache
+# next to the files it lints by default, which fails with EROFS before it lints
+# anything. The suite is run with `-p no:cacheprovider` for the same reason.
+# Both matter: `ruff check .` has to be runnable in here, since the standing
+# rule is that lint and tests never run on the host.
 ENV HOME=/tmp \
+    RUFF_CACHE_DIR=/tmp/ruff-cache \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
