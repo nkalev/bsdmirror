@@ -82,6 +82,7 @@ USER runner
 # rule is that lint and tests never run on the host.
 ENV HOME=/tmp \
     RUFF_CACHE_DIR=/tmp/ruff-cache \
+    COVERAGE_FILE=/tmp/.coverage \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
