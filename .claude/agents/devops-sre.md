@@ -84,7 +84,9 @@ Never report a change complete based on inspection or reasoning alone. Execute t
 2. **Nginx Syntax**: `nginx -t` passes for **every** site configuration touched.
 3. **Stack Health**: `docker compose ps` shows all services running and healthy.
 4. **Smoke Test Round-Trip**:
-   - `/health` responds 200.
+   - `/health` responds 200 **and the body is the health payload**. Check the body, not just the
+     status: this endpoint once returned `index.html` over TLS while reporting a clean 200 with
+     5/5 security headers, and the check that "verified" it never looked at what came back.
    - `/api/health/detailed` responds 200 with all dependencies reachable.
    - A login round-trip against `/api/auth/token` succeeds.
 5. **Deploy Gate** (before running `scripts/deploy.sh`):
