@@ -49,6 +49,44 @@
 # long HTTP/2 transfer while the old worker shuts down (measured, 3 of 4). See
 # the note in scripts/nginx-apply.sh graceful_reload().
 #
+# What 8da2367 exposed
+# --------------------
+# 8da2367 was fine, same as 2026-08-30 was fine -- and this script's own
+# verification could not have told the difference, for two reasons unrelated
+# to nginx:
+#
+#   1. docker-compose.yml also bind-mounts frontend/public/ straight into
+#      nginx (`./frontend/public:/var/www/public:ro`), read-only, with no
+#      build step in between. This script builds and recreates backend and
+#      sync; nothing here has ever built, gated or verified frontend/public/.
+#      8da2367 shipped admin.js (-48/+48) and admin.css (+65) that way.
+#
+#      There is no point in the sequence where this CAN be gated: the mount is
+#      live, so move_checkout() below is the instant the change takes effect,
+#      whether or not the operator would have said yes. So this script does
+#      the two things that are actually possible instead of pretending
+#      otherwise: detect_frontend_change() lists what changed under
+#      frontend/public/ before the confirmation prompt, so a "no" still means
+#      something, and verify_frontend_assets() -- reusing deploy_nginx()'s own
+#      logic of proving rather than assuming -- fetches every changed file
+#      over HTTP from the live site afterward and compares it to this checkout
+#      on disk, which is exactly what would catch a stale mount, a cached
+#      layer, or a path that never reached nginx.
+#
+#   2. verify_login_roundtrip() posts a real username with a random wrong
+#      password and asserts 401. That is deliberately as far as it goes -- it
+#      must never touch the real admin password -- but auth.py returns that
+#      401 on an `or` short-circuit BEFORE create_access_token() is ever
+#      called. 8da2367's headline change was python-jose 3.3.0 -> 3.5.0 in
+#      exactly the path that 401 never reaches, so nothing in this script
+#      could have distinguished a working encode/decode from a broken one.
+#      verify_jwt_roundtrip() closes that: it calls the app's own
+#      create_access_token() / decode_access_token()
+#      (backend/app/core/security.py) inside the running container with
+#      synthetic claims, and asserts the decoded payload is exactly what was
+#      encoded. It runs alongside verify_login_roundtrip(), not instead of
+#      it -- the two prove different things.
+#
 # Usage
 # -----
 #   scripts/deploy.sh [REF]                 deploy a ref (default: main)
@@ -1035,6 +1073,46 @@ deploy_nginx() {
 }
 
 # ---------------------------------------------------------------------------
+# frontend/public/ -- bind-mounted straight into nginx, unbuilt, ungated
+# ---------------------------------------------------------------------------
+#
+# See "What 8da2367 exposed" in the header. docker-compose.yml mounts
+# ./frontend/public:/var/www/public:ro with no build step in between, so this
+# cannot be gated the way build_images()/deploy_migrations() gate everything
+# else: by the time an operator could be asked, move_checkout() has already
+# made the answer moot. What follows is the honest version of that: surface
+# the diff before the prompt (here), then prove afterward what actually got
+# served (verify_frontend_assets(), in the Verification section).
+#
+# Compared between the two SHAs, so a redeploy of the same SHA correctly
+# reports "no frontend change" -- same convention as nginx_changed_paths() and
+# detect_migration_change() above.
+FRONTEND_TOUCHED=0
+FRONTEND_CHANGED_FILES=""
+
+frontend_changed_paths() {
+    [ "$PREV_SHA" = "$TARGET_SHA" ] && return 0
+    git diff --name-only "$PREV_SHA" "$TARGET_SHA" -- frontend/public/ 2>/dev/null || true
+}
+
+detect_frontend_change() {
+    local changed
+    changed=$(frontend_changed_paths)
+    if [ -z "$changed" ]; then
+        FRONTEND_TOUCHED=0
+        return 0
+    fi
+    FRONTEND_TOUCHED=1
+    FRONTEND_CHANGED_FILES="$changed"
+    step "This deploy changes the live site (frontend/public/)"
+    printf '%s\n' "$changed" | sed 's/^/        /'
+    warn "frontend/public/ is bind-mounted read-only into nginx with no build step."
+    warn "The files above go live the moment the checkout below moves to $TARGET_SHA --"
+    warn "before any image is built and before anything is verified. This prompt is"
+    warn "the only point at which saying no still stops it."
+}
+
+# ---------------------------------------------------------------------------
 # Verification
 # ---------------------------------------------------------------------------
 VERIFY_FAILURES=0
@@ -1268,6 +1346,76 @@ verify_login_roundtrip() {
     esac
 }
 
+# ---------------------------------------------------------------------------
+# The encode/decode round trip verify_login_roundtrip() cannot reach
+# ---------------------------------------------------------------------------
+#
+# See "What 8da2367 exposed" in the header. verify_login_roundtrip() above
+# proves bcrypt ran, by design, and just as by design it never mints a token:
+# auth.py's `if user is None or not verify_password(...)` returns 401 before
+# create_access_token() is called. python-jose went 3.3.0 -> 3.5.0 in exactly
+# that unreached path on the 8da2367 deploy.
+#
+# This calls the app's own create_access_token()/decode_access_token()
+# (backend/app/core/security.py) inside the running container -- the same
+# functions a real login uses -- with synthetic claims that touch no database
+# row and no admin credential, and asserts the decoded payload is exactly what
+# was encoded. It is independent of verify_login_roundtrip(): that one proves
+# a bad password is rejected, this one proves a minted token round-trips.
+# Neither can stand in for the other, so both run.
+verify_jwt_roundtrip() {
+    local cid out rc
+    cid=$(docker compose ps -q backend 2>/dev/null || true)
+    if [ -z "$cid" ]; then
+        vfail "backend has no container; cannot verify the JWT encode/decode round trip"
+        return 0
+    fi
+
+    set +e
+    out=$(docker compose exec -T backend python3 - <<'PY'
+import sys
+from datetime import timedelta
+
+from app.core.security import create_access_token, decode_access_token
+
+claims = {"sub": "__deploy_verify__", "user_id": -1, "role": "deploy-verify"}
+token = create_access_token(dict(claims), expires_delta=timedelta(minutes=5))
+decoded = decode_access_token(token)
+
+if decoded is None:
+    print("decode_access_token returned None for a token this process just minted")
+    sys.exit(1)
+
+problems = []
+if decoded.username != claims["sub"]:
+    problems.append("username: got %r want %r" % (decoded.username, claims["sub"]))
+if decoded.user_id != claims["user_id"]:
+    problems.append("user_id: got %r want %r" % (decoded.user_id, claims["user_id"]))
+if decoded.role != claims["role"]:
+    problems.append("role: got %r want %r" % (decoded.role, claims["role"]))
+if not decoded.jti:
+    problems.append("jti: empty")
+
+if problems:
+    print("; ".join(problems))
+    sys.exit(1)
+
+print("sub=%s user_id=%s role=%s jti=%s" % (decoded.username, decoded.user_id, decoded.role, decoded.jti))
+PY
+)
+    rc=$?
+    set -e
+
+    if [ "$rc" -eq 0 ]; then
+        ok "create_access_token -> decode_access_token round-trip matches ($out)"
+    else
+        vfail "JWT encode/decode round trip failed inside the backend container (exit $rc): $out"
+        bad "this is the python-jose path bumped 3.3.0 -> 3.5.0 in the 8da2367 deploy;"
+        bad "verify_login_roundtrip()'s 401 short-circuits before ever reaching it"
+        docker compose logs --tail=20 backend | sed 's/^/        /' || true
+    fi
+}
+
 verify_bcrypt_pin() {
     # Closes the loop on the reason this script exists: prove the container is
     # running the version requirements.txt asks for, not whatever the last
@@ -1292,6 +1440,102 @@ verify_bcrypt_pin() {
         vfail "bcrypt mismatch: container has $running, requirements.txt pins $pinned"
         vfail "the image was not rebuilt from this checkout"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# frontend/public/, proved on the live site
+# ---------------------------------------------------------------------------
+#
+# See "What 8da2367 exposed" in the header. Nothing above this line reads a
+# single byte of what nginx actually serves from root /var/www/public --
+# verify_api_health()/verify_login_roundtrip() talk to the backend, and
+# verify_health_endpoint()/verify_security_headers() read status lines and
+# headers, never bodies. admin.js and admin.css could ship broken, or not ship
+# at all, and every check so far would still say green.
+#
+# Fetched over HTTP through nginx, not `docker compose exec cat`: exec would
+# only prove the bytes exist somewhere in the container's filesystem, not that
+# a location block, an alias, or a cached response actually serves them to a
+# client. Same reasoning as scripts/nginx-apply.sh check(), aimed at
+# frontend/public/ instead of nginx/.
+verify_frontend_assets() {
+    if [ "$FRONTEND_TOUCHED" -ne 1 ]; then
+        ok "no frontend/public/ changes in this deploy; nothing to prove"
+        return 0
+    fi
+
+    step "Proving nginx is serving this checkout's frontend/public/"
+    local opts rel url want got code fails=0 checked=0
+    opts=$(curl_base)
+
+    while IFS= read -r rel; do
+        [ -n "$rel" ] || continue
+        url="$BASE_URL/${rel#frontend/public/}"
+        checked=$((checked + 1))
+
+        if [ ! -f "$rel" ]; then
+            # Deleted by this deploy. NOT checked as "must not be 200": every
+            # location here inherits `try_files $uri $uri/ /index.html` (or
+            # .../admin/index.html under the alias), confirmed against a live
+            # container, so nginx answers a deleted path with 200 and the SPA
+            # shell by design. That is not a stale mount; it is try_files
+            # working as configured, and asserting non-200 here would fail
+            # every legitimate deletion.
+            #
+            # The actual failure this must catch is narrower: something still
+            # serving the FILE'S OWN pre-deletion bytes -- a stale mount, a
+            # cached layer, or a dangling alias that never noticed the delete.
+            # So compare live bytes to the pre-deletion content instead of
+            # reasoning about status codes at all.
+            local old
+            old=$(git show "$PREV_SHA:$rel" 2>/dev/null | sha256sum | cut -d' ' -f1) || old=""
+            set +e
+            # shellcheck disable=SC2086
+            got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
+            # shellcheck disable=SC2086
+            code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
+            set -e
+            if [ -n "$old" ] && [ "$got" = "$old" ]; then
+                bad "$url -- deleted in $TARGET_SHA but still serving its old bytes (HTTP $code)"
+                fails=$((fails + 1))
+            else
+                ok "$url -- deleted, no longer serving the old bytes (HTTP $code)"
+            fi
+            continue
+        fi
+
+        want=$(sha256sum "$rel" | cut -d' ' -f1)
+        set +e
+        # shellcheck disable=SC2086
+        got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
+        # shellcheck disable=SC2086
+        code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
+        set -e
+
+        if [ "$code" != "200" ]; then
+            bad "$url -- HTTP $code fetching a file that exists in the checkout"
+            fails=$((fails + 1))
+        elif [ "$got" != "$want" ]; then
+            bad "$url -- SERVING STALE CONTENT"
+            bad "    checkout  $rel  ${want:0:12}"
+            bad "    live      $url  ${got:0:12}"
+            fails=$((fails + 1))
+        else
+            ok "$url  ${want:0:12}"
+        fi
+    done <<EOF
+$FRONTEND_CHANGED_FILES
+EOF
+
+    if [ "$fails" -ne 0 ]; then
+        vfail "$fails of $checked changed frontend/public/ file(s) do not match this checkout"
+        bad "backend and sync may be on the new code; nginx's view of frontend/public/ is not."
+        bad "docker-compose.yml uses a directory mount, so this should be impossible -- if it"
+        bad "just happened anyway, recreate nginx so docker re-resolves it:"
+        bad "  cd $DEPLOY_DIR && docker compose up -d --force-recreate nginx"
+        return 0
+    fi
+    ok "all $checked changed frontend/public/ file(s) match the checkout byte-for-byte"
 }
 
 # ---------------------------------------------------------------------------
@@ -1419,7 +1663,9 @@ verify_all() {
     verify_api_health
     verify_health_endpoint
     verify_login_roundtrip
+    verify_jwt_roundtrip
     verify_bcrypt_pin
+    verify_frontend_assets
     step "Verifying security headers on the live site"
     verify_security_headers
 
@@ -1525,6 +1771,7 @@ main() {
 
     detect_nginx_change
     detect_migration_change
+    detect_frontend_change
 
     if [ "$DRY_RUN" -eq 0 ]; then
         confirm "Deploy $TARGET_SHA to $DEPLOY_DIR?" || die_gate "aborted by operator; nothing was done"
