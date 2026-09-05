@@ -14,7 +14,7 @@ from typing import AbstractSet, ClassVar, Dict, NamedTuple, Optional
 
 from aiohttp import web
 from croniter import croniter
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 import structlog
 
@@ -492,6 +492,7 @@ class SyncConfig:
     SYNC_SCHEDULE = os.getenv("SYNC_SCHEDULE", "0 4 * * *")
     SYNC_BANDWIDTH_LIMIT = int(os.getenv("SYNC_BANDWIDTH_LIMIT", "0"))
     SYNC_TIMEOUT = int(os.getenv("SYNC_TIMEOUT", "600"))
+    SYNC_ON_STARTUP = os.getenv("SYNC_ON_STARTUP", "false")
 
     FREEBSD_ENABLED = os.getenv("FREEBSD_ENABLED", "true").lower() == "true"
     FREEBSD_UPSTREAM = os.getenv("FREEBSD_UPSTREAM", "rsync://ftp.freebsd.org/FreeBSD/")
@@ -527,6 +528,28 @@ class SyncService:
         self.sync_bandwidth_limit = config.SYNC_BANDWIDTH_LIMIT
         self.sync_timeout = config.SYNC_TIMEOUT
 
+        # SYNC_ON_STARTUP is the DEFAULT; the `sync_on_startup` settings row
+        # overrides it in reload_settings, exactly like the three above. Until
+        # now this attribute did not exist and run() read the environment
+        # variable directly, so the admin panel's dropdown wrote a row that
+        # nothing consulted.
+        #
+        # Parsed rather than assigned raw. The old test was
+        # `.lower() == "true"`, which silently read SYNC_ON_STARTUP=yes and
+        # SYNC_ON_STARTUP=1 as FALSE -- an operator who enabled it that way got
+        # no startup sync and no warning -- and read the typo "ture" the same
+        # way. parse_setting accepts the spellings a person actually types and
+        # rejects the rest loudly.
+        try:
+            self.sync_on_startup = parse_setting("sync_on_startup", config.SYNC_ON_STARTUP)
+        except SettingError as exc:
+            logger.warning(
+                "Ignoring unusable SYNC_ON_STARTUP, defaulting to false",
+                rejected=config.SYNC_ON_STARTUP,
+                reason=str(exc),
+            )
+            self.sync_on_startup = False
+
     # Which settings row feeds which attribute. Everything about a key -- how
     # it parses, what range it may hold -- lives in shared/settings_spec.py,
     # which the backend's PATCH /api/admin/settings validates against too.
@@ -534,6 +557,7 @@ class SyncService:
         "sync_schedule": "sync_schedule",
         "sync_bandwidth_limit": "sync_bandwidth_limit",
         "sync_timeout": "sync_timeout",
+        "sync_on_startup": "sync_on_startup",
     }
 
     async def reload_settings(self) -> None:
@@ -1187,15 +1211,45 @@ class SyncService:
         # Start health server
         await self.start_health_server()
 
-        # Wait for database to be ready
+        # Wait for the database to be ready -- CONNECTION *AND* SCHEMA.
+        #
+        # This used to check only `select(1)`. Postgres accepts connections as
+        # soon as it is up, which is well before Alembic has created anything,
+        # so on a fresh install the loop broke out immediately and the next two
+        # calls ran against an empty database: reload_settings swallowed
+        # `relation "settings" does not exist` at debug level and
+        # poll_pending_jobs logged it as a warning. A genuine error, once per
+        # boot, that everyone learned to scroll past.
+        #
+        # to_regclass returns NULL rather than raising for a missing relation,
+        # so this is a question and not an exception handler. It is the same
+        # check backend/app/core/database.py:init_db() makes, deliberately.
+        schema_ready = False
         for i in range(30):
             try:
                 async with self.engine.connect() as conn:
                     await conn.execute(select(1))
+                    present = await conn.scalar(
+                        text("SELECT to_regclass('public.alembic_version')")
+                    )
+                if present is not None:
+                    schema_ready = True
                     break
+                logger.info("Database is up; waiting for migrations", attempt=i + 1)
             except Exception:
-                logger.info("Waiting for database...", attempt=i+1)
-                await asyncio.sleep(2)
+                logger.info("Waiting for database...", attempt=i + 1)
+            await asyncio.sleep(2)
+
+        if not schema_ready:
+            # Deliberately NOT fatal here, unlike the backend, which refuses to
+            # start. This service serves no HTTP contract, its health server is
+            # already listening, and the scheduler loop retries on its own. The
+            # thing that was missing is the actionable message, not an exit.
+            logger.error(
+                "No alembic_version table after 60s; the schema this service "
+                "needs may not exist. Fresh install: scripts/migrate.sh upgrade. "
+                "Existing database: scripts/migrate.sh adopt."
+            )
 
         # Load settings from database
         await self.reload_settings()
@@ -1231,15 +1285,17 @@ class SyncService:
 
         # Run initial sync on startup (optional).
         #
-        # NOTE, unresolved and deliberately left alone by this change: this
-        # reads the SYNC_ON_STARTUP *environment variable*, not the
-        # `sync_on_startup` row that backend/app/main.py seeds and that the
-        # admin panel offers a dropdown for. Toggling it in the UI therefore
-        # does nothing. The API now validates that row (shared/settings_spec.py)
-        # so it can no longer hold a typo that reads as false, but wiring it up
-        # is a behaviour change to scheduled syncing and belongs in its own
-        # change with its own tests, not smuggled into a validation fix.
-        if os.getenv("SYNC_ON_STARTUP", "false").lower() == "true":
+        # Reads self.sync_on_startup, which reload_settings has just populated
+        # from the `sync_on_startup` settings row, falling back to the
+        # SYNC_ON_STARTUP environment variable. This used to read the
+        # environment variable directly, so the admin panel's dropdown wrote a
+        # validated row that nothing ever consulted.
+        #
+        # Order matters and is already correct: reload_settings() runs above,
+        # so a row set through the UI wins over the env default on this boot,
+        # not the next one.
+        if self.sync_on_startup:
+            logger.info("Running initial sync on startup", source="settings")
             await self.run_scheduled_sync()
 
         # Start scheduler

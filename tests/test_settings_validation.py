@@ -76,6 +76,27 @@ def test_the_sync_service_only_maps_keys_the_spec_knows():
     assert set(SyncService._SETTING_ATTRS) <= SETTING_KEYS
 
 
+# A setting that is specced, seeded and offered in the admin panel but that no
+# attribute maps to is a control the operator can move for nothing. Keep this
+# set empty unless a key is deliberately backend-only, and say why here.
+SPECCED_BUT_NOT_READ_BY_SYNC: frozenset = frozenset()
+
+
+def test_every_specced_setting_is_actually_consumed():
+    """sync_on_startup was specced, validated, seeded and given a dropdown --
+    and read by nothing. run() tested the SYNC_ON_STARTUP environment variable
+    instead, so toggling the control in the UI did exactly nothing and the API
+    happily reported it saved.
+
+    The subset assertion above cannot catch that: it only forbids a mapped key
+    with no spec, never a specced key with no mapping."""
+    unread = SETTING_KEYS - set(SyncService._SETTING_ATTRS) - SPECCED_BUT_NOT_READ_BY_SYNC
+    assert not unread, (
+        "these settings are validated and offered to the operator but no "
+        "attribute consumes them: %s" % sorted(unread)
+    )
+
+
 def test_every_default_survives_its_own_validator():
     """A default that its own spec rejects would make a fresh deployment
     invalid from the first boot."""
@@ -554,6 +575,38 @@ async def test_reload_settings_adopts_good_values(service, factory):
     assert service.sync_timeout == 900
     assert service.sync_bandwidth_limit == 20000
     assert isinstance(service.sync_timeout, int), "rsync --timeout is formatted from this"
+
+
+async def test_reload_settings_adopts_sync_on_startup(service, factory):
+    """The row now feeds an attribute. Before this it fed nothing."""
+    assert service.sync_on_startup is False
+    write_setting_directly(factory, "sync_on_startup", "true")
+
+    await service.reload_settings()
+
+    assert service.sync_on_startup is True
+
+
+async def test_reload_settings_adopts_the_spellings_a_person_types(service, factory):
+    """`.lower() == "true"` read every one of these as False without a word."""
+    for spelling in ("yes", "1", "TRUE", "  true  "):
+        service.sync_on_startup = False
+        write_setting_directly(factory, "sync_on_startup", spelling)
+        await service.reload_settings()
+        assert service.sync_on_startup is True, spelling
+
+
+async def test_a_bad_sync_on_startup_row_keeps_the_current_value(
+    service, factory, caplog
+):
+    service.sync_on_startup = True
+    write_setting_directly(factory, "sync_on_startup", "ture")
+
+    with caplog.at_level(logging.WARNING, logger="sync.sync_service"):
+        await service.reload_settings()
+
+    assert service.sync_on_startup is True
+    assert "Ignoring unusable setting" in caplog.text
 
 
 async def test_a_wedge_value_in_the_database_is_refused_on_read(
