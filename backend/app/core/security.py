@@ -7,7 +7,7 @@ from typing import Optional
 from uuid import uuid4
 
 import bcrypt
-from jose import JWTError, jwt
+import jwt
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 import structlog
@@ -159,7 +159,15 @@ def decode_access_token(token: str) -> Optional[TokenData]:
             exp=exp,
             jti=jti
         )
-    except JWTError as e:
+    # PyJWTError is the base of every exception jwt.decode can raise for a bad
+    # token -- DecodeError (malformed, wrong number of segments), a signature
+    # mismatch, ExpiredSignatureError, and an algorithm that is not in
+    # `algorithms` above (InvalidAlgorithmError). jose's equivalent base class
+    # was JWTError; both are caught here for the same reason: any failure to
+    # verify a token collapses to the same "not authenticated" outcome rather
+    # than a 500, and callers (get_current_user, get_current_token_data) rely
+    # on that by checking for None, not by catching an exception themselves.
+    except jwt.PyJWTError as e:
         logger.warning("JWT decode error", error=str(e))
         return None
 
