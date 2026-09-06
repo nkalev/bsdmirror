@@ -1538,6 +1538,27 @@ EOF
     ok "all $checked changed frontend/public/ file(s) match the checkout byte-for-byte"
 }
 
+# Mirrors tests/test_public_page_csp.py:nginx_csp(). Both read the exact same
+# thing: the single `map $host $csp_policy { default "..."; }` value in
+# nginx/nginx.conf, which is deliberately the one place that string is written
+# down even though four blocks in nginx/ emit it (see the comment above that
+# map). Keep this in lockstep with the Python extractor rather than evolving
+# it separately -- two copies of "how to read the policy out of nginx.conf"
+# that quietly drift apart is exactly the class of bug this repo keeps having.
+nginx_csp_from_checkout() {
+    local conf="nginx/nginx.conf" flat block value
+    [ -f "$conf" ] || { warn "$conf not found in this checkout"; return 1; }
+    flat=$(tr '\n' ' ' <"$conf")
+    # shellcheck disable=SC2016  # \$host and \$csp_policy are nginx variable
+    # names matched literally by this regex, not shell variables to expand.
+    block=$(printf '%s' "$flat" \
+        | grep -oE 'map[[:space:]]+\$host[[:space:]]+\$csp_policy[[:space:]]*\{[^}]*\}') \
+        || { warn "no \`map \$host \$csp_policy\` block in $conf"; return 1; }
+    value=$(printf '%s' "$block" | grep -oE 'default[[:space:]]+"[^"]+"' | head -1) \
+        || { warn "no default value in the \$csp_policy map in $conf"; return 1; }
+    printf '%s' "$value" | sed -E 's/^default[[:space:]]*"//; s/"$//'
+}
+
 # ---------------------------------------------------------------------------
 # Security headers, probed on the live site
 # ---------------------------------------------------------------------------
@@ -1618,17 +1639,44 @@ verify_security_headers() {
 
     # The CSP is defined once, by the map in nginx/nginx.conf. Four blocks emit
     # it. If two of them disagree, one of them is stale.
-    local policies
-    policies=$(for path in "${paths[@]}"; do
+    local served_values policies served_csp checkout_csp
+    served_values=$(for path in "${paths[@]}"; do
         # shellcheck disable=SC2086
         curl $opts -o /dev/null -D - "$BASE_URL$path" 2>/dev/null \
             | tr -d '\r' | grep -i '^content-security-policy:' | cut -d' ' -f2-
-    done | sort -u | wc -l | tr -d ' ')
-    if [ "$policies" = "1" ]; then
-        ok "one Content-Security-Policy value across all probed paths"
-    else
+    done | sort -u)
+    policies=$(printf '%s\n' "$served_values" | sed '/^$/d' | wc -l | tr -d ' ')
+    if [ "$policies" != "1" ]; then
         vfail "$policies different Content-Security-Policy values are being served"
         bad "the map in nginx/nginx.conf is the single source; a block is stale"
+        return 0
+    fi
+    ok "one Content-Security-Policy value across all probed paths"
+
+    # THE CHECK THAT WAS STILL MISSING AFTER THE ONE ABOVE. Agreement is not
+    # correctness: every path can agree on a value that is simply OLD, because
+    # a graceful reload can succeed against bind mounts nginx never re-read
+    # (deploy_nginx() rc=2 above exists for exactly that mount-staleness case,
+    # but nothing before this line ever compared the BYTES of the policy
+    # itself). This would have printed the same "one value across all probed
+    # paths" line whether the reload that just tightened style-src actually
+    # took effect or silently didn't. Same digest-proof shape
+    # verify_frontend_assets() and deploy_nginx() already use elsewhere in this
+    # file: prove the thing being served matches this checkout, not merely
+    # that it agrees with itself.
+    served_csp="$served_values"
+    if ! checkout_csp=$(nginx_csp_from_checkout); then
+        vfail "could not read \$csp_policy from nginx/nginx.conf in this checkout -- cannot prove the served CSP is current"
+        return 0
+    fi
+    if [ "$served_csp" = "$checkout_csp" ]; then
+        ok "served Content-Security-Policy matches nginx/nginx.conf in this checkout"
+    else
+        vfail "served Content-Security-Policy does not match this checkout's nginx.conf"
+        bad "    checkout  $checkout_csp"
+        bad "    live      $served_csp"
+        bad "a graceful reload can succeed and change nothing -- see deploy_nginx() above --"
+        bad "run 'scripts/nginx-apply.sh check' before believing this deploy touched nginx at all"
     fi
 }
 
