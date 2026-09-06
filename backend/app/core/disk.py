@@ -7,7 +7,7 @@ it. The only size figure anywhere is Mirror.total_size_bytes, summed -- what
 the mirrors *contain*, never what the disk has *left*.
 
 That distinction used to not matter much: rsync's `--delete` (sync_service.py)
-kept the tree roughly the size of upstream. `sync/protected_paths.py` removes
+kept the tree roughly the size of upstream. `shared/protected_paths.py` removes
 that bound on purpose, so EOL releases survive upstream pruning -- which means
 the tree now grows monotonically and nothing here would notice it approaching
 the disk's actual limit.

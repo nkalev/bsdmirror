@@ -49,7 +49,7 @@ const DISK_USAGE_WARNING_PERCENT = 85;
 // rsync's --delete (always on; see sync/sync_service.py) removes a handful
 // of stale files on almost every ordinary sync. A files_deleted count this
 // large is well outside that and is the signature of a mass removal -- most
-// plausibly an EOL release sync/protected_paths.py's filter did not cover.
+// plausibly an EOL release shared/protected_paths.py's filter did not cover.
 const LARGE_DELETION_THRESHOLD = 1000;
 
 // ===========================================
@@ -661,8 +661,8 @@ async function renderSyncFailures() {
  * Which release trees are frozen against rsync --delete
  * (GET /api/admin/protected-paths).
  *
- * Read-only by design -- see sync/protected_paths.py and
- * app.core.protected_paths. There is no corresponding PATCH/POST action
+ * Read-only by design -- see shared/protected_paths.py and
+ * app.core.protected_paths_view. There is no corresponding PATCH/POST action
  * anywhere in this file; do not add one here.
  */
 async function renderProtectedPaths() {
@@ -680,7 +680,7 @@ async function renderProtectedPaths() {
                 <p class="u-text-muted u-text-sm">
                     These release trees are exempt from rsync's <code>--delete</code> and
                     survive even after upstream stops carrying them. This list is read-only
-                    here -- it is configured in <code>sync/protected_paths.py</code> and
+                    here -- it is configured in <code>shared/protected_paths.py</code> and
                     deployed with the sync service.
                 </p>
             </div>

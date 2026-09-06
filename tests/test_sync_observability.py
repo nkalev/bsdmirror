@@ -8,7 +8,7 @@ Nothing downstream of the column ever read it:
 `grep -c files_deleted frontend/public/admin/js/admin.js` was 0. A sync that
 quietly deleted 400 GB of an EOL release looked, in this panel, identical to a
 routine one that deleted nothing -- precisely the failure the new EOL-
-retention filters (sync/protected_paths.py) are meant to guard against, with
+retention filters (shared/protected_paths.py) are meant to guard against, with
 the one number that would reveal a bad filter sitting unread in the database.
 
 This file tests the three JSON endpoints admin.js reads a sync job through,

@@ -31,6 +31,7 @@ import structlog
 # NOT IMPORTED, deliberately: Base. This service must never create the schema.
 # create_all belongs to the backend alone -- see shared/models/base.py.
 from shared.models import Mirror, MirrorStatus, MirrorType, Setting, SyncJob, SyncStatus
+from shared.protected_paths import protect_filter_args
 from shared.settings_spec import (
     DEFAULT_SYNC_SCHEDULE,
     SettingError,
@@ -38,23 +39,14 @@ from shared.settings_spec import (
     parse_setting,
 )
 
-# Per-mirror rsync protect-filter rules -- see the module docstring there for
-# what these do to --delete and why the list lives outside settings_spec.
-#
-# Import shape matches __main__.py's `from sync_service import SyncService`,
-# not shared.models'. sync/Dockerfile COPYs sync/'s *contents* into /app (see
-# "EVERY COPY SOURCE ... RELATIVE TO THE REPO ROOT" there), so in the
-# container sync_service.py and protected_paths.py are siblings at /app/ with
-# no enclosing `sync` package -- the bare import is what production actually
-# runs. Under pytest, sync/ has no __init__.py and is never added to sys.path
-# on its own (pyproject.toml's pythonpath is `backend` and `.`), so the same
-# module is reached as sync.protected_paths instead. Both branches load the
-# same file; tests/test_protected_paths.py imports it the second way, matching
-# every other test's `from sync import sync_service`.
-try:
-    from protected_paths import protect_filter_args
-except ImportError:
-    from sync.protected_paths import protect_filter_args
+# protect_filter_args used to be a same-directory sibling (sync/protected_paths.py),
+# reached by a try/except: sync/Dockerfile COPYs sync/'s *contents* into /app
+# with no enclosing `sync` package, so production loaded it as a bare
+# `protected_paths`, while pytest (no __init__.py under sync/, pythonpath
+# `backend` and `.`) only ever found it as `sync.protected_paths`. It now
+# lives in shared/ instead -- the one place both environments already agree
+# on, per shared/__init__.py -- so it imports the same single way `shared.models`
+# and `shared.settings_spec` above do, and there is nothing left to except.
 
 # Configure stdlib logging before structlog: structlog's filter_by_level checks
 # the *stdlib* logger's effective level, and the root logger defaults to WARNING,
@@ -658,7 +650,7 @@ class SyncService:
         ]
 
         # -f "P <pattern>" rules for this mirror's protected (EOL) trees, if
-        # any -- see sync/protected_paths.py. [] for a mirror with nothing
+        # any -- see shared/protected_paths.py. [] for a mirror with nothing
         # configured, so --delete keeps behaving exactly as it did before this
         # existed.
         cmd.extend(protect_filter_args(mirror_type))

@@ -4,7 +4,7 @@ The defect: nothing in this codebase has ever measured free space. The only
 size figure anywhere is Mirror.total_size_bytes summed across mirrors, which
 is what the mirrors *contain* -- never what the disk has *left*. That gap was
 tolerable while rsync's --delete implicitly bounded the tree to roughly
-upstream's own size; sync/protected_paths.py removes that bound on purpose
+upstream's own size; shared/protected_paths.py removes that bound on purpose
 (EOL releases now survive upstream pruning), so the tree grows monotonically
 and nothing would show an operator it approaching the disk's actual limit.
 

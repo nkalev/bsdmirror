@@ -14,7 +14,7 @@ import structlog
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.disk import get_disk_usage
-from app.core.protected_paths import protected_paths_view
+from app.core.protected_paths_view import protected_paths_view
 from app.core.security import hash_password_async
 from app.core.sync_failures import group_failure_incidents, mirror_failure_summary
 from shared.models import (
@@ -473,12 +473,13 @@ async def get_protected_paths(
 ) -> dict:
     """Which release trees are currently exempt from rsync `--delete`.
 
-    Reads the checked-in sync/protected_paths.py filter list -- see
-    app.core.protected_paths for why this is a maintained snapshot rather
-    than a direct import, and the test that keeps the two honest.
+    Reads the checked-in shared/protected_paths.py filter list -- the same
+    module sync_service.py imports to build the rsync argv, so this view can
+    never show a list that is not what rsync actually obeys. See
+    app.core.protected_paths_view for the view-shaping logic.
 
     Display only, deliberately. There is no PATCH for this: the list is
-    edited by changing sync/protected_paths.py, reviewed as a diff like any
+    edited by changing shared/protected_paths.py, reviewed as a diff like any
     other change to this repo, and is not operator-editable through this API.
     """
     result = await db.execute(select(Mirror))

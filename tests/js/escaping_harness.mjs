@@ -510,7 +510,7 @@ async function main() {
     // the same hostile-payload treatment as user-supplied fields elsewhere.
     // The protected-paths fields are not attacker-reachable today (no
     // endpoint lets anyone edit a Mirror's name or
-    // sync/protected_paths.py's patterns), but they are still routed through
+    // shared/protected_paths.py's patterns), but they are still routed through
     // html`` like everything else in this file, so they are checked the
     // same way rather than assumed safe because of where they come from.
 
