@@ -1,5 +1,13 @@
 # FastAPI and web framework
-fastapi==0.109.2
+#
+# Bumped from 0.109.2 straight to the 0.141.x line rather than the first
+# starlette advisory fix (0.115.x) because fastapi's own pin on starlette
+# stays a floor with no ceiling from 0.115.6 onward (`starlette<0.42.0` up to
+# 0.115.x, `>=0.40.0` after) -- a partial bump still leaves 6 of 7 published
+# starlette advisories open. 0.141.1 requires `starlette>=0.46.0`, which
+# resolves to 1.6.0 and clears all 7. See pip-audit output referenced in the
+# PR description for the before/after.
+fastapi==0.141.1
 uvicorn[standard]==0.27.1
 python-multipart==0.0.32
 
@@ -33,7 +41,11 @@ PyJWT[crypto]==2.13.0
 # fine, but it was luck. 5.0.0 is the version the 199-test suite was run
 # against, so it is the version deployed.
 bcrypt==5.0.0
-pydantic[email]==2.6.1
+# Forced up from 2.6.1 by fastapi==0.141.1, which requires pydantic>=2.9.0.
+# 2.13.5 is the version that single pip resolve (this file + sync/requirements.txt)
+# actually lands on; pinned exactly rather than left to float, same as
+# everything else in this file.
+pydantic[email]==2.13.5
 
 # Configuration
 pydantic-settings==2.1.0
