@@ -226,3 +226,54 @@ def test_harness_detects_a_reintroduced_inline_handler(tmp_path):
     # control would also pass if the harness broke outright.
     assert result["buttons"][1]["toast"]["shown"]
     assert result["buttons"][2]["toast"]["shown"]
+
+
+# ---------------------------------------------------------------------------
+# The directive itself, not just harness/nginx agreement
+# ---------------------------------------------------------------------------
+
+
+
+def _directives(csp: str) -> dict:
+    """Split a CSP into {directive: source-list}.
+
+    A directive with no sources (`upgrade-insecure-requests`) maps to "", so
+    callers can `.get(name, "")` and test for a source without a length check.
+    """
+    out = {}
+    for part in csp.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, sources = part.partition(" ")
+        out[name] = sources.strip()
+    return out
+
+@pytest.mark.skipif(not NGINX_CONF.exists(), reason="nginx/nginx.conf not present")
+def test_style_src_does_not_allow_unsafe_inline():
+    """'unsafe-inline' in style-src was the price of 24 inline style attributes
+    in admin.js and an inline <style> in each error page. Those are gone and
+    two other modules keep them gone, so the directive went too.
+
+    test_harness_csp_matches_nginx above only pins the harness to nginx; both
+    could drift back together and it would still pass. This asserts the thing
+    we actually care about.
+
+    Putting it back re-enables style-context injection: any interpolation that
+    reaches a style attribute becomes live CSS again. If some future feature
+    genuinely needs inline styles, prefer a hash or nonce over reopening this.
+    """
+    style_src = _directives(nginx_csp()).get("style-src", "")
+    assert "'unsafe-inline'" not in style_src, (
+        "style-src has regained 'unsafe-inline': %r. Check what reintroduced an "
+        "inline style; the two inline-style guards should have caught it first."
+        % style_src
+    )
+    assert "'self'" in style_src, "style-src must still permit the site's own stylesheets"
+
+
+@pytest.mark.skipif(not NGINX_CONF.exists(), reason="nginx/nginx.conf not present")
+def test_script_src_does_not_allow_unsafe_inline():
+    """The same guarantee for scripts, which never had it. Asserted so that
+    'just add unsafe-inline' is never the quiet fix for a broken handler."""
+    assert "'unsafe-inline'" not in _directives(nginx_csp()).get("script-src", "")
