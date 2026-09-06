@@ -299,7 +299,9 @@ upstream — including faithfully removing a release the day upstream stops
 carrying it. OpenBSD supports "current + previous"; the two point releases before
 that are already end-of-life and gone from upstream's own tree the moment someone
 there runs the prune, with nothing left here afterwards but a `files_deleted`
-count on a job row.
+count on a job row — now shown next to that sync in the admin panel rather
+than only in the database, and marked distinctly once it is large enough to
+be a release wipe rather than ordinary `--delete` churn.
 
 `sync/protected_paths.py` is a plain, checked-in list of path prefixes, per
 mirror, that are exempt from that deletion. It becomes `-f "P <pattern>"` rsync
@@ -320,6 +322,21 @@ that is the point. As of this change: OpenBSD 7.5–7.8, NetBSD 7.2/8.3/9.0/9.5/
 10.0/10.1/11.0_RC7, and three FreeBSD releases under `releases/` (14.3, 14.4,
 15.0), matched with `**` because the same release exists at different depths
 depending on architecture.
+
+**Disk capacity is visible for the same reason.** Protecting a release is
+also removing the implicit bound `--delete` used to put on the tree's size —
+it grew roughly with upstream before; now it only grows. `GET
+/api/admin/dashboard` includes a `storage` object (`total_bytes`,
+`used_bytes`, `free_bytes`, `percent_used`) read live from
+`os.statvfs(MIRROR_DATA_PATH)` inside the backend container
+(`backend/app/core/disk.py`), and the dashboard shows it as a card with free
+space as the headline figure — a percentage alone does not say much about a
+slow leak. This is independent of the `disk` condition in [Monitoring and
+alerting](#what-is-checked): that one is host-level, periodic, and fires only
+at `DISK_CRIT_PCT`; this is in-app and meant to be glanced at long before a
+mirror ever gets that close. It carries no projection: release cadence is not
+something this system tracks anywhere, and no endpoint here computes an
+estimated time to full.
 
 ### Abandoned syncs
 

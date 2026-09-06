@@ -27,6 +27,30 @@ const state = {
 };
 
 // ===========================================
+// Display Thresholds
+// ===========================================
+//
+// Two numbers that only decide when a value gets a stronger visual
+// treatment. Neither gates backend behaviour or validation -- both are pure
+// UI judgement calls, named and kept together so neither is a magic number
+// buried inside a template literal.
+
+// Matches DISK_WARN_PCT's default in scripts/health_check.sh (see README.md's
+// Configuration table) rather than picking a second number: that script
+// already alerts a channel at 85%/95%, so an operator's mental model of
+// "85 means pay attention" already exists. This host has no historical
+// growth-rate data (no snapshot table exists), so this stays a fixed cutoff
+// and not a projection -- see the storage card in renderDashboard for why no
+// ETA is shown.
+const DISK_USAGE_WARNING_PERCENT = 85;
+
+// rsync's --delete (always on; see sync/sync_service.py) removes a handful
+// of stale files on almost every ordinary sync. A files_deleted count this
+// large is well outside that and is the signature of a mass removal -- most
+// plausibly an EOL release sync/protected_paths.py's filter did not cover.
+const LARGE_DELETION_THRESHOLD = 1000;
+
+// ===========================================
 // API Client
 // ===========================================
 
@@ -404,8 +428,23 @@ async function renderDashboard() {
                 <div class="stat-card-value">${d.users.total}</div>
                 <div class="stat-card-label">Admin Users</div>
             </div>
+
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-card-icon">🗄️</span>
+                    ${d.storage.percent_used != null ? html`
+                    <span class="stat-card-trend ${d.storage.percent_used >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${d.storage.percent_used}% used</span>
+                    ` : ''}
+                </div>
+                <div class="stat-card-value">${d.storage.free_bytes != null ? formatBytes(d.storage.free_bytes) : 'Unknown'}</div>
+                <div class="stat-card-label">
+                    ${d.storage.total_bytes != null
+                        ? html`Disk free of ${formatBytes(d.storage.total_bytes)} (${formatBytes(d.storage.used_bytes)} used)`
+                        : 'Disk capacity unavailable'}
+                </div>
+            </div>
         </div>
-        
+
         <div class="u-grid-2">
             <div class="card">
                 <div class="card-header">
@@ -417,8 +456,9 @@ async function renderDashboard() {
                             <div class="activity-icon">🔄</div>
                             <div class="activity-content">
                                 <div class="activity-text">
-                                    Mirror #${sync.mirror_id} - 
+                                    Mirror #${sync.mirror_id} -
                                     <span class="status-badge ${sync.status}">${sync.status}</span>
+                                    ${sync.files_deleted ? filesDeletedBadge(sync.files_deleted) : ''}
                                 </div>
                                 <div class="activity-time">${formatDate(sync.created_at)}</div>
                             </div>
@@ -768,6 +808,7 @@ const actions = {
                                 <div class="activity-content">
                                     <div class="activity-text">
                                         ${h.status}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
+                                        ${h.files_deleted ? html` ${filesDeletedBadge(h.files_deleted)}` : ''}
                                         ${h.triggered_by ? html` <small>(by ${h.triggered_by})</small>` : ''}
                                     </div>
                                     <div class="activity-time">${formatDate(h.completed_at || h.started_at || h.created_at)}</div>
@@ -843,6 +884,11 @@ const actions = {
                     <div>
                         <label class="form-label">Bytes Transferred</label>
                         <p>${formatBytes(job.bytes_transferred)}</p>
+                    </div>` : ''}
+                    ${job.files_deleted != null ? html`
+                    <div>
+                        <label class="form-label">Files Deleted</label>
+                        <p>${filesDeletedBadge(job.files_deleted)}</p>
                     </div>` : ''}
                 </div>
                 ${job.error_message ? html`
@@ -1153,6 +1199,23 @@ function formatBytes(bytes) {
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.floor(Math.log(bytes) / Math.log(1024));
     return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
+
+/**
+ * A sync job's deleted-file count, marked distinctly once it crosses
+ * LARGE_DELETION_THRESHOLD (see Display Thresholds near the top of this file).
+ *
+ * SyncJob.files_deleted has been populated on every job since sync_service.py
+ * started parsing "Number of deleted files:", and until now nothing in this
+ * UI rendered it anywhere: a sync that quietly removed an entire EOL release
+ * looked identical, in this panel, to one that deleted nothing. A count that
+ * still has to be looked for is not much better than no count at all, so a
+ * large one gets the same error styling a failed sync gets, not just a
+ * plain number next to the small ones.
+ */
+function filesDeletedBadge(count) {
+    const large = count >= LARGE_DELETION_THRESHOLD;
+    return html`<span class="${large ? 'u-text-error' : 'u-text-muted'}">${large ? '⚠️ ' : ''}${count.toLocaleString()} deleted</span>`;
 }
 
 function formatDate(dateStr) {

@@ -11,7 +11,9 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.disk import get_disk_usage
 from app.core.security import hash_password_async
 from shared.models import (
     AuditLog,
@@ -345,6 +347,7 @@ class SyncJobLogResponse(BaseModel):
     completed_at: Optional[datetime]
     files_transferred: Optional[int]
     bytes_transferred: Optional[int]
+    files_deleted: Optional[int]
     rsync_output: Optional[str]
     error_message: Optional[str]
     triggered_by: Optional[str]
@@ -375,6 +378,7 @@ async def get_sync_job_logs(
         completed_at=job.completed_at,
         files_transferred=job.files_transferred,
         bytes_transferred=job.bytes_transferred,
+        files_deleted=job.files_deleted,
         rsync_output=job.rsync_output,
         error_message=job.error_message,
         triggered_by=job.triggered_by,
@@ -453,6 +457,14 @@ async def get_dashboard(
 
     total_size = sum(m.total_size_bytes or 0 for m in mirrors)
 
+    # Disk capacity for the volume the mirrors actually live on. Unlike
+    # total_size above (what the mirrors contain), this is what the
+    # filesystem has left -- see app.core.disk for why that distinction now
+    # matters. get_disk_usage returns None rather than raising if the path is
+    # unreadable, so one bad mount degrades this field alone, not the whole
+    # dashboard.
+    disk_usage = await get_disk_usage(settings.MIRROR_DATA_PATH)
+
     return {
         "mirrors": {
             "total": len(mirrors),
@@ -464,11 +476,19 @@ async def get_dashboard(
         "users": {
             "total": user_count
         },
+        "storage": {
+            "path": settings.MIRROR_DATA_PATH,
+            "total_bytes": disk_usage.total_bytes if disk_usage else None,
+            "used_bytes": disk_usage.used_bytes if disk_usage else None,
+            "free_bytes": disk_usage.free_bytes if disk_usage else None,
+            "percent_used": disk_usage.percent_used if disk_usage else None,
+        },
         "recent_syncs": [
             {
                 "id": job.id,
                 "mirror_id": job.mirror_id,
                 "status": job.status.value,
+                "files_deleted": job.files_deleted,
                 "created_at": job.created_at.isoformat()
             }
             for job in recent_syncs.scalars().all()

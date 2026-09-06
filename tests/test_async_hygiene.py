@@ -55,6 +55,8 @@ BLOCKING_CALLS = {
     "requests.get": "blocking HTTP; use httpx.AsyncClient or aiohttp",
     "requests.post": "blocking HTTP; use httpx.AsyncClient or aiohttp",
     "socket.create_connection": "blocking socket; use asyncio's transports",
+    "os.statvfs": "blocking syscall; go through app.core.disk.get_disk_usage",
+    "read_disk_usage": "blocking; call get_disk_usage instead (app/core/disk.py)",
 }
 
 # Kept out of the literal above so this file does not itself trip a
