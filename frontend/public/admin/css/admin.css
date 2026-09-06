@@ -125,7 +125,10 @@ body {
 
 .nav-item.active {
     background: var(--accent-primary);
-    color: white;
+    /* text-on-accent, not white: white on accent-primary is 2.44:1 here
+       (admin is always dark theme, where accent-primary is the lighter
+       orange-500). See the token's definition in tokens.css. */
+    color: var(--text-on-accent);
 }
 
 .nav-item-icon {
@@ -151,13 +154,16 @@ body {
     width: 36px;
     height: 36px;
     border-radius: 50%;
-    background: var(--accent-gradient);
+    /* Solid accent-primary and text-on-accent, not the gradient and white --
+       same reasoning as .btn-primary below: no single text colour clears
+       4.5:1 at both ends of the gradient in every theme. */
+    background: var(--accent-primary);
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 600;
     font-size: 0.875rem;
-    color: white;
+    color: var(--text-on-accent);
 }
 
 .user-details {
@@ -268,13 +274,20 @@ body {
 }
 
 .stat-card-trend.up {
-    background: rgba(34, 197, 94, 0.2);
+    /* Precomputed solid tint, not a live rgba() one -- see the token's
+       comment in tokens.css: a translucent tint's contrast depends on
+       whatever is behind it, and a hovered table row repaints to a lighter
+       background than this component was authored against. */
+    background: var(--status-healthy-bg);
     color: var(--status-healthy);
 }
 
 .stat-card-trend.down {
-    background: rgba(239, 68, 68, 0.2);
-    color: var(--status-error);
+    background: var(--status-error-bg);
+    /* status-error-text, not status-error: status-error itself is 3.65:1
+       against this chip's background (needs 4.5:1 as text). See
+       tokens.css. */
+    color: var(--status-error-text);
 }
 
 .stat-card-value {
@@ -335,18 +348,24 @@ tr:hover td {
 }
 
 .status-badge.active {
-    background: rgba(34, 197, 94, 0.2);
+    /* Precomputed solid tints below, not live rgba() ones -- see the tokens'
+       comment in tokens.css. `tr:hover td` (below) repaints a badge's row to
+       --bg-tertiary, and every one of these three tints measured under
+       4.5:1 for its own text against that lighter, hovered backdrop. */
+    background: var(--status-healthy-bg);
     color: var(--status-healthy);
 }
 
 .status-badge.syncing {
-    background: rgba(245, 158, 11, 0.2);
+    background: var(--status-syncing-bg);
     color: var(--status-syncing);
 }
 
 .status-badge.error {
-    background: rgba(239, 68, 68, 0.2);
-    color: var(--status-error);
+    background: var(--status-error-bg);
+    /* status-error-text, not status-error: see tokens.css -- status-error
+       itself is 3.65-3.71:1 here (needs 4.5:1 as text). */
+    color: var(--status-error-text);
 }
 
 .status-badge.disabled {
@@ -411,8 +430,14 @@ tr:hover td {
 }
 
 .btn-primary {
-    background: var(--accent-gradient);
-    color: white;
+    /* Solid accent-primary and text-on-accent, not the gradient and white.
+       White on accent-primary alone is 2.44:1 here (admin's dark-theme
+       orange-500). See tokens.css for the full reasoning; --accent-gradient
+       is untouched and still used for the public site's large 3rem
+       .gradient-text heading, where it already clears the 3:1 large-text
+       bar at both stops. */
+    background: var(--accent-primary);
+    color: var(--text-on-accent);
 }
 
 .btn-primary:hover {
@@ -433,11 +458,20 @@ tr:hover td {
 
 .btn-danger {
     background: var(--status-error);
-    color: white;
+    /* text-on-accent, not white: white on status-error is 3.76:1 here
+       (needs 4.5:1). navy-900 clears 5.12:1 against this same fill. */
+    color: var(--text-on-accent);
 }
 
 .btn-danger:hover {
-    background: #dc2626;
+    /* Was a hardcoded #dc2626 (a hand-picked darker red, not a token) --
+       darkening the fill is exactly the wrong direction once the label is
+       dark ink rather than white: navy-900 on that darker red measured
+       3.99:1 (needs 4.5:1), against 5.12:1 on the resting --status-error
+       fill. Matches .btn-primary:hover above instead -- a lift and a glow,
+       fill colour unchanged, so the resting contrast still holds on hover. */
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
+    transform: translateY(-1px);
 }
 
 .btn-sm {
@@ -607,9 +641,14 @@ tr:hover td {
 }
 
 .login-error {
-    background: rgba(239, 68, 68, 0.2);
+    /* Precomputed solid tint and status-error-text: see tokens.css.
+       status-error itself is 2.60:1 as text against the old live rgba()
+       tint over this card's background. The border stays plain
+       status-error -- a border only needs 3:1, and this one already clears
+       it against both adjacent colours. */
+    background: var(--status-error-bg);
     border: 1px solid var(--status-error);
-    color: var(--status-error);
+    color: var(--status-error-text);
     padding: 12px;
     border-radius: var(--radius-md);
     margin-bottom: 16px;
@@ -741,5 +780,8 @@ tr:hover td {
     overflow-y: auto;
     font-size: 12px;
 }
-.log-pre-error  { color: var(--status-error); max-height: 150px; }
+/* status-error-text, not status-error: status-error itself is 3.71:1 on
+   this element's --bg-tertiary background (needs 4.5:1 as text -- this is
+   real sync-job error output, not a decorative dot or border). */
+.log-pre-error  { color: var(--status-error-text); max-height: 150px; }
 .log-pre-output { max-height: 400px; white-space: pre-wrap; word-break: break-all; }

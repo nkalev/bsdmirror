@@ -118,12 +118,22 @@ body {
 }
 
 .nav-link:hover {
-    color: var(--accent-primary);
+    /* text-primary, not accent-primary: accent-primary on bg-tertiary is
+       2.82:1 in light theme (needs 4.5:1 as normal-size text). Matches the
+       admin panel's equivalent hover state (.nav-item:hover in admin.css),
+       which already uses this same pairing. */
+    color: var(--text-primary);
     background-color: var(--bg-tertiary);
 }
 
 .nav-admin {
-    color: var(--accent-primary);
+    /* accent-secondary, not accent-primary: accent-primary on the header's
+       effectively-bg-primary backdrop is 3.40:1 in light theme (needs 4.5:1
+       as normal-size text; it only clears 3:1, the large-text bar, which is
+       why it works fine at 3rem on .gradient-text below). accent-secondary
+       reaches 4.86:1 light / 5.12:1 dark here -- same fix as the 404/50x
+       error-page link (see css/error.css). */
+    color: var(--accent-secondary);
     font-weight: 600;
 }
 
@@ -398,8 +408,17 @@ body {
 }
 
 .btn-primary {
-    background: var(--accent-gradient);
-    color: white;
+    /* Solid accent-primary, not the gradient, and text-on-accent, not white.
+       White on this gradient fails at one end or the other in every theme
+       (as low as 2.44:1 on accent-primary in dark theme), and there is no
+       single text colour that passes both gradient stops in light theme:
+       navy-900 clears accent-primary (5.51:1) but not accent-secondary
+       (3.85:1); white is the reverse (3.50:1 / 5.01:1). A solid fill removes
+       that conflict. --accent-gradient is untouched and still used by
+       .gradient-text below, where it is large enough (3rem) that both stops
+       already clear the 3:1 large-text bar. */
+    background: var(--accent-primary);
+    color: var(--text-on-accent);
 }
 
 .btn-primary:hover {
@@ -416,7 +435,11 @@ body {
 .btn-secondary:hover {
     background: var(--bg-secondary);
     border-color: var(--accent-primary);
-    color: var(--accent-primary);
+    /* text-primary, not accent-primary: accent-primary on bg-secondary is
+       3.09:1 in light theme (needs 4.5:1). Matches .theme-toggle:hover
+       above, which already pairs this same border/background combination
+       with text-primary rather than an accent text colour. */
+    color: var(--text-primary);
 }
 
 .btn-arrow {
@@ -479,7 +502,9 @@ body {
     content: '';
     width: 20px;
     height: 20px;
-    background: var(--status-error, #ef4444);
+    /* --status-error is always defined (tokens.css layer 2, INVARIANTS), so
+       the literal fallback was dead weight -- and a hardcoded hex besides. */
+    background: var(--status-error);
     border-radius: 50%;
 }
 
@@ -491,7 +516,12 @@ body {
     content: '';
     width: 20px;
     height: 20px;
-    background: var(--primary, #e85d04);
+    /* Was var(--primary, #e85d04) -- --primary is not a token defined
+       anywhere (grep confirms), so this always rendered the literal
+       fallback and never actually varied with theme. Fixed to the token
+       every sibling rule in this block uses; matches .healthy/.degraded
+       above, which already reference their status token directly. */
+    background: var(--accent-primary);
     border-radius: 50%;
 }
 
@@ -633,7 +663,13 @@ body {
 .footer-version {
     font-family: var(--font-mono);
     font-size: 0.75rem !important;
-    opacity: 0.6;
+    /* No opacity here: it multiplies straight through whatever --text-muted
+       resolves to (inherited from .footer-content p above). At 0.6 it took
+       an already-compliant text-muted back down to ~1.8:1 against
+       bg-secondary in both themes. --text-muted alone (now 5.38:1 light /
+       5.89:1 dark against this element's actual background) already reads
+       as de-emphasised; the extra fade is not needed to achieve that and
+       cannot be applied without breaking contrast. */
 }
 
 /* Toast notification */
