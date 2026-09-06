@@ -446,7 +446,8 @@ jobs:
           # these together with any deliberate rename; a stale entry fails loudly
           # on the "contributed no tests" check below rather than passing.
           REQUIRED = ("tests.test_admin_js_escaping", "tests.test_public_page_csp",
-                      "tests.test_protected_paths")
+                      "tests.test_protected_paths",
+                      "tests.test_gitignore_covers_secrets")
 
           if not REPORT.exists():
               print("::error::%s was not produced, so it cannot be shown that the "
