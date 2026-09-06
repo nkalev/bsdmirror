@@ -157,3 +157,72 @@ def test_error_pages_carry_no_data_theme_attribute():
             f"{page.name} sets data-theme on <html> but ships no script that "
             "could ever change it again"
         )
+
+
+# ---------------------------------------------------------------------------
+# The dark mapping in error.css must not drift from tokens.css
+# ---------------------------------------------------------------------------
+
+TOKENS_CSS = REPO_ROOT / "frontend" / "public" / "css" / "tokens.css"
+ERROR_CSS = REPO_ROOT / "frontend" / "public" / "css" / "error.css"
+
+
+def _dark_block_of_tokens_css() -> dict:
+    """The `[data-theme="dark"]` semantic mapping, as {token: value}.
+
+    Matched on the rule itself, not on the first textual occurrence of the
+    string: tokens.css mentions `[data-theme="dark"]` several times in its
+    header comment, and anchoring on those lands in the raw palette block and
+    silently returns the wrong 24 entries. Ask me how I know.
+    """
+    css = TOKENS_CSS.read_text()
+    m = re.search(r'^\[data-theme="dark"\]\s*\{', css, re.M)
+    assert m, 'tokens.css has no [data-theme="dark"] rule'
+    body = css[m.end():css.index("}", m.end())]
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*(var\(--c-[\w-]+\))\s*;", body))
+
+
+def _error_css_dark_overrides() -> dict:
+    css = ERROR_CSS.read_text()
+    m = re.search(r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{", css)
+    assert m, "error.css has no prefers-color-scheme block"
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*(var\(--c-[\w-]+\))\s*;", css[m.end():]))
+
+
+def test_error_page_dark_mapping_matches_tokens_css():
+    """error.css restates part of the dark theme because these pages have no JS
+    to set data-theme. Restating is a drift risk, so pin it: every token it
+    overrides must resolve to the same palette entry tokens.css uses for dark.
+
+    If this fails, the error pages are showing a colour the rest of the site
+    stopped using -- which is invisible until someone hits a 404 on a dark
+    desktop, i.e. exactly when nobody is looking.
+    """
+    dark = _dark_block_of_tokens_css()
+    overrides = _error_css_dark_overrides()
+    assert overrides, "the prefers-color-scheme block defines no tokens"
+
+    mismatched = {
+        tok: (val, dark.get(tok))
+        for tok, val in overrides.items()
+        if dark.get(tok) != val
+    }
+    assert not mismatched, (
+        "error.css disagrees with tokens.css's dark theme: "
+        + "; ".join(
+            "%s is %s here but %s there" % (t, a, b) for t, (a, b) in mismatched.items()
+        )
+    )
+
+
+def test_every_token_the_error_pages_use_is_overridden_for_dark():
+    """A token consumed by error.css but absent from its dark block keeps its
+    light value on a dark background -- the half-themed page that looks like a
+    rendering bug. Covers only the theme-dependent colour tokens; --font-* and
+    --transition-* are intentionally theme-independent.
+    """
+    css = ERROR_CSS.read_text()
+    body = css[: re.search(r"@media\s*\(prefers-color-scheme", css).start()]
+    used = set(re.findall(r"var\((--(?:bg|text|accent|border)-[\w-]+)\)", body))
+    missing = sorted(used - set(_error_css_dark_overrides()))
+    assert not missing, "used by the error pages but not remapped for dark: %s" % missing

@@ -76,3 +76,40 @@ body {
         font-size: 2.25rem;
     }
 }
+
+/* ---------------------------------------------------------------------------
+   OS dark preference
+   ---------------------------------------------------------------------------
+   These pages ship no <script>, and this codebase picks its theme purely in
+   JavaScript -- main.js sets data-theme on <html>, and there is no
+   prefers-color-scheme rule anywhere else in frontend/. So without this block
+   an error page renders tokens.css's :root (light) on every machine, including
+   one whose entire desktop is dark. That is not "theme-aware"; it is "always
+   light, in tokens", which is a different and less useful thing.
+
+   The five tokens below are exactly the ones these pages consume, mirroring
+   tokens.css's [data-theme="dark"] block. They reference the same --c-* palette
+   entries rather than restating hex, so a palette change still flows from one
+   definition. test_error_page_dark_mapping_matches_tokens_css asserts the two
+   agree -- add a token to an error page and you must add it in both places or
+   that test fails.
+
+   :not([data-theme="light"]) so that an explicitly chosen light theme still
+   wins if these pages ever gain scripting. Specificity (0,2,0) also puts this
+   above tokens.css's bare :root (0,1,0), which is what makes it apply at all.
+
+   Contrast in this mode, against --bg-primary #0D0D1A:
+     --text-primary    #E8E8F0  15.82:1
+     --text-secondary  #A0A0B8   7.54:1
+     --accent-primary  #F48C06   7.89:1  (3rem heading, needs 3.0)
+     --accent-secondary #EF4444   5.12:1  (link, needs 4.5)
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg-primary: var(--c-navy-900);
+        --text-primary: var(--c-slate-50);
+        --text-secondary: var(--c-slate-300);
+        --accent-primary: var(--c-orange-500);
+        --accent-secondary: var(--c-red-500);
+    }
+}
