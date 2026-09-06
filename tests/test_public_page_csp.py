@@ -233,6 +233,22 @@ def test_harness_detects_a_reintroduced_inline_handler(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+
+def _directives(csp: str) -> dict:
+    """Split a CSP into {directive: source-list}.
+
+    A directive with no sources (`upgrade-insecure-requests`) maps to "", so
+    callers can `.get(name, "")` and test for a source without a length check.
+    """
+    out = {}
+    for part in csp.split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        name, _, sources = part.partition(" ")
+        out[name] = sources.strip()
+    return out
+
 @pytest.mark.skipif(not NGINX_CONF.exists(), reason="nginx/nginx.conf not present")
 def test_style_src_does_not_allow_unsafe_inline():
     """'unsafe-inline' in style-src was the price of 24 inline style attributes
@@ -247,13 +263,7 @@ def test_style_src_does_not_allow_unsafe_inline():
     reaches a style attribute becomes live CSS again. If some future feature
     genuinely needs inline styles, prefer a hash or nonce over reopening this.
     """
-    csp = nginx_csp()
-    directives = dict(
-        (d.strip().split(" ", 1) + [""])[:2]
-        for d in csp.split(";")
-        if d.strip()
-    )
-    style_src = directives.get("style-src", "")
+    style_src = _directives(nginx_csp()).get("style-src", "")
     assert "'unsafe-inline'" not in style_src, (
         "style-src has regained 'unsafe-inline': %r. Check what reintroduced an "
         "inline style; the two inline-style guards should have caught it first."
@@ -266,10 +276,4 @@ def test_style_src_does_not_allow_unsafe_inline():
 def test_script_src_does_not_allow_unsafe_inline():
     """The same guarantee for scripts, which never had it. Asserted so that
     'just add unsafe-inline' is never the quiet fix for a broken handler."""
-    csp = nginx_csp()
-    directives = dict(
-        (d.strip().split(" ", 1) + [""])[:2]
-        for d in csp.split(";")
-        if d.strip()
-    )
-    assert "'unsafe-inline'" not in directives.get("script-src", "")
+    assert "'unsafe-inline'" not in _directives(nginx_csp()).get("script-src", "")
