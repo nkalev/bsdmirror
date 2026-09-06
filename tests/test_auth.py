@@ -19,8 +19,8 @@ import threading
 import time
 from datetime import datetime, timedelta, timezone
 
+import jwt
 import pytest
-from jose import jwt
 from sqlalchemy import select
 
 import app.core.security as security_module
@@ -651,6 +651,103 @@ def test_decode_access_token_round_trips():
     assert data.jti
 
 
+# ---------------------------------------------------------------------------
+# python-jose -> PyJWT byte-compatibility
+#
+# security.py used to sign and verify with python-jose; it now uses PyJWT.
+# Both implement the same HS256 JWT construction, but the property that
+# matters operationally is narrower than "both are spec-compliant": a token
+# already sitting in someone's browser when this ships must still validate
+# afterwards, or the deploy silently logs out every session. That is a claim
+# about one specific artifact, not about the two libraries in the abstract, so
+# it is checked against a token that was actually produced by the old code
+# rather than reasoned about.
+#
+# GOLDEN_TOKEN was minted once, offline, with python-jose (no longer a
+# dependency of this project -- that is the point of this change -- so it
+# cannot be regenerated inline here):
+#
+#   from jose import jwt
+#   from datetime import datetime, timezone
+#   jwt.encode(
+#       {
+#           "sub": "alice-admin", "user_id": 7, "role": "admin",
+#           "exp": datetime(2100, 1, 1, tzinfo=timezone.utc),
+#           "jti": "old-code-4f6f2b6e-golden",
+#       },
+#       "pytest-signing-key-do-not-use-anywhere-else",
+#       algorithm="HS256",
+#   )
+# ---------------------------------------------------------------------------
+
+GOLDEN_TOKEN_SECRET = "pytest-signing-key-do-not-use-anywhere-else"
+GOLDEN_TOKEN = (
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+    "eyJzdWIiOiJhbGljZS1hZG1pbiIsInVzZXJfaWQiOjcsInJvbGUiOiJhZG1pbiIsImV4cCI6"
+    "NDEwMjQ0NDgwMCwianRpIjoib2xkLWNvZGUtNGY2ZjJiNmUtZ29sZGVuIn0."
+    "iqtZSs_F8vJghruw8YWoBh0PJ1j_yin2F3tyfH_fhEU"
+)
+
+
+def test_decode_access_token_reads_a_token_minted_by_python_jose():
+    """The migration's load-bearing claim: tokens issued before the PyJWT
+    swap keep validating after it, with the same SECRET_KEY and
+    JWT_ALGORITHM, byte-for-byte -- not merely "another HS256 library would
+    also accept this."
+
+    If this starts failing because GOLDEN_TOKEN_SECRET no longer matches
+    settings.SECRET_KEY, that is conftest's pytest default having changed;
+    regenerate GOLDEN_TOKEN with the recipe above (python-jose is not
+    installed here on purpose) rather than hand-editing the literal.
+    """
+    assert settings.SECRET_KEY == GOLDEN_TOKEN_SECRET, (
+        "the pytest SECRET_KEY default no longer matches the secret GOLDEN_TOKEN "
+        "was signed with; regenerate the fixture, this assertion protects against "
+        "a false pass, not a false fail"
+    )
+    assert settings.JWT_ALGORITHM == "HS256"
+
+    data = decode_access_token(GOLDEN_TOKEN)
+
+    assert data is not None, "a token minted by the old library must not be rejected"
+    assert data.username == "alice-admin"
+    assert data.user_id == 7
+    assert data.role == "admin"
+    assert data.jti == "old-code-4f6f2b6e-golden"
+    assert data.exp == datetime(2100, 1, 1, tzinfo=timezone.utc)
+
+
+def test_decode_access_token_passes_algorithms_as_a_list(monkeypatch):
+    """PyJWT's `decode()` requires `algorithms=[...]`; passing the bare
+    `settings.JWT_ALGORITHM` string type-checks (`str` structurally satisfies
+    `Sequence[str]`) and still decodes a normally-issued token, so nothing
+    that presents a token -- forged or genuine -- can tell the two call
+    shapes apart for this app's "HS256" value (see the comment on the
+    "wrong-algorithm" case below). Pin the call shape directly instead.
+
+    Patched at `security_module.jwt.decode` rather than asserting on
+    behaviour, for the same reason `_BcryptSpy` patches `bcrypt.checkpw`
+    above: the property under test is the argument decode_access_token
+    passes, not something a black-box request can observe.
+    """
+    calls = []
+    real_decode = jwt.decode
+
+    def spy(token, key, algorithms=None, **kwargs):
+        calls.append(algorithms)
+        return real_decode(token, key, algorithms=algorithms, **kwargs)
+
+    monkeypatch.setattr(security_module.jwt, "decode", spy)
+
+    token = create_access_token({"sub": "alice", "user_id": 1, "role": "admin"})
+    assert decode_access_token(token) is not None
+
+    assert calls == [[settings.JWT_ALGORITHM]], (
+        f"decode_access_token must call jwt.decode with algorithms=[...] (a list), "
+        f"got algorithms={calls[0]!r}"
+    )
+
+
 @pytest.mark.parametrize(
     "token_factory",
     [
@@ -664,8 +761,25 @@ def test_decode_access_token_round_trips():
             "wrong-key",
             algorithm=settings.JWT_ALGORITHM,
         ),
+        # Signed with the REAL secret, just under a different algorithm than
+        # this deployment is configured for -- an algorithm-confusion check.
+        # This does NOT, on its own, prove `algorithms=` is passed as a list
+        # rather than a bare string: PyJWT's own allow-list check is `alg not
+        # in algorithms`, which is substring containment against a bare
+        # string, and "HS512" is not a substring of "HS256" either way, so
+        # this case is rejected under both the correct and the buggy call.
+        # test_decode_access_token_passes_algorithms_as_a_list below pins
+        # that call shape directly instead of relying on a forged token to
+        # expose it -- for this app's "HS256" value there happens to be no
+        # *other* real JWA algorithm name that is a substring of "HS256", so
+        # no forged token can tell the two call shapes apart.
+        lambda: jwt.encode(
+            {"sub": "alice", "user_id": 1, "role": "admin", "exp": 9999999999},
+            settings.SECRET_KEY,
+            algorithm="HS512" if settings.JWT_ALGORITHM != "HS512" else "HS384",
+        ),
     ],
-    ids=["malformed", "expired", "wrong-signing-key"],
+    ids=["malformed", "expired", "wrong-signing-key", "wrong-algorithm"],
 )
 def test_decode_access_token_returns_none_for_bad_tokens(token_factory):
     assert decode_access_token(token_factory()) is None

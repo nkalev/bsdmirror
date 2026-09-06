@@ -12,7 +12,21 @@ alembic==1.13.1
 redis==5.0.1
 
 # Authentication
-python-jose[cryptography]==3.5.0
+#
+# Was python-jose[cryptography]==3.5.0. jose pulls in `ecdsa` for its
+# pure-Python backend even when the `cryptography` extra is installed, and
+# `ecdsa` carries PYSEC-2026-1325 with no fix the maintainers intend to ship
+# (they consider the side-channel out of scope). PyJWT does not depend on
+# `ecdsa` at all -- HS256, this app's default JWT_ALGORITHM, uses only the
+# stdlib `hmac`/`hashlib`. The `crypto` extra is kept anyway, the same
+# way jose's `cryptography` extra was: nothing here signs with an asymmetric
+# algorithm today, but JWT_ALGORITHM is an unconstrained string
+# (backend/app/core/config.py), and switching it to RS256/ES256 without a
+# dependency already in place would fail at import time instead of at
+# start-up. It arrives pinned only through this extra, the same as it
+# previously arrived only through jose's -- there is no separate
+# `cryptography==` line.
+PyJWT[crypto]==2.13.0
 # Pinned exactly, not >=. A rebuild on 2026-08-30 silently moved this from
 # 4.x to 5.0.0 -- a major version, in the login path (core/security.py calls
 # bcrypt.checkpw on every request to /api/auth/token), with no review. It was
