@@ -30,13 +30,31 @@ import structlog
 #
 # NOT IMPORTED, deliberately: Base. This service must never create the schema.
 # create_all belongs to the backend alone -- see shared/models/base.py.
-from shared.models import Mirror, MirrorStatus, Setting, SyncJob, SyncStatus
+from shared.models import Mirror, MirrorStatus, MirrorType, Setting, SyncJob, SyncStatus
 from shared.settings_spec import (
     DEFAULT_SYNC_SCHEDULE,
     SettingError,
     UnknownSettingKey,
     parse_setting,
 )
+
+# Per-mirror rsync protect-filter rules -- see the module docstring there for
+# what these do to --delete and why the list lives outside settings_spec.
+#
+# Import shape matches __main__.py's `from sync_service import SyncService`,
+# not shared.models'. sync/Dockerfile COPYs sync/'s *contents* into /app (see
+# "EVERY COPY SOURCE ... RELATIVE TO THE REPO ROOT" there), so in the
+# container sync_service.py and protected_paths.py are siblings at /app/ with
+# no enclosing `sync` package -- the bare import is what production actually
+# runs. Under pytest, sync/ has no __init__.py and is never added to sys.path
+# on its own (pyproject.toml's pythonpath is `backend` and `.`), so the same
+# module is reached as sync.protected_paths instead. Both branches load the
+# same file; tests/test_protected_paths.py imports it the second way, matching
+# every other test's `from sync import sync_service`.
+try:
+    from protected_paths import protect_filter_args
+except ImportError:
+    from sync.protected_paths import protect_filter_args
 
 # Configure stdlib logging before structlog: structlog's filter_by_level checks
 # the *stdlib* logger's effective level, and the root logger defaults to WARNING,
@@ -621,7 +639,8 @@ class SyncService:
         self,
         source: str,
         destination: str,
-        mirror_name: str
+        mirror_name: str,
+        mirror_type: Optional[MirrorType] = None,
     ) -> tuple[bool, str, dict]:
         """Run rsync command and capture output."""
 
@@ -637,6 +656,12 @@ class SyncService:
             "--no-group",
             f"--timeout={self.sync_timeout}",
         ]
+
+        # -f "P <pattern>" rules for this mirror's protected (EOL) trees, if
+        # any -- see sync/protected_paths.py. [] for a mirror with nothing
+        # configured, so --delete keeps behaving exactly as it did before this
+        # existed.
+        cmd.extend(protect_filter_args(mirror_type))
 
         if self.sync_bandwidth_limit > 0:
             cmd.append(f"--bwlimit={self.sync_bandwidth_limit}")
@@ -795,7 +820,15 @@ class SyncService:
 
         return stats
 
-    async def sync_mirror_job(self, job_id: int, mirror_id: int, name: str, upstream: str, local_path: str) -> None:
+    async def sync_mirror_job(
+        self,
+        job_id: int,
+        mirror_id: int,
+        name: str,
+        upstream: str,
+        local_path: str,
+        mirror_type: Optional[MirrorType] = None,
+    ) -> None:
         """Execute a sync for a pre-existing SyncJob record."""
         # Claim the job before anything writes RUNNING to its row, and hold the
         # claim until after something writes a terminal status. This ordering is
@@ -805,7 +838,7 @@ class SyncService:
         # another coroutine on this same loop -- cannot catch them half-applied.
         self.active_job_ids.add(job_id)
         try:
-            await self._sync_mirror_job(job_id, mirror_id, name, upstream, local_path)
+            await self._sync_mirror_job(job_id, mirror_id, name, upstream, local_path, mirror_type)
         finally:
             # finally, not "after the happy path": if the body raised between
             # the two commits the row still says RUNNING and nothing is going
@@ -813,7 +846,15 @@ class SyncService:
             # reaper pass clear it without waiting for a restart.
             self.active_job_ids.discard(job_id)
 
-    async def _sync_mirror_job(self, job_id: int, mirror_id: int, name: str, upstream: str, local_path: str) -> None:
+    async def _sync_mirror_job(
+        self,
+        job_id: int,
+        mirror_id: int,
+        name: str,
+        upstream: str,
+        local_path: str,
+        mirror_type: Optional[MirrorType] = None,
+    ) -> None:
         async with self.session_maker() as session:
             # Mark job as running
             await session.execute(
@@ -832,7 +873,7 @@ class SyncService:
         logger.info("Executing sync job", job_id=job_id, mirror=name)
 
         # Run rsync
-        success, output, stats = await self.run_rsync(upstream, local_path, name)
+        success, output, stats = await self.run_rsync(upstream, local_path, name, mirror_type)
 
         # Update job and mirror status
         async with self.session_maker() as session:
@@ -888,7 +929,14 @@ class SyncService:
 
         logger.info("Mirror sync finished", mirror=name, job_id=job_id, success=success)
 
-    async def sync_mirror(self, mirror_id: int, name: str, upstream: str, local_path: str) -> None:
+    async def sync_mirror(
+        self,
+        mirror_id: int,
+        name: str,
+        upstream: str,
+        local_path: str,
+        mirror_type: Optional[MirrorType] = None,
+    ) -> None:
         """Create a new sync job and execute it (for scheduled syncs)."""
         async with self.session_maker() as session:
             sync_job = SyncJob(
@@ -901,7 +949,7 @@ class SyncService:
             await session.refresh(sync_job)
             job_id = sync_job.id
 
-        await self.sync_mirror_job(job_id, mirror_id, name, upstream, local_path)
+        await self.sync_mirror_job(job_id, mirror_id, name, upstream, local_path, mirror_type)
 
     REAPED_JOB_MESSAGE = (
         "Sync job abandoned: no sync-service process was running it. The most "
@@ -1053,7 +1101,8 @@ class SyncService:
                 mirror_id=mirror.id,
                 name=mirror.name,
                 upstream=mirror.upstream_url,
-                local_path=mirror.local_path
+                local_path=mirror.local_path,
+                mirror_type=mirror.mirror_type,
             )
             processed += 1
 
@@ -1077,7 +1126,8 @@ class SyncService:
                 mirror_id=mirror.id,
                 name=mirror.name,
                 upstream=mirror.upstream_url,
-                local_path=mirror.local_path
+                local_path=mirror.local_path,
+                mirror_type=mirror.mirror_type,
             )
 
     def _next_scheduled_run(self, base: datetime) -> datetime:

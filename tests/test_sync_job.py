@@ -39,7 +39,7 @@ from datetime import datetime
 
 import pytest
 
-from shared.models import MirrorStatus, SyncStatus
+from shared.models import MirrorStatus, MirrorType, SyncStatus
 from sync import sync_service
 from sync.sync_service import (
     _classify_partial_transfer,
@@ -558,6 +558,61 @@ async def test_delete_is_passed_so_a_deleted_count_is_always_meaningful(service,
     assert "--delete" in argv
     assert "--stats" in argv
     assert argv[-2:] == ["rsync://upstream/x/", str(tmp_path / "x")]
+
+
+async def test_no_mirror_type_means_no_protect_filters(service, rsync, tmp_path):
+    """The default (no mirror_type, or one with nothing configured) must not
+    add anything to argv -- a mirror with no protected paths keeps mirroring
+    exactly as faithfully as it did before this feature existed."""
+    calls = rsync(0, CLEAN_EXIT_0)
+
+    await service.run_rsync("rsync://upstream/x/", str(tmp_path / "x"), "X")
+
+    argv = calls[0]
+    assert "-f" not in argv
+
+
+async def test_mirror_type_adds_its_protect_filters_to_argv(service, rsync, tmp_path):
+    """OpenBSD's seeded EOL trees become `-f "P <pattern>"` pairs in argv --
+    the mechanism tests/test_protected_paths.py proves end to end against
+    real rsync, pinned here at the argv boundary the way the rest of this
+    file pins run_rsync's other flags."""
+    calls = rsync(0, CLEAN_EXIT_0)
+
+    await service.run_rsync(
+        "rsync://upstream/OpenBSD/",
+        str(tmp_path / "openbsd"),
+        "OpenBSD",
+        MirrorType.OPENBSD,
+    )
+
+    argv = calls[0]
+    assert argv.count("-f") == 4  # 7.5, 7.6, 7.7, 7.8 -- not 7.9, the current release
+    for version in ("7.5", "7.6", "7.7", "7.8"):
+        assert f"P /{version}/***" in argv
+    assert "P /7.9/***" not in argv
+
+
+async def test_freebsd_protect_filters_use_double_star_for_the_arch_layout(
+    service, rsync, tmp_path
+):
+    """FreeBSD's protected unit is a version string, not a directory -- see
+    sync/protected_paths.py for why -- so its filters use `**`, not `/`."""
+    calls = rsync(0, CLEAN_EXIT_0)
+
+    await service.run_rsync(
+        "rsync://upstream/FreeBSD/",
+        str(tmp_path / "freebsd"),
+        "FreeBSD",
+        MirrorType.FREEBSD,
+    )
+
+    argv = calls[0]
+    assert "P **/14.3-RELEASE/***" in argv
+    assert "P **/ISO-IMAGES/14.3/***" in argv
+    # The currently-supported branch heads are not protected.
+    assert "P **/14.5-RELEASE/***" not in argv
+    assert "P **/15.1-RELEASE/***" not in argv
 
 
 # ---------------------------------------------------------------------------

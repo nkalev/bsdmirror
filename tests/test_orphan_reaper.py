@@ -717,7 +717,7 @@ async def test_a_job_stranded_by_an_exception_is_reaped_without_a_restart(
     """
     boom = RuntimeError("connection reset while committing")
 
-    async def explode(job_id, mirror_id, name, upstream, local_path):
+    async def explode(job_id, mirror_id, name, upstream, local_path, mirror_type=None):
         # Reproduce the state the real body would have left: RUNNING row,
         # SYNCING mirror, then a failure before the completion block.
         set_state(factory, mirror_id, job_id,

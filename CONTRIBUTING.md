@@ -81,6 +81,7 @@ bsdmirror/
 │       └── img/      # Images and logos
 ├── sync/             # Rsync sync service
 │   ├── sync_service.py
+│   ├── protected_paths.py  # Per-mirror EOL trees --delete may not remove
 │   └── Dockerfile
 ├── nginx/            # Nginx configuration
 │   ├── nginx.conf
