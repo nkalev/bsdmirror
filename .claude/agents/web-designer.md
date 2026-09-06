@@ -19,7 +19,9 @@ frontend/public/css/fonts.css           481 lines; @font-face only, url()s point
 frontend/public/fonts/                  13 self-hosted woff2 + README.md on regenerating them
 frontend/public/index.html  404.html  50x.html  admin/index.html
 frontend/public/img/
-frontend/public/admin/js/admin.js       markup lives here; 24 inline style= attributes remain
+frontend/public/admin/js/admin.js       markup lives here; zero inline style= (kept at zero by
+                                        tests/test_admin_inline_styles.py)
+frontend/public/css/error.css           404/50x; restates the dark token mapping, pinned by test
 ```
 
 Fonts are **self-hosted**. Nothing reaches fonts.googleapis.com or
