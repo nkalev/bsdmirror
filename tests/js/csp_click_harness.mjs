@@ -120,6 +120,28 @@ async function main() {
         '--disable-gpu', '--disable-extensions', '--mute-audio'
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
 
+// Chrome's stderr is piped, so SOMETHING has to read it.
+//
+// An unread pipe fills at roughly 64KB on Linux, and a process that fills it
+// blocks on write() until someone drains it. A chatty headless Chrome -- which
+// is what a loaded CI runner produces, between GPU, sandbox and font warnings
+// -- can therefore block BEFORE it writes DevToolsActivePort, and the loop
+// below then times out with "Chrome did not expose a DevTools endpoint" while
+// Chrome sits alive and stuck. That is not a flake; it is this function
+// holding the pipe shut.
+//
+// Draining also gives the failure something to say. The old error threw away
+// everything Chrome had written, so a real crash and a slow start were
+// indistinguishable in CI logs. Both harnesses had this; this one was simply
+// the first to lose the race.
+    let chromeStderr = '';
+    chrome.stderr.setEncoding('utf8');
+    chrome.stderr.on('data', (chunk) => {
+        // Bounded: keep the tail. An unbounded buffer would just move the
+        // memory problem here from the kernel's pipe.
+        chromeStderr = (chromeStderr + chunk).slice(-8192);
+    });
+
     // Chrome writes the port it actually chose here.
     let wsUrl = null;
     for (let i = 0; i < 100 && !wsUrl; i++) {
@@ -131,7 +153,12 @@ async function main() {
             wsUrl = version.webSocketDebuggerUrl;
         } catch { /* not up yet */ }
     }
-    if (!wsUrl) throw new Error('Chrome did not expose a DevTools endpoint');
+    if (!wsUrl) {
+        throw new Error(
+            'Chrome did not expose a DevTools endpoint within 10s.\n' +
+            '--- chrome stderr (tail) ---\n' + (chromeStderr || '(nothing on stderr)')
+        );
+    }
 
     const cdp = await CDP.connect(wsUrl);
     await cdp.send('Browser.grantPermissions', {
