@@ -1,27 +1,27 @@
 """
 Protected release paths, read-only: GET /api/admin/protected-paths.
 
-sync/protected_paths.py is real, deployed operational configuration -- the
+shared/protected_paths.py is real, deployed operational configuration -- the
 rsync `-f "P ..."` filters that keep --delete from removing an EOL release
 once upstream prunes it -- and until now the only way to see what is
 currently protected was to open a Python file on the server. This endpoint
 is that view: display only, no write path, by design (see
-app.core.protected_paths and sync/protected_paths.py's own module docstring
-for why an operator cannot edit this list here or anywhere else).
+shared/protected_paths.py's own module docstring for why an operator cannot
+edit this list here or anywhere else).
 
-Two things make this file larger than "call the endpoint, check the JSON":
+This file is larger than "call the endpoint, check the JSON" for one reason:
+protected_paths_view()'s "every mirror type appears, even one with nothing
+configured" property cannot be exercised against today's real
+PROTECTED_PATHS -- all three mirror types currently have entries -- so it is
+proved against a stand-in dict instead, both directly and under mutation.
 
-  1. app.core.protected_paths.PROTECTED_PATHS is a hand-kept COPY of
-     sync/protected_paths.py's dict, not an import of it -- the backend
-     image does not ship sync/ (see that module's docstring for the
-     Dockerfile boundary). test_backend_snapshot_matches_the_deployed_module
-     below is the only thing standing between this view and one that quietly
-     shows an operator a list that is no longer what rsync obeys.
-  2. protected_paths_view()'s "every mirror type appears, even one with
-     nothing configured" property cannot be exercised against today's real
-     PROTECTED_PATHS -- all three mirror types currently have entries -- so
-     it is proved against a stand-in dict instead, both directly and under
-     mutation.
+There used to be a second reason. app.core.protected_paths.PROTECTED_PATHS was
+a hand-kept COPY of shared/protected_paths.py's dict -- the backend could not
+import sync/protected_paths.py directly (that package was never part of
+backend/Dockerfile's build context) -- checked against the deployed one by a
+test here on every run. That copy, and the test guarding it, are gone:
+PROTECTED_PATHS now has exactly one definition, in shared/, imported directly
+by both services, so there is nothing left for the two to drift into.
 """
 import inspect
 import textwrap
@@ -31,9 +31,10 @@ from typing import Dict, List, Sequence
 import pytest
 from sqlalchemy import select
 
-from app.core import protected_paths as protected_paths_module
-from app.core.protected_paths import PROTECTED_PATHS, protected_paths_view
+from app.core import protected_paths_view as protected_paths_view_module
+from app.core.protected_paths_view import protected_paths_view
 from shared.models import Mirror, MirrorStatus, MirrorType
+from shared.protected_paths import PROTECTED_PATHS
 from tests.conftest import auth_header
 
 ALL_TYPES = {"freebsd", "netbsd", "openbsd"}
@@ -52,23 +53,7 @@ def _mirror(mirror_id, name, mirror_type):
 
 
 # ---------------------------------------------------------------------------
-# 1. The snapshot must not drift from the deployed module
-# ---------------------------------------------------------------------------
-
-
-def test_backend_snapshot_matches_the_deployed_sync_service_module():
-    """The guard the whole design depends on: sync/protected_paths.py is
-    what rsync actually obeys, app.core.protected_paths is a hand-kept copy
-    of it for the reason explained in that module's docstring. Change one
-    without the other and this fails `docker compose run --rm test` instead
-    of quietly showing an operator a stale list."""
-    from sync.protected_paths import PROTECTED_PATHS as DEPLOYED
-
-    assert PROTECTED_PATHS == DEPLOYED
-
-
-# ---------------------------------------------------------------------------
-# 2. protected_paths_view -- pure function
+# 1. protected_paths_view -- pure function
 # ---------------------------------------------------------------------------
 
 
@@ -112,7 +97,9 @@ def test_a_mirror_type_with_nothing_configured_still_appears(monkeypatch):
     """Exercised against a stand-in dict, not the real PROTECTED_PATHS:
     every real mirror type currently has entries, so this property has no
     naturally-occurring case today."""
-    monkeypatch.setattr(protected_paths_module, "PROTECTED_PATHS", {MirrorType.FREEBSD: ("x",)})
+    monkeypatch.setattr(
+        protected_paths_view_module, "PROTECTED_PATHS", {MirrorType.FREEBSD: ("x",)}
+    )
 
     groups = protected_paths_view([])
     by_type = {g["mirror_type"]: g for g in groups}
@@ -124,12 +111,12 @@ def test_a_mirror_type_with_nothing_configured_still_appears(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 3. protected_paths_view under mutation
+# 2. protected_paths_view under mutation
 # ---------------------------------------------------------------------------
 
 
 def _view_source():
-    return textwrap.dedent(inspect.getsource(protected_paths_module.protected_paths_view))
+    return textwrap.dedent(inspect.getsource(protected_paths_view_module.protected_paths_view))
 
 
 def _load_view(source, patterns):
@@ -206,7 +193,7 @@ def test_mutation_dropping_the_mirror_names_sort_is_caught():
 
 
 # ---------------------------------------------------------------------------
-# 4. The endpoint, against a real (SQLite) database
+# 3. The endpoint, against a real (SQLite) database
 # ---------------------------------------------------------------------------
 
 

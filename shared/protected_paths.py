@@ -21,20 +21,48 @@ eligibility on the *receiving* side without excluding it from the transfer:
     upstream deleting inside it does nothing   the local copy keeps the file
 
 That was confirmed twice: once by hand in a container before this file
-existed, and again while writing sync/protected_paths.py, against a source
-tree that gets a file changed (different size *and* mtime -- rsync's default
-quick-check is size+mtime, and two 3-byte files written in the same second
-will falsely look unchanged either way, which is what produced a wrong
-conclusion the first time this was tried), a file added, and a file removed,
-diffed against an unprotected sibling that behaves normally. See
-tests/test_protected_paths.py for the automated version of that same proof,
-including the `**` cross-directory case FreeBSD needs (below).
+existed, and again while writing this module, against a source tree that gets
+a file changed (different size *and* mtime -- rsync's default quick-check is
+size+mtime, and two 3-byte files written in the same second will falsely look
+unchanged either way, which is what produced a wrong conclusion the first
+time this was tried), a file added, and a file removed, diffed against an
+unprotected sibling that behaves normally. See tests/test_protected_paths.py
+for the automated version of that same proof, including the `**`
+cross-directory case FreeBSD needs (below).
 
 One real gap, also found empirically rather than assumed: `P name/***`
 protects a *directory* and everything under it, but does not protect a bare
 symlink named `name` -- `P name` (no `/***`) is what protects a symlink (or
 any other single leaf entry). Where that matters, both forms are listed; see
 FreeBSD below.
+
+WHY THIS FILE IS IN shared/, NOT sync/
+--------------------------------------------------------------------------
+This started as sync/protected_paths.py: sync_service.py was its only
+consumer, and it lived next to the module that reads it. That stopped being
+true the moment the admin panel grew a read-only Protected Paths page
+(`GET /api/admin/protected-paths`) -- the backend needed PROTECTED_PATHS too,
+and `from sync.protected_paths import PROTECTED_PATHS` does not work there:
+backend/Dockerfile COPYs only `backend/` and `shared/`, so `sync/` is not
+part of that image in any environment, and a module-level import of it would
+raise ModuleNotFoundError before the app finished starting.
+
+The first fix was a hand-kept, byte-for-byte copy at
+backend/app/core/protected_paths.py, with a test asserting the two dicts
+stayed equal. That is the exact shape of bug shared/models/ already exists to
+prevent for the ORM tables -- two declarations, kept honest only by a test
+that can catch drift after it happens, not prevent it -- and that one drifted
+seventeen ways before it was merged into one definition. A passing drift test
+is not the same guarantee as a single definition; it is a rake that has not
+been stepped on yet.
+
+So this data lives here instead, the one place both images actually ship
+(see shared/__init__.py: both Dockerfiles COPY shared/ into their WORKDIR,
+preserving the package name, so `import shared.protected_paths` resolves the
+same way in both). sync/sync_service.py imports `protect_filter_args` from
+here directly, the same way it already imports `shared.models` and
+`shared.settings_spec` -- no re-export, no try/except, and nothing left to
+drift because there is only the one copy.
 
 WHY THIS LIST IS DATA, AND WHY IT LIVES HERE RATHER THAN IN
 shared/settings_spec.py

@@ -64,7 +64,8 @@ Thank you for your interest in contributing to the BSD Mirror project! This docu
 bsdmirror/
 ├── shared/           # Code imported by BOTH Python services
 │   ├── models/       # The SQLAlchemy schema. One definition, see below.
-│   └── settings_spec.py  # What a `settings` row may hold. See below.
+│   ├── settings_spec.py  # What a `settings` row may hold. See below.
+│   └── protected_paths.py  # Per-mirror EOL trees --delete may not remove
 ├── backend/          # FastAPI backend API
 │   ├── app/
 │   │   ├── api/      # API route handlers
@@ -81,7 +82,6 @@ bsdmirror/
 │       └── img/      # Images and logos
 ├── sync/             # Rsync sync service
 │   ├── sync_service.py
-│   ├── protected_paths.py  # Per-mirror EOL trees --delete may not remove
 │   └── Dockerfile
 ├── nginx/            # Nginx configuration
 │   ├── nginx.conf

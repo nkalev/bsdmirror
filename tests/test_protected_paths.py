@@ -1,4 +1,4 @@
-"""sync/protected_paths.py: what is protected, and proof the mechanism works.
+"""shared/protected_paths.py: what is protected, and proof the mechanism works.
 
 Two kinds of test, deliberately kept apart:
 
@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from shared.models import MirrorType
-from sync.protected_paths import PROTECTED_PATHS, protect_filter_args
+from shared.protected_paths import PROTECTED_PATHS, protect_filter_args
 from sync.sync_service import SyncService
 
 RSYNC = shutil.which("rsync")

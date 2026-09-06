@@ -318,7 +318,7 @@ count on a job row — now shown next to that sync in the admin panel rather
 than only in the database, and marked distinctly once it is large enough to
 be a release wipe rather than ordinary `--delete` churn.
 
-`sync/protected_paths.py` is a plain, checked-in list of path prefixes, per
+`shared/protected_paths.py` is a plain, checked-in list of path prefixes, per
 mirror, that are exempt from that deletion. It becomes `-f "P <pattern>"` rsync
 filter rules: a protected path still receives file changes and new files for as
 long as upstream keeps it, and simply stops being something `--delete` can ever
@@ -332,11 +332,11 @@ Paths** page and its `GET /api/admin/protected-paths` endpoint (any
 authenticated role) show which trees are currently frozen without needing
 server access to read the Python file — read-only, on purpose: there is no
 corresponding PATCH, and adding one is not the fix for "an operator cannot see
-this." The backend cannot import `sync/protected_paths.py` directly (that
-package is not part of the backend's Docker image), so `app/core/protected_paths.py`
-keeps a hand-maintained copy of the same list for display, checked against the
-deployed one by `tests/test_admin_protected_paths_view.py` on every test run —
-update both together, `sync/protected_paths.py` first.
+this." `shared/protected_paths.py` is imported directly by both the backend
+(for this view) and the sync service (for the rsync filter itself; see
+`sync/sync_service.py`), the same fix already applied to the ORM models in
+`shared/models/` — one definition, not a hand-maintained copy checked for
+drift by a test.
 
 **The current release on each mirror is deliberately not protected.** Protecting
 it would block a legitimate upstream deletion — a pulled package, a re-spun ISO,

@@ -597,7 +597,7 @@ async def test_freebsd_protect_filters_use_double_star_for_the_arch_layout(
     service, rsync, tmp_path
 ):
     """FreeBSD's protected unit is a version string, not a directory -- see
-    sync/protected_paths.py for why -- so its filters use `**`, not `/`."""
+    shared/protected_paths.py for why -- so its filters use `**`, not `/`."""
     calls = rsync(0, CLEAN_EXIT_0)
 
     await service.run_rsync(
