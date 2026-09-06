@@ -2,6 +2,37 @@
 .env
 .credentials
 
+# Credential and database backups.
+#
+# This repository is PUBLIC, and every pattern below lands inside the git
+# working tree on the production host by default:
+#
+#   scripts/backup.sh:8   BACKUP_DIR defaults to /opt/bsdmirror/backups and
+#                         copies .env there as env_<ts>.backup, next to
+#                         gzipped pg_dump output of the entire database.
+#   .deploy-bak/          deploy-time copies, including env.<ts>.bak
+#   .env.bak.<ts>         observed on the host
+#
+# Two files on production hold all four of POSTGRES_PASSWORD, REDIS_PASSWORD,
+# SECRET_KEY and ADMIN_PASSWORD in plaintext. They are mode 600 and have never
+# been committed -- verified with `git log --all` over these paths.
+#
+# Deployment is one-way, repo -> server, and nobody commits from
+# /opt/bsdmirror, so those production copies are not realistically about to be
+# published. The case this actually guards is the developer side, where the
+# same defaults apply and the direction of travel IS toward the public remote:
+# running scripts/backup.sh in a local clone drops .env and a full database
+# dump into ./backups/, and none of it was ignored.
+#
+# tests/test_gitignore_covers_secrets.py fails if any of these stop being
+# ignored. Do not narrow them without reading it.
+backups/
+.deploy-bak/
+.env.bak
+.env.bak.*
+env_*.backup
+*.sql.gz
+
 # Python
 __pycache__/
 *.py[cod]
