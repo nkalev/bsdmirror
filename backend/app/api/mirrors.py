@@ -155,6 +155,7 @@ async def get_sync_history(
             "files_transferred": job.files_transferred,
             "bytes_transferred": job.bytes_transferred,
             "bytes_transferred_human": humanize.naturalsize(job.bytes_transferred) if job.bytes_transferred else None,
+            "files_deleted": job.files_deleted,
             "triggered_by": job.triggered_by,
             "error_message": job.error_message,
             "created_at": job.created_at

@@ -138,6 +138,10 @@ HARNESS_CHECKS = [
     "renderLayout escapes the logged-in username in the sidebar",
     "Toast.show escapes a hostile server error string",
     "Modal.show escapes a hostile title and trusts SafeHtml body",
+    "filesDeletedBadge marks a count at the large-deletion threshold",
+    "filesDeletedBadge leaves a count below the threshold unmarked",
+    "renderDashboard escapes recent activity action and sync status end-to-end",
+    "renderDashboard shows free disk space and flags high usage as a warning",
 ]
 
 

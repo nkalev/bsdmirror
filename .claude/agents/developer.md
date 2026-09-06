@@ -18,12 +18,13 @@ the tree; if one is wrong, fix this map in the same change.
 backend/app/main.py                 router prefixes -- every route is /api/*
 backend/app/api/                    auth.py health.py mirrors.py admin.py stats.py
 backend/app/core/database.py        init_db() verifies alembic_version; create_all is gone
+backend/app/core/disk.py            statvfs-based disk usage; used by /api/admin/dashboard
 shared/models/                      the ONLY model definitions (imported by both services)
 backend/alembic/                    revisions live here, NOT ./alembic
-sync/sync_service.py                1254 lines -- read a range, not the whole file
-frontend/public/admin/js/admin.js   1242 lines; the html`` tagged template is at ~:1118
+sync/sync_service.py                1360 lines -- read a range, not the whole file
+frontend/public/admin/js/admin.js   1305 lines; the html`` tagged template is at ~:1164
 frontend/public/js/main.js
-tests/                              12 files, 526 collected tests + tests/js/*.mjs harnesses
+tests/                              16 files, 697 collected tests + tests/js/*.mjs harnesses
 pyproject.toml                      ruff + pytest config; no [project] table on purpose
 ```
 

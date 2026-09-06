@@ -46,7 +46,8 @@ sandbox.globalThis = sandbox;
 const EPILOGUE = `
 ;({ html, escapeHtml, interpolateHtml, trustedHtml, setHtml, SafeHtml,
     renderLayout, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
-    Toast, Modal, api, state });
+    renderDashboard, filesDeletedBadge, LARGE_DELETION_THRESHOLD,
+    DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
 `;
 
 let mod = null;
@@ -433,6 +434,72 @@ async function main() {
         assert(written.includes('&lt;script&gt;'), `title not escaped: ${written}`);
         assert(written.includes('<p>&lt;b&gt;</p>'), `body not passed through: ${written}`);
         assert(written.includes('<button>Close</button>'), `actions not passed through: ${written}`);
+        return '';
+    });
+
+    // --- Disk capacity and files_deleted (Dashboard) ------------------------
+    //
+    // Neither field is attacker-controlled -- both are numbers computed by
+    // the backend (app/core/disk.py, SyncJob.files_deleted) -- so there is no
+    // payload to inject. What these prove instead is the property the PR
+    // description actually asked for: a large deletion count, and high disk
+    // usage, must be visually distinct from the ordinary case, not just
+    // present in the DOM somewhere a script could inspect it.
+
+    await check('filesDeletedBadge marks a count at the large-deletion threshold', () => {
+        const out = String(mod.filesDeletedBadge(mod.LARGE_DELETION_THRESHOLD));
+        assert(out.includes('u-text-error'), `expected u-text-error, got ${out}`);
+        assert(!out.includes('u-text-muted'), `did not expect u-text-muted, got ${out}`);
+        return '';
+    });
+
+    await check('filesDeletedBadge leaves a count below the threshold unmarked', () => {
+        const out = String(mod.filesDeletedBadge(mod.LARGE_DELETION_THRESHOLD - 1));
+        assert(!out.includes('u-text-error'), `did not expect u-text-error, got ${out}`);
+        assert(out.includes('u-text-muted'), `expected u-text-muted, got ${out}`);
+        return '';
+    });
+
+    await check('renderDashboard escapes recent activity action and sync status end-to-end', async () => {
+        const out = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 3, active: 2, syncing: 1, error: 0, total_size_bytes: 0 },
+            users: { total: 2 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [{
+                id: 1,
+                mirror_id: 1,
+                status: '" onmouseover="alert(1)',
+                files_deleted: 0,
+                created_at: '2026-01-01T00:00:00Z'
+            }],
+            recent_activity: [{
+                id: 1,
+                action: '<img src=x onerror=alert(1)>',
+                created_at: '2026-01-01T00:00:00Z'
+            }]
+        });
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(tagNames(out).includes('li'), 'the activity lists did not render at all');
+        return '';
+    });
+
+    await check('renderDashboard shows free disk space and flags high usage as a warning', async () => {
+        const payloadAt = (percentUsed) => ({
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 1000, used_bytes: 900, free_bytes: 100, percent_used: percentUsed },
+            recent_syncs: [],
+            recent_activity: []
+        });
+
+        const low = await renderWith(mod.renderDashboard, payloadAt(mod.DISK_USAGE_WARNING_PERCENT - 1));
+        assert(low.includes('100.0 B'), `expected the free-byte figure to render, got ${low}`);
+        assert(low.includes('stat-card-trend up'), `expected an 'up' trend below the warning threshold: ${low}`);
+        assert(!low.includes('stat-card-trend down'), `unexpected 'down' trend below the warning threshold: ${low}`);
+
+        const high = await renderWith(mod.renderDashboard, payloadAt(mod.DISK_USAGE_WARNING_PERCENT));
+        assert(high.includes('stat-card-trend down'), `expected a 'down' trend at/above the warning threshold: ${high}`);
         return '';
     });
 
