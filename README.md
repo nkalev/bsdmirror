@@ -112,6 +112,50 @@ change something refuse, naming `docker compose build backend` as the fix.
 `scripts/deploy.sh` runs migrations automatically, between the build and the
 container recreate. See below.
 
+### Dependency lockfiles
+
+`backend/requirements.in` and `sync/requirements.in` are the direct
+dependency lists -- edit these by hand. `backend/requirements.txt` and
+`sync/requirements.txt` are generated, hash-pinned closures that
+`backend/Dockerfile`, `sync/Dockerfile` and `Dockerfile.test` install; `pip`
+enables `--require-hashes` automatically the moment a file has any hash, so
+every package that install fetches, transitive or not, is verified against a
+hash recorded here. Never hand-edit a `.txt` file; it will not survive the
+next regeneration:
+
+```bash
+./scripts/compile-requirements.sh            # backend, then sync (default)
+./scripts/compile-requirements.sh backend    # one file at a time
+./scripts/compile-requirements.sh sync
+./scripts/compile-requirements.sh --upgrade  # let transitive pins move; the
+                                              # exact `==` pins in the .in
+                                              # files above are untouched
+./scripts/compile-requirements.sh --help
+```
+
+sync's lock is compiled with backend's freshly-generated
+`requirements.txt` passed as a `pip-compile --constraint`, not independently.
+The two files share eight direct packages (asyncpg, croniter, httpx,
+pydantic-settings, python-dotenv, redis, sqlalchemy, structlog) plus whatever
+those pull in transitively, and CI's "Install backend and sync requirements
+in a single resolve" step and `Dockerfile.test` both install both files in
+one `pip install` call. Two independently-compiled locks can pin a shared
+transitive package (`anyio`, `h11`, `certifi`, ...) to different versions and
+break that install; a constraint cannot, because it fixes a package's version
+for sync's resolve if sync needs that package at all, not only when it is one
+of the eight named ones. `backend/requirements.txt` is already the authority
+for shared tooling versions elsewhere in CI (the `ruff` and `bandit` jobs
+install "at the version pinned in backend/requirements.txt"); compiling sync
+against it is the same convention applied to the dependency graph.
+
+After regenerating, prove it before committing:
+
+```bash
+docker compose build backend sync test
+docker compose run --rm test
+docker compose run --rm --entrypoint ruff test check .
+```
+
 ### SSL Setup
 
 For production with Let's Encrypt:
@@ -592,6 +636,10 @@ counter in the script now uses `n=$((n + 1))`.
   tagged template that escapes every interpolation, and `innerHTML` has a
   single writer that rejects unescaped strings. See
   [CONTRIBUTING.md](CONTRIBUTING.md#rendering-html-in-the-admin-panel).
+- Hash-pinned, fully-resolved dependency lockfiles (`backend/requirements.txt`,
+  `sync/requirements.txt`): a rebuild installs the exact bytes that were
+  reviewed and `pip-audit`-ed, not whatever the transitive closure resolves to
+  on the day of the build. See [Dependency lockfiles](#dependency-lockfiles).
 
 ## Contributing
 

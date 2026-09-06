@@ -1,0 +1,85 @@
+# Direct dependencies for the backend image, hand-edited.
+#
+# requirements.txt is GENERATED from this file (plus sync/requirements.in as
+# a cross-project constraint) and must never be hand-edited: it is the full,
+# hash-pinned transitive closure, produced by scripts/compile-requirements.sh.
+# See that script's header for how and when to regenerate, and
+# README.md#dependency-lockfiles for the short version.
+#
+# Every line below is a package this backend imports or invokes directly.
+# Anything pulled in only transitively (starlette, anyio, h11, certifi,
+# pydantic-core, ...) belongs in requirements.txt, never here.
+
+# FastAPI and web framework
+#
+# Bumped from 0.109.2 straight to the 0.141.x line rather than the first
+# starlette advisory fix (0.115.x) because fastapi's own pin on starlette
+# stays a floor with no ceiling from 0.115.6 onward (`starlette<0.42.0` up to
+# 0.115.x, `>=0.40.0` after) -- a partial bump still leaves 6 of 7 published
+# starlette advisories open. 0.141.1 requires `starlette>=0.46.0`, which
+# resolves to 1.6.0 and clears all 7. See pip-audit output referenced in the
+# PR description for the before/after.
+fastapi==0.141.1
+uvicorn[standard]==0.27.1
+python-multipart==0.0.32
+
+# Database
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+alembic==1.13.1
+
+# Redis
+redis==5.0.1
+
+# Authentication
+#
+# Was python-jose[cryptography]==3.5.0. jose pulls in `ecdsa` for its
+# pure-Python backend even when the `cryptography` extra is installed, and
+# `ecdsa` carries PYSEC-2026-1325 with no fix the maintainers intend to ship
+# (they consider the side-channel out of scope). PyJWT does not depend on
+# `ecdsa` at all -- HS256, this app's default JWT_ALGORITHM, uses only the
+# stdlib `hmac`/`hashlib`. The `crypto` extra is kept anyway, the same
+# way jose's `cryptography` extra was: nothing here signs with an asymmetric
+# algorithm today, but JWT_ALGORITHM is an unconstrained string
+# (backend/app/core/config.py), and switching it to RS256/ES256 without a
+# dependency already in place would fail at import time instead of at
+# start-up. It arrives pinned only through this extra, the same as it
+# previously arrived only through jose's -- there is no separate
+# `cryptography==` line.
+PyJWT[crypto]==2.13.0
+# Pinned exactly, not >=. A rebuild on 2026-08-30 silently moved this from
+# 4.x to 5.0.0 -- a major version, in the login path (core/security.py calls
+# bcrypt.checkpw on every request to /api/auth/token), with no review. It was
+# fine, but it was luck. 5.0.0 is the version the 199-test suite was run
+# against, so it is the version deployed.
+bcrypt==5.0.0
+# Forced up from 2.6.1 by fastapi==0.141.1, which requires pydantic>=2.9.0.
+# 2.13.5 is the version that single pip resolve (this file + sync/requirements.in)
+# actually lands on; pinned exactly rather than left to float, same as
+# everything else in this file.
+pydantic[email]==2.13.5
+
+# Configuration
+pydantic-settings==2.1.0
+python-dotenv==1.2.3
+
+# HTTP client (for health checks)
+httpx==0.26.0
+
+# Logging
+structlog==24.1.0
+
+# Utilities
+croniter==2.0.1
+humanize==4.9.0
+
+# Testing
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==4.1.0
+
+# Security scanning
+bandit==1.7.7
+
+# Linting
+ruff==0.2.1
