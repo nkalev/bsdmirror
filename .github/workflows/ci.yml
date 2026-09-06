@@ -308,6 +308,24 @@ jobs:
         with:
           node-version: '22'
 
+      # rsync, for the same reason node and Chrome are installed above.
+      #
+      # tests/test_protected_paths.py drives the REAL rsync binary to prove that
+      # a protect filter survives an upstream deletion -- the whole point of the
+      # EOL-archive feature. It carries a shutil.which("rsync") skipif, which is
+      # right for a contributor's laptop and exactly wrong here: without the
+      # binary those tests skip, the suite stays green, and nothing has shown
+      # that 1.18 TB of EOL releases is actually protected.
+      #
+      # This job runs pytest on the bare runner, not in Dockerfile.test (which
+      # installs rsync itself), so the runner needs it explicitly.
+      - name: Install rsync (CI must never skip the protect-filter suite)
+        run: |
+          if ! command -v rsync >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq rsync
+          fi
+          rsync --version | head -1
+
       # -----------------------------------------------------------------------
       # The browser-driven suites must RUN here, never skip
       # -----------------------------------------------------------------------
@@ -427,7 +445,8 @@ jobs:
           # Dotted module paths as pytest writes them into @classname. Update
           # these together with any deliberate rename; a stale entry fails loudly
           # on the "contributed no tests" check below rather than passing.
-          REQUIRED = ("tests.test_admin_js_escaping", "tests.test_public_page_csp")
+          REQUIRED = ("tests.test_admin_js_escaping", "tests.test_public_page_csp",
+                      "tests.test_protected_paths")
 
           if not REPORT.exists():
               print("::error::%s was not produced, so it cannot be shown that the "

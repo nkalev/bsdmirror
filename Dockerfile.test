@@ -46,8 +46,18 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # `chromium` is the binary name test_public_page_csp.py:52 resolves through
 # shutil.which. Do not swap in a package that installs under a different name
 # without updating that candidate list.
+#
+# rsync is here for tests/test_protected_paths.py, which shells out to the
+# real binary rather than mocking asyncio.create_subprocess_exec -- the task
+# that added it asked for proof against real rsync, not another assertion
+# about argv. Those tests skip (RSYNC = shutil.which("rsync")) rather than
+# error when the binary is missing, matching test_public_page_csp's NODE/
+# CHROME handling above, so this line is what makes them actually run here
+# instead of silently skipping. This is otherwise a `sync/Dockerfile` package
+# (it installs rsync too, for the real service) rather than a `developer`
+# one; noted in the PR that added it for whoever owns this file next.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y chromium \
+ && apt-get install --no-install-recommends -y chromium rsync \
  && rm -rf /var/lib/apt/lists/*
 
 # Both requirement sets in ONE pip invocation, deliberately.

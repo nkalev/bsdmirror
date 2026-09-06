@@ -292,6 +292,35 @@ Every other non-zero exit is a failure outright.
 **A failed sync no longer clears "last synced".** The timestamp records when the
 mirror was last known good, which is the one thing worth keeping when a sync fails.
 
+### Protected releases
+
+Every sync passes `--delete --delete-delay`, so the mirror is a faithful copy of
+upstream — including faithfully removing a release the day upstream stops
+carrying it. OpenBSD supports "current + previous"; the two point releases before
+that are already end-of-life and gone from upstream's own tree the moment someone
+there runs the prune, with nothing left here afterwards but a `files_deleted`
+count on a job row.
+
+`sync/protected_paths.py` is a plain, checked-in list of path prefixes, per
+mirror, that are exempt from that deletion. It becomes `-f "P <pattern>"` rsync
+filter rules: a protected path still receives file changes and new files for as
+long as upstream keeps it, and simply stops being something `--delete` can ever
+remove locally. It is **not** a setting — there is no admin-panel field or
+environment variable for it. The list is data an operator reads as a diff, the
+same way the three upstream URLs already are, not a value edited at runtime.
+
+**The current release on each mirror is deliberately not protected.** Protecting
+it would block a legitimate upstream deletion — a pulled package, a re-spun ISO,
+a security erratum replacing content in place — which is exactly the faithful
+mirroring this file otherwise leaves alone. Only trees that are actually done
+changing are listed.
+
+Every entry in the file has to be read to know what is currently protected;
+that is the point. As of this change: OpenBSD 7.5–7.8, NetBSD 7.2/8.3/9.0/9.5/
+10.0/10.1/11.0_RC7, and three FreeBSD releases under `releases/` (14.3, 14.4,
+15.0), matched with `**` because the same release exists at different depths
+depending on architecture.
+
 ### Abandoned syncs
 
 If the sync container stops mid-`rsync` — OOM kill, host reboot, `SIGKILL` — the

@@ -449,4 +449,5 @@ async def run_job(service, mirror):
         name="OpenBSD",
         upstream=mirror["upstream"],
         local_path=mirror["local_path"],
+        mirror_type=MirrorType.OPENBSD,
     )

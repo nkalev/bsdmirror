@@ -546,7 +546,7 @@ def test_sync_service_does_not_import_base():
     # the schema names this service touches, and specifically that Base is not
     # among them.
     assert from_shared.get("shared.models") == {
-        "Mirror", "MirrorStatus", "Setting", "SyncJob", "SyncStatus"
+        "Mirror", "MirrorStatus", "MirrorType", "Setting", "SyncJob", "SyncStatus"
     }
 
 
@@ -598,6 +598,7 @@ def test_both_services_see_the_identical_class_objects():
     assert sync_service.SyncJob is SyncJob
     assert sync_service.Setting is Setting
     assert sync_service.MirrorStatus is MirrorStatus
+    assert sync_service.MirrorType is MirrorType
     assert sync_service.SyncStatus is SyncStatus
 
     from app.core.database import Base as backend_base
