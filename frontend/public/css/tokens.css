@@ -70,12 +70,25 @@
     --c-slate-600: #4A4E69;
     --c-slate-500: #606078;
     --c-slate-400: #8D8DA0;
+    /* Exact midpoint of slate-400/slate-300. Added for dark-theme --text-muted,
+       which needs something lighter than slate-400 (fails at 4.29:1 on the
+       admin surface's --bg-tertiary) without being as bright as slate-300
+       (already spoken for by --text-secondary -- reusing it here would make
+       "muted" and "secondary" the same colour). See the WCAG note on
+       --text-muted below. */
+    --c-slate-350: #9696AC;
     --c-slate-300: #A0A0B8;
     --c-slate-50: #E8E8F0;
 
     /* Brand accents */
     --c-orange-500: #F48C06;
     --c-orange-600: #E85D04;
+    /* Lighter than --c-red-500 on purpose: red-500 only reaches ~3.6-3.7:1
+       against the admin surface's dark backgrounds -- enough for a 3px
+       border or a small dot (3:1) but not for text (4.5:1). Text duty only;
+       see --status-error-text below. Matches Tailwind's red-400, chosen
+       because it is a known-legible shade rather than an arbitrary one. */
+    --c-red-400: #F87171;
     --c-red-500: #EF4444;
     --c-red-700: #D62828;
     --c-amber-400: #E8B059;
@@ -128,6 +141,44 @@
     --status-error: var(--c-red-500);
     --status-info: var(--c-sky-500);
 
+    /* status-error rendered as TEXT on the admin surface's dark backgrounds
+       (a sync-log error line, an "error" badge label). --status-error itself
+       stays red-500 for the roles it already covers at 3:1 -- borders, the
+       3px toast rail, small dots -- changing its value would touch those
+       too. This is additive, for the one role red-500 cannot cover: 4.5:1
+       text. Not consumed by the public site, which never renders
+       status-error as text. */
+    --status-error-text: var(--c-red-400);
+
+    /* Solid, precomputed equivalents of what a 15-20% status-colour tint over
+       the admin surface's --bg-card used to look like, for the three status
+       badges/pills that render a coloured label on a soft coloured chip.
+       Precomputed rather than left as a live rgba() tint because an rgba()
+       tint's contrast depends on whatever is behind it -- and something IS,
+       reliably: `tr:hover td` repaints the row to --bg-tertiary, which is
+       lighter than --bg-card, and every one of the three tints measured
+       below 4.5:1 for its own text against that lighter backdrop. A solid
+       colour has no backdrop to depend on. Recompute by hand if the inputs
+       below change (--bg-card, or the status colour/alpha):
+         --status-healthy-bg: #22c55e at 20% over --bg-card (#1A1A2E)
+         --status-syncing-bg: #F59E0B at 20% over --bg-card (#1A1A2E)
+         --status-error-bg:   --c-red-400 at 20% over --bg-card (#1A1A2E) */
+    --status-healthy-bg: #1C3C38;
+    --status-syncing-bg: #463427;
+    --status-error-bg: #462B3B;
+
+    /* Foreground for text/glyphs painted on a solid --accent-primary or
+       --status-error fill (primary buttons, the active sidebar item, the
+       user avatar, the danger button). White fails all of these: as low as
+       2.44:1 on --accent-primary in dark/admin. --text-primary does not
+       work either -- it is theme-dependent and in dark/admin it is a light
+       colour, which has the same problem as white. --c-navy-900 clears
+       4.5:1 against every accent/status fill these components use, in every
+       theme, because those fills are bright/mid-luminance oranges and reds
+       that dark ink reads on far better than white does (the same reason
+       safety-orange signage is printed with black text, not white). */
+    --text-on-accent: var(--c-navy-900);
+
     /* BSD distribution identity */
     --freebsd-color: var(--c-freebsd);
     --netbsd-color: var(--c-netbsd);
@@ -146,7 +197,12 @@
 
     --text-primary: var(--c-navy-800);
     --text-secondary: var(--c-slate-600);
-    --text-muted: var(--c-slate-400);
+    /* slate-500, not slate-400: slate-400 (the original value) tops out at
+       3.26:1 against --bg-card and drops to 2.62:1 against --bg-tertiary --
+       fails 4.5:1 everywhere it is actually used as text. slate-500 clears
+       4.5:1 against every surface background this token is used on,
+       including the worst case, --bg-tertiary, at 4.92:1. */
+    --text-muted: var(--c-slate-500);
 
     --accent-primary: var(--c-orange-600);
     --accent-secondary: var(--c-red-700);
@@ -179,7 +235,15 @@
 
     --text-primary: var(--c-slate-50);
     --text-secondary: var(--c-slate-300);
-    --text-muted: var(--c-slate-500);
+    /* slate-350, not slate-500: slate-500 (the original value, and still
+       correct for light theme above) only reaches 2.29:1 against this
+       theme's --bg-tertiary -- the pairing this file's PR notes originally
+       flagged. slate-350 clears 4.5:1 against every surface background this
+       token is used on, including that worst case, at 4.82:1, while staying
+       visibly less prominent than --text-secondary (4.82:1 vs
+       --text-secondary's 5.46:1 on the same background). Also read by the
+       admin surface, which does not override --text-muted. */
+    --text-muted: var(--c-slate-350);
 
     --accent-primary: var(--c-orange-500);
     --accent-secondary: var(--c-red-500);
