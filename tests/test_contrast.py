@@ -598,7 +598,7 @@ def test_text_on_accent_mutation_breaks_an_admin_fill():
         "--text-on-accent: var(--c-navy-900);", "--text-on-accent: var(--c-white);"
     )
     _, _, admin = build_themes(mutated_text)
-    results = dict((cid, ratio) for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin))
+    results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
     assert results[".nav-item.active"] < 4.5
     assert results[".btn-primary"] < 4.5
     assert results[".user-avatar"] < 4.5
@@ -610,7 +610,7 @@ def test_status_error_text_mutation_breaks_the_error_badge():
         "--status-error-text: var(--c-red-400);", "--status-error-text: var(--c-red-500);"
     )
     _, _, admin = build_themes(mutated_text)
-    results = dict((cid, ratio) for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin))
+    results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
     assert results[".status-badge.error"] < 4.5
     assert results[".log-pre-error"] < 4.5
 
