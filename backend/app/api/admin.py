@@ -2,7 +2,7 @@
 Admin API endpoints.
 """
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Annotated, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status, Request
@@ -14,7 +14,9 @@ import structlog
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.disk import get_disk_usage
+from app.core.protected_paths import protected_paths_view
 from app.core.security import hash_password_async
+from app.core.sync_failures import group_failure_incidents, mirror_failure_summary
 from shared.models import (
     AuditLog,
     Mirror,
@@ -384,6 +386,105 @@ async def get_sync_job_logs(
         triggered_by=job.triggered_by,
         created_at=job.created_at,
     )
+
+
+# ===========================================
+# Cross-Mirror Sync Failures
+# ===========================================
+
+def _incident_response(incident: dict, mirrors_by_id: dict[int, Mirror]) -> dict:
+    """Attach a display name/type to a group_failure_incidents() row and make
+    its datetimes JSON-friendly.
+
+    Falls back to a labelled placeholder for a mirror_id with no matching
+    row rather than raising: nothing in this API deletes a Mirror today, but
+    a failure endpoint is exactly the wrong place to 500 over a lookup that
+    is merely cosmetic.
+    """
+    mirror = mirrors_by_id.get(incident["mirror_id"])
+    return {
+        "mirror_id": incident["mirror_id"],
+        "mirror_name": mirror.name if mirror else f"(deleted mirror #{incident['mirror_id']})",
+        "mirror_type": mirror.mirror_type.value if mirror else None,
+        "error_message": incident["error_message"],
+        "occurrences": incident["occurrences"],
+        "first_seen": incident["first_seen"].isoformat(),
+        "last_seen": incident["last_seen"].isoformat(),
+        "latest_job_id": incident["latest_job_id"],
+    }
+
+
+@router.get("/sync-failures")
+async def get_sync_failures(
+    current_user: Annotated[User, Depends(get_current_user)],
+    days: Annotated[int, Query(ge=1, le=365)] = 30,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Recent sync failures across every mirror, with the error text.
+
+    Sync history was previously readable only one mirror at a time (GET
+    /api/mirrors/{id}/sync-history). That shape hid a real incident: 101
+    FAILED rows, split by mirror, that only read as a two-month OpenBSD
+    outage once someone ran a GROUP BY across all of them. This is that
+    GROUP BY, standing view. See app.core.sync_failures for the aggregation.
+
+    `incidents` collapses repeated identical (mirror, error_message) failures
+    into one row with a count -- the same outage would otherwise be ~62
+    near-identical rows -- and `by_mirror` puts a completed count beside each
+    mirror's failures, because a failure count alone does not say whether a
+    mirror is dying or just had one bad night.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    jobs_result = await db.execute(
+        select(SyncJob)
+        .where(SyncJob.created_at >= cutoff)
+        .order_by(SyncJob.created_at.asc(), SyncJob.id.asc())
+    )
+    jobs = jobs_result.scalars().all()
+
+    mirrors_result = await db.execute(select(Mirror))
+    mirrors = mirrors_result.scalars().all()
+    mirrors_by_id = {m.id: m for m in mirrors}
+
+    by_mirror = mirror_failure_summary(jobs, mirrors)
+    failed_jobs = [job for job in jobs if job.status == SyncStatus.FAILED]
+    incidents = group_failure_incidents(failed_jobs)[:limit]
+
+    return {
+        "period_days": days,
+        "totals": {
+            "failed": sum(m["failed"] for m in by_mirror),
+            "completed": sum(m["completed"] for m in by_mirror),
+        },
+        "by_mirror": by_mirror,
+        "incidents": [_incident_response(incident, mirrors_by_id) for incident in incidents],
+    }
+
+
+# ===========================================
+# Protected Release Paths (read-only)
+# ===========================================
+
+@router.get("/protected-paths")
+async def get_protected_paths(
+    current_user: Annotated[User, Depends(get_current_user)], db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Which release trees are currently exempt from rsync `--delete`.
+
+    Reads the checked-in sync/protected_paths.py filter list -- see
+    app.core.protected_paths for why this is a maintained snapshot rather
+    than a direct import, and the test that keeps the two honest.
+
+    Display only, deliberately. There is no PATCH for this: the list is
+    edited by changing sync/protected_paths.py, reviewed as a diff like any
+    other change to this repo, and is not operator-editable through this API.
+    """
+    result = await db.execute(select(Mirror))
+    mirrors = result.scalars().all()
+
+    return {"groups": protected_paths_view(mirrors)}
 
 
 # ===========================================

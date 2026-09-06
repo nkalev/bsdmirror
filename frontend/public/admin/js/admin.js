@@ -20,6 +20,8 @@ const state = {
     data: {
         dashboard: null,
         mirrors: null,
+        syncFailures: null,
+        protectedPaths: null,
         users: null,
         auditLogs: null,
         settings: null
@@ -149,6 +151,8 @@ const router = {
         login: { title: 'Login', requiresAuth: false, render: renderLoginPage },
         dashboard: { title: 'Dashboard', requiresAuth: true, render: renderDashboard },
         mirrors: { title: 'Mirrors', requiresAuth: true, render: renderMirrors },
+        'sync-failures': { title: 'Sync Failures', requiresAuth: true, render: renderSyncFailures },
+        'protected-paths': { title: 'Protected Paths', requiresAuth: true, render: renderProtectedPaths },
         users: { title: 'Users', requiresAuth: true, render: renderUsers, requiredRole: 'admin' },
         'audit-logs': { title: 'Audit Logs', requiresAuth: true, render: renderAuditLogs, requiredRole: 'admin' },
         settings: { title: 'Settings', requiresAuth: true, render: renderSettings }
@@ -240,6 +244,14 @@ function renderLayout(content, title) {
                         <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" data-nav="mirrors">
                             <span class="nav-item-icon">💾</span>
                             <span>Mirrors</span>
+                        </a>
+                        <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" data-nav="sync-failures">
+                            <span class="nav-item-icon">⚠️</span>
+                            <span>Sync Failures</span>
+                        </a>
+                        <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" data-nav="protected-paths">
+                            <span class="nav-item-icon">🔒</span>
+                            <span>Protected Paths</span>
                         </a>
                         ${isAdmin ? html`
                         <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" data-nav="users">
@@ -539,6 +551,158 @@ async function renderMirrors() {
                 </table>
             </div>
         </div>
+    `;
+}
+
+/**
+ * Recent sync failures across every mirror (GET /api/admin/sync-failures).
+ *
+ * The backend already collapses repeated identical (mirror, error_message)
+ * failures into one incident with an occurrence count -- see
+ * app.core.sync_failures -- so this renders that grouping rather than a raw
+ * per-job list. error_message is rsync's own stderr: untrusted text from an
+ * external process, capable of carrying paths, quotes and newlines, and it
+ * goes through the same html`` escaping as everything else in this file.
+ */
+async function renderSyncFailures() {
+    try {
+        state.data.syncFailures = await api.get('/admin/sync-failures');
+    } catch (error) {
+        return html`<div class="card"><p>Error loading sync failures: ${error.message}</p></div>`;
+    }
+
+    const d = state.data.syncFailures;
+
+    return html`
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-card-icon">❌</span>
+                </div>
+                <div class="stat-card-value">${d.totals.failed}</div>
+                <div class="stat-card-label">Failed (last ${d.period_days}d)</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-card-header">
+                    <span class="stat-card-icon">✅</span>
+                </div>
+                <div class="stat-card-value">${d.totals.completed}</div>
+                <div class="stat-card-label">Completed (last ${d.period_days}d)</div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h3 class="card-title">Failures by Mirror</h3>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Mirror</th>
+                            <th>Failed</th>
+                            <th>Completed</th>
+                            <th>Failure Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.by_mirror.map(m => html`
+                            <tr>
+                                <td><strong>${m.mirror_name}</strong></td>
+                                <td class="${m.failed > 0 ? 'u-text-error' : ''}">${m.failed}</td>
+                                <td>${m.completed}</td>
+                                <td>${m.failure_rate_percent != null ? m.failure_rate_percent + '%' : '--'}</td>
+                            </tr>
+                        `)}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="card u-mt-md">
+            <div class="card-header">
+                <h3 class="card-title">Recent Failure Incidents</h3>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Mirror</th>
+                            <th>Error</th>
+                            <th>Occurrences</th>
+                            <th>First Seen</th>
+                            <th>Last Seen</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${d.incidents.length ? d.incidents.map(inc => html`
+                            <tr>
+                                <td><strong>${inc.mirror_name}</strong></td>
+                                <td><code class="code-block">${inc.error_message || '(no error message recorded)'}</code></td>
+                                <td>${inc.occurrences.toLocaleString()}</td>
+                                <td>${formatDate(inc.first_seen)}</td>
+                                <td>${formatDate(inc.last_seen)}</td>
+                                <td>
+                                    <button class="btn btn-secondary btn-sm" data-action="viewSyncLogs" data-id="${inc.latest_job_id}">
+                                        View Logs
+                                    </button>
+                                </td>
+                            </tr>
+                        `) : html`<tr><td colspan="6">No sync failures in the last ${d.period_days} days</td></tr>`}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    `;
+}
+
+/**
+ * Which release trees are frozen against rsync --delete
+ * (GET /api/admin/protected-paths).
+ *
+ * Read-only by design -- see sync/protected_paths.py and
+ * app.core.protected_paths. There is no corresponding PATCH/POST action
+ * anywhere in this file; do not add one here.
+ */
+async function renderProtectedPaths() {
+    try {
+        state.data.protectedPaths = await api.get('/admin/protected-paths');
+    } catch (error) {
+        return html`<div class="card"><p>Error loading protected paths: ${error.message}</p></div>`;
+    }
+
+    const groups = state.data.protectedPaths.groups;
+
+    return html`
+        <div class="card">
+            <div class="u-pad-body">
+                <p class="u-text-muted u-text-sm">
+                    These release trees are exempt from rsync's <code>--delete</code> and
+                    survive even after upstream stops carrying them. This list is read-only
+                    here -- it is configured in <code>sync/protected_paths.py</code> and
+                    deployed with the sync service.
+                </p>
+            </div>
+        </div>
+
+        ${groups.map(g => html`
+        <div class="card u-mt-md">
+            <div class="card-header">
+                <h3 class="card-title">${g.mirror_names.length ? g.mirror_names.join(', ') : g.mirror_type}</h3>
+                <span class="u-text-muted u-text-sm">${g.patterns.length.toLocaleString()} protected</span>
+            </div>
+            ${g.patterns.length ? html`
+            <ul class="activity-list">
+                ${g.patterns.map(pattern => html`
+                    <li class="activity-item">
+                        <code>${pattern}</code>
+                    </li>
+                `)}
+            </ul>
+            ` : html`<p class="u-text-muted u-pad-body">No protected paths configured.</p>`}
+        </div>
+        `)}
     `;
 }
 

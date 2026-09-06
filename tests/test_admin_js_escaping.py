@@ -142,6 +142,10 @@ HARNESS_CHECKS = [
     "filesDeletedBadge leaves a count below the threshold unmarked",
     "renderDashboard escapes recent activity action and sync status end-to-end",
     "renderDashboard shows free disk space and flags high usage as a warning",
+    "renderSyncFailures escapes error_message and mirror name end-to-end",
+    "renderSyncFailures shows a placeholder when there are no incidents",
+    "renderProtectedPaths escapes pattern text and mirror names end-to-end",
+    "renderProtectedPaths shows every mirror type even when none are configured",
 ]
 
 

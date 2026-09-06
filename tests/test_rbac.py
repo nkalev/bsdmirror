@@ -72,11 +72,16 @@ MATRIX = [
          {"settings": {"sync_schedule": "30 5 * * *"}}),
 
     # --- Any authenticated user ------------------------------------------
-    # Note: these two are gated on get_current_user only, so a readonly account
-    # can read the dashboard and the full rsync output of any sync job.
+    # Note: these are gated on get_current_user only, so a readonly account
+    # can read the dashboard, the full rsync output of any sync job, the
+    # cross-mirror failure view and the protected-paths list.
     Case("dashboard", "GET", "/api/admin/dashboard",
          "get_current_user", frozenset(ROLES), 200),
     Case("sync-job-logs", "GET", "/api/admin/sync-jobs/{job_id}/logs",
+         "get_current_user", frozenset(ROLES), 200),
+    Case("sync-failures", "GET", "/api/admin/sync-failures",
+         "get_current_user", frozenset(ROLES), 200),
+    Case("protected-paths", "GET", "/api/admin/protected-paths",
          "get_current_user", frozenset(ROLES), 200),
 ]
 
