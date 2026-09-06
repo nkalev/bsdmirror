@@ -41,7 +41,7 @@ case "$rel" in
   *.css|frontend/public/*.html|frontend/public/img/*)
     owner="web-designer"
     gate="Both light and dark themes checked, mobile + desktop, WCAG AA contrast, no new hardcoded values outside the tokens."
-    trap_note="Two independent token sets exist: style.css and admin.css each declare their own token set (32 and 27 unique properties), diverging on the same concepts (--card-bg vs --bg-card). Both @import Google Fonts, which the production CSP does not permit." ;;
+    trap_note="Tokens live once, in frontend/public/css/tokens.css; style.css and admin.css consume it and must not declare their own. Fonts are self-hosted via @font-face in fonts.css pointing at /fonts/ -- do not reintroduce a Google @import. The CSP is now style-src 'self' with NO 'unsafe-inline', so an inline style= or <style> block will not render at all; use a class. error.css restates the dark mapping for the no-JS error pages and is pinned against tokens.css by test." ;;
   frontend/public/js/*)
     owner="developer"
     gate="Behavior verified in the browser; escaping via the helper."
