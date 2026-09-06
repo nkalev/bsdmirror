@@ -27,7 +27,7 @@ const CHROME = process.argv[3]
 
 // Copied verbatim from the `map $host $csp_policy` block in nginx/nginx.conf.
 // If that string changes, this test is testing the wrong policy.
-const CSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; "
     + "img-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; "
     + "frame-src 'none'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
