@@ -1,0 +1,115 @@
+/* BSD Mirror - Static Error Pages (404, 50x) */
+/* Shared by frontend/public/404.html and frontend/public/50x.html.
+   Design tokens live in css/tokens.css, linked ahead of this file.
+   Do not declare custom properties here.
+
+   Deliberately NOT linking css/style.css or css/fonts.css:
+
+   - style.css is the full site stylesheet (header, hero, dashboard cards,
+     ~680 lines). These two pages render one heading, one paragraph and one
+     link; loading it would be the "chases four stylesheets" failure mode
+     the 50x page specifically cannot afford when the backend is down.
+   - fonts.css declares the self-hosted @font-face rules for 'Inter'. Without
+     it, var(--font-sans) simply falls through to its system-font fallbacks
+     below -- no failed request, no unstyled flash, just a plain sans-serif.
+
+   Both files are still served solely as static files by nginx off the same
+   document root as this stylesheet (nginx/sites/production/production.conf),
+   so neither depends on the backend being up.
+
+   No [data-theme="dark"] rules appear below on purpose: these pages carry no
+   script, nothing ever sets data-theme on <html>, and every color here is a
+   custom property that tokens.css already resolves per theme. Light is what
+   renders, and light is the deliberate no-JS default (tokens.css :root, and
+   the same default main.js falls back to when localStorage is empty). */
+
+body {
+    font-family: var(--font-sans);
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    transition: background-color var(--transition-base), color var(--transition-base);
+}
+
+.error-content {
+    text-align: center;
+    padding: 2rem;
+}
+
+.error-content h1 {
+    /* Large text (3rem, well over the 24px/18.66px-bold WCAG threshold), so
+       the 3:1 large-text ratio applies rather than 4.5:1: 3.40:1 in light,
+       7.89:1 in dark. See tests/../PR notes for the calculation. */
+    color: var(--accent-primary);
+    font-size: 3rem;
+    margin-bottom: 0.5rem;
+}
+
+.error-content p {
+    /* Normal-size text (1.1rem): needs 4.5:1. --text-muted only reaches
+       3.16:1 on --bg-primary in both themes and would fail here, so this
+       uses --text-secondary instead (7.88:1 light, 7.54:1 dark). */
+    color: var(--text-secondary);
+    font-size: 1.1rem;
+}
+
+.error-content a {
+    /* Also normal-size text needing 4.5:1. --accent-primary (the heading
+       color) only reaches 3.40:1 in light, which fails here even though it
+       passed for the heading above -- same token, different requirement.
+       --accent-secondary passes in both themes (4.86:1 light, 5.12:1 dark)
+       and keeps the link inside the brand's orange/red accent family. */
+    color: var(--accent-secondary);
+    text-decoration: none;
+}
+
+.error-content a:hover {
+    text-decoration: underline;
+}
+
+@media (max-width: 768px) {
+    .error-content h1 {
+        font-size: 2.25rem;
+    }
+}
+
+/* ---------------------------------------------------------------------------
+   OS dark preference
+   ---------------------------------------------------------------------------
+   These pages ship no <script>, and this codebase picks its theme purely in
+   JavaScript -- main.js sets data-theme on <html>, and there is no
+   prefers-color-scheme rule anywhere else in frontend/. So without this block
+   an error page renders tokens.css's :root (light) on every machine, including
+   one whose entire desktop is dark. That is not "theme-aware"; it is "always
+   light, in tokens", which is a different and less useful thing.
+
+   The five tokens below are exactly the ones these pages consume, mirroring
+   tokens.css's [data-theme="dark"] block. They reference the same --c-* palette
+   entries rather than restating hex, so a palette change still flows from one
+   definition. test_error_page_dark_mapping_matches_tokens_css asserts the two
+   agree -- add a token to an error page and you must add it in both places or
+   that test fails.
+
+   :not([data-theme="light"]) so that an explicitly chosen light theme still
+   wins if these pages ever gain scripting. Specificity (0,2,0) also puts this
+   above tokens.css's bare :root (0,1,0), which is what makes it apply at all.
+
+   Contrast in this mode, against --bg-primary #0D0D1A:
+     --text-primary    #E8E8F0  15.82:1
+     --text-secondary  #A0A0B8   7.54:1
+     --accent-primary  #F48C06   7.89:1  (3rem heading, needs 3.0)
+     --accent-secondary #EF4444   5.12:1  (link, needs 4.5)
+   --------------------------------------------------------------------------- */
+@media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+        --bg-primary: var(--c-navy-900);
+        --text-primary: var(--c-slate-50);
+        --text-secondary: var(--c-slate-300);
+        --accent-primary: var(--c-orange-500);
+        --accent-secondary: var(--c-red-500);
+    }
+}
