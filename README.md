@@ -292,6 +292,21 @@ Every other non-zero exit is a failure outright.
 **A failed sync no longer clears "last synced".** The timestamp records when the
 mirror was last known good, which is the one thing worth keeping when a sync fails.
 
+**Failures are visible across mirrors, not just within one.** Sync history was
+previously readable only one mirror at a time (`GET
+/api/mirrors/{id}/sync-history`), and that shape hid a real incident: 101
+`FAILED` rows sat in the database, split three ways by mirror, and the pattern —
+two months of a dead OpenBSD upstream, ~30 failures a month — only became visible
+once someone ran a `GROUP BY` across all of them. The admin panel's **Sync
+Failures** page and its `GET /api/admin/sync-failures` endpoint (any
+authenticated role; `days` and `limit` query params, defaulting to the last 30
+days and 50 incidents) are that `GROUP BY`, standing: repeated identical
+failures on a mirror collapse into one incident with an occurrence count and a
+first/last-seen span, rather than a raw, unreadable list of near-duplicate rows,
+and each mirror's failure count is shown next to its completed count in the same
+window — a failure count alone does not say whether a mirror is dying or just
+had one bad night.
+
 ### Protected releases
 
 Every sync passes `--delete --delete-delay`, so the mirror is a faithful copy of
@@ -307,9 +322,21 @@ be a release wipe rather than ordinary `--delete` churn.
 mirror, that are exempt from that deletion. It becomes `-f "P <pattern>"` rsync
 filter rules: a protected path still receives file changes and new files for as
 long as upstream keeps it, and simply stops being something `--delete` can ever
-remove locally. It is **not** a setting — there is no admin-panel field or
-environment variable for it. The list is data an operator reads as a diff, the
-same way the three upstream URLs already are, not a value edited at runtime.
+remove locally. It is **not** a setting — there is no environment variable for
+it, and the admin panel cannot change it. The list is data an operator reads as
+a diff, the same way the three upstream URLs already are, not a value edited at
+runtime.
+
+**It is visible, though, not just diff-able.** The admin panel's **Protected
+Paths** page and its `GET /api/admin/protected-paths` endpoint (any
+authenticated role) show which trees are currently frozen without needing
+server access to read the Python file — read-only, on purpose: there is no
+corresponding PATCH, and adding one is not the fix for "an operator cannot see
+this." The backend cannot import `sync/protected_paths.py` directly (that
+package is not part of the backend's Docker image), so `app/core/protected_paths.py`
+keeps a hand-maintained copy of the same list for display, checked against the
+deployed one by `tests/test_admin_protected_paths_view.py` on every test run —
+update both together, `sync/protected_paths.py` first.
 
 **The current release on each mirror is deliberately not protected.** Protecting
 it would block a legitimate upstream deletion — a pulled package, a re-spun ISO,

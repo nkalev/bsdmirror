@@ -46,8 +46,8 @@ sandbox.globalThis = sandbox;
 const EPILOGUE = `
 ;({ html, escapeHtml, interpolateHtml, trustedHtml, setHtml, SafeHtml,
     renderLayout, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
-    renderDashboard, filesDeletedBadge, LARGE_DELETION_THRESHOLD,
-    DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
+    renderDashboard, renderSyncFailures, renderProtectedPaths, filesDeletedBadge,
+    LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
 `;
 
 let mod = null;
@@ -500,6 +500,86 @@ async function main() {
 
         const high = await renderWith(mod.renderDashboard, payloadAt(mod.DISK_USAGE_WARNING_PERCENT));
         assert(high.includes('stat-card-trend down'), `expected a 'down' trend at/above the warning threshold: ${high}`);
+        return '';
+    });
+
+    // --- Cross-mirror sync failures and protected paths ---------------------
+    //
+    // error_message is rsync's own stderr -- untrusted text from an external
+    // process, capable of carrying paths, quotes and newlines -- so it gets
+    // the same hostile-payload treatment as user-supplied fields elsewhere.
+    // The protected-paths fields are not attacker-reachable today (no
+    // endpoint lets anyone edit a Mirror's name or
+    // sync/protected_paths.py's patterns), but they are still routed through
+    // html`` like everything else in this file, so they are checked the
+    // same way rather than assumed safe because of where they come from.
+
+    await check('renderSyncFailures escapes error_message and mirror name end-to-end', async () => {
+        const out = await renderWith(mod.renderSyncFailures, {
+            period_days: 30,
+            totals: { failed: 32, completed: 4 },
+            by_mirror: [{
+                mirror_id: 3,
+                mirror_name: '<img src=x onerror=alert(1)>',
+                mirror_type: 'openbsd',
+                failed: 32,
+                completed: 4,
+                failure_rate_percent: 88.9
+            }],
+            incidents: [{
+                mirror_id: 3,
+                mirror_name: '<img src=x onerror=alert(1)>',
+                mirror_type: 'openbsd',
+                error_message: '<script>alert(1)</script>\nrsync: "/pub/OpenBSD/7.9" failed',
+                occurrences: 32,
+                first_seen: '2026-07-01T04:00:00Z',
+                last_seen: '2026-08-30T04:00:00Z',
+                latest_job_id: 615
+            }]
+        });
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(tagNames(out).includes('code'), 'the incident row did not render at all');
+        assert(out.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'error_message not escaped as text');
+        assert(out.includes('&quot;/pub/OpenBSD/7.9&quot;'), 'embedded quotes in error_message not escaped');
+        return '';
+    });
+
+    await check('renderSyncFailures shows a placeholder when there are no incidents', async () => {
+        const out = await renderWith(mod.renderSyncFailures, {
+            period_days: 30,
+            totals: { failed: 0, completed: 10 },
+            by_mirror: [],
+            incidents: []
+        });
+        assert(out.includes('No sync failures in the last 30 days'), `expected the empty state, got ${out}`);
+        return '';
+    });
+
+    await check('renderProtectedPaths escapes pattern text and mirror names end-to-end', async () => {
+        const out = await renderWith(mod.renderProtectedPaths, {
+            groups: [{
+                mirror_type: 'openbsd',
+                mirror_names: ['<img src=x onerror=alert(1)>'],
+                patterns: ['<script>alert(1)</script>', '"><svg onload=alert(1)>/***']
+            }]
+        });
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(tagNames(out).includes('code'), 'the pattern list did not render at all');
+        assert(out.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'pattern not escaped as text');
+        return '';
+    });
+
+    await check('renderProtectedPaths shows every mirror type even when none are configured', async () => {
+        const out = await renderWith(mod.renderProtectedPaths, {
+            groups: [
+                { mirror_type: 'freebsd', mirror_names: [], patterns: [] },
+                { mirror_type: 'netbsd', mirror_names: ['NetBSD'], patterns: ['/NetBSD-9.5/***'] }
+            ]
+        });
+        assert(out.includes('No protected paths configured.'), `expected the empty state, got ${out}`);
+        assert(out.includes('freebsd'), 'the unconfigured mirror type did not render at all');
         return '';
     });
 
