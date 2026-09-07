@@ -672,10 +672,52 @@ jobs:
             -e POSTGRES_PASSWORD="$PGPASSWORD" \
             -v "$PWD/backend/init.sql:/docker-entrypoint-initdb.d/init.sql:ro" \
             "$POSTGRES_IMAGE"
-          for i in $(seq 1 60); do
-            if docker exec ci-pg pg_isready -U bsdmirrors -d bsdmirrors >/dev/null 2>&1; then
-              echo "postgres ready after ${i}s"; break
+          # Wait for the REAL server, not the temporary one.
+          #
+          # backend/init.sql is mounted into /docker-entrypoint-initdb.d/, and
+          # the official postgres entrypoint handles that by starting a
+          # TEMPORARY server, running the init scripts against it, then
+          # SHUTTING IT DOWN and starting the real one. A single successful
+          # pg_isready can therefore be the temporary server, and the next
+          # command lands in the restart gap:
+          #
+          #     postgres ready after 2s
+          #     /var/run/postgresql:5432 - rejecting connections
+          #     ##[error]Process completed with exit code 1
+          #
+          # Not a flake. This failed two separate PRs, both dismissed as CI
+          # being unreliable. Reproduced locally by polling pg_isready every
+          # 0.3s against this exact image with an init script mounted:
+          #
+          #     .RRRRRR.RRRRRRRRRRRRRRRR...
+          #      ^^^^^^ ^
+          #      temp   the restart
+          #
+          # Counting consecutive successes would only narrow the window, not
+          # close it: a slower init script keeps the temporary server up longer
+          # and any fixed count eventually fits inside it. That is a
+          # timing-based fix to a timing bug.
+          #
+          # The entrypoint prints this line exactly once, after the temporary
+          # server is shut down and before the real one starts. Waiting for it
+          # is deterministic regardless of how long the init scripts take.
+          marker="PostgreSQL init process complete; ready for start up."
+          for i in $(seq 1 120); do
+            if docker logs ci-pg 2>&1 | grep -qF "$marker"; then
+              echo "init scripts finished after ${i}s; the temporary server is gone"
+              break
             fi
+            sleep 1
+          done
+          if ! docker logs ci-pg 2>&1 | grep -qF "$marker"; then
+            echo "::error::postgres never printed \"$marker\" in 120s. The container is always created fresh here with an init script mounted, so that line is expected on every run; its absence means the entrypoint did not get as far as starting the real server."
+            docker logs ci-pg 2>&1 | tail -40
+            exit 1
+          fi
+          # Only now is pg_isready answering for the server that will still be
+          # running when the next step connects.
+          for i in $(seq 1 60); do
+            docker exec ci-pg pg_isready -U bsdmirrors -d bsdmirrors >/dev/null 2>&1 && break
             sleep 1
           done
           docker exec ci-pg pg_isready -U bsdmirrors -d bsdmirrors
