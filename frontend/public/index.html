@@ -289,7 +289,13 @@
         <div class="container">
             <div class="footer-content">
                 <p>&copy; 2026 BSD Mirror. Open source and community-driven.</p>
-                <p class="footer-version">v1.0.1</p>
+                <!-- Populated at runtime by main.js (FooterVersion) from GET /api/health's
+                     "version" field -- GIT_SHA-BUILD_DATE, baked into the backend image at
+                     build time. Left empty here rather than templated: this file is static
+                     and bind-mounted with no build step (see docker-compose.yml), so there is
+                     nowhere to render a value into it before nginx serves it. Left empty, not
+                     filled with a placeholder, if the API is unreachable -- see FooterVersion.load(). -->
+                <p class="footer-version"></p>
             </div>
         </div>
     </footer>

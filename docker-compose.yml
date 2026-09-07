@@ -89,6 +89,16 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      # GIT_SHA/BUILD_DATE: which commit is actually running, so /api/health
+      # and the public footer can report it instead of a hand-maintained
+      # version string (see backend/Dockerfile). scripts/deploy.sh exports
+      # both before `docker compose build`, because it already knows the SHA
+      # it is deploying. A bare `docker compose build`/`build_images` run by
+      # hand leaves them unset and the Dockerfile ARG defaults ("unknown")
+      # take over -- deliberately not a value that could pass for a real one.
+      args:
+        GIT_SHA: ${GIT_SHA:-unknown}
+        BUILD_DATE: ${BUILD_DATE:-unknown}
     container_name: bsdmirrors-backend
     restart: unless-stopped
     security_opt:

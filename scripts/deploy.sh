@@ -250,6 +250,8 @@ USAGE
 PHASE="startup"
 PREV_SHA=""
 TARGET_SHA=""
+GIT_SHA=""                                 # short form of TARGET_SHA; set by build_images()
+BUILD_DATE=""                              # UTC date of this run; set by build_images()
 
 on_exit() {
     local rc=$?
@@ -842,6 +844,21 @@ build_images() {
     # investigated -- and the migration below runs out of the image that was
     # just built, so the migration scripts and the code that needs them are
     # always from the same commit.
+
+    # GIT_SHA/BUILD_DATE: what the running system will report as its version
+    # (backend/Dockerfile bakes both into the image, app/core/config.py reads
+    # them at runtime). This script already resolved TARGET_SHA above to gate
+    # on its CI status; read it here rather than letting the image recompute
+    # it, which is exactly how index.html's hardcoded v1.0.1 and config.py's
+    # hardcoded 1.0.0 went out of step with each other and with reality in the
+    # first place. Exported, not passed on the command line below: docker
+    # compose build.args: in docker-compose.yml reads ${GIT_SHA:-unknown} and
+    # ${BUILD_DATE:-unknown} from THIS process's environment.
+    GIT_SHA=$(git rev-parse --short "$TARGET_SHA")
+    BUILD_DATE=$(date -u +%Y-%m-%d)
+    export GIT_SHA BUILD_DATE
+    info "reporting as GIT_SHA=$GIT_SHA BUILD_DATE=$BUILD_DATE"
+
     # shellcheck disable=SC2086  # SERVICES is a deliberate word-split list
     if ! run docker compose build $SERVICES; then
         PHASE="build-failed"
@@ -1189,6 +1206,49 @@ verify_api_health() {
         *'"status"'*'"healthy"'*) ok "GET /api/health -> 200 healthy (${waited}s)" ;;
         *) vfail "GET /api/health -> 200 but body is not healthy: $body" ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# The reported version, checked against the SHA this run actually built
+# ---------------------------------------------------------------------------
+#
+# "Did we deploy anything? I don't see any version change" -- asked after four
+# deploys that had all landed correctly, because nothing running said what it
+# was. GIT_SHA/BUILD_DATE (set in build_images(), above) are what this run
+# passed to `docker compose build`; if the container answering /api/health
+# reports anything else, the image serving traffic is not the one this script
+# just built -- the same class of "said DEPLOYED, wasn't" this script's other
+# verify_* functions exist to catch for nginx and for auth.
+verify_deployed_version() {
+    local opts body code reported expected
+    opts=$(curl_base)
+    expected="$GIT_SHA-$BUILD_DATE"
+
+    set +e
+    # shellcheck disable=SC2086
+    code=$(curl $opts -o /dev/null -w '%{http_code}' "$BASE_URL/api/health" 2>/dev/null)
+    # shellcheck disable=SC2086
+    body=$(curl $opts "$BASE_URL/api/health" 2>/dev/null)
+    set -e
+
+    if [ "$code" != "200" ]; then
+        vfail "GET $BASE_URL/api/health returned $code while checking the reported version (want 200)"
+        return 0
+    fi
+
+    reported=$(python3 -c '
+import json, sys
+try:
+    print(json.loads(sys.argv[1]).get("version", ""))
+except ValueError:
+    print("")
+' "$body" 2>/dev/null)
+
+    if [ "$reported" = "$expected" ]; then
+        ok "GET /api/health reports version $reported, matching this deploy"
+    else
+        vfail "GET /api/health reports version '$reported', expected '$expected' (this run's GIT_SHA-BUILD_DATE). Body: $body"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -1714,6 +1774,7 @@ verify_all() {
     verify_container_health "$HEALTH_TIMEOUT"
     verify_schema_at_head
     verify_api_health
+    verify_deployed_version
     verify_health_endpoint
     verify_login_roundtrip
     verify_jwt_roundtrip

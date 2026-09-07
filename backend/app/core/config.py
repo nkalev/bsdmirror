@@ -21,9 +21,31 @@ class Settings(BaseSettings):
     )
     
     # Application
-    VERSION: str = "1.0.0"
+    #
+    # GIT_SHA/BUILD_DATE come from the environment backend/Dockerfile bakes in
+    # (ARG GIT_SHA / ARG BUILD_DATE, promoted to ENV so they survive into the
+    # running container) rather than a hand-maintained constant. This field
+    # used to hold a hardcoded semantic-version string, one version number
+    # higher than a matching constant frontend/public/index.html hardcoded in
+    # its footer; neither had ever been bumped, and they already disagreed.
+    # Defaults are "unknown", not a placeholder that could pass for a real
+    # build (e.g. a fake-looking 0.0.0) -- a bare `docker build` with no
+    # --build-arg, which is what anyone building this image by hand gets,
+    # must not look like a deployed version.
+    GIT_SHA: str = Field(default="unknown")
+    BUILD_DATE: str = Field(default="unknown")
     DEBUG: bool = Field(default=False)
     LOG_LEVEL: str = Field(default="INFO")
+
+    @property
+    def VERSION(self) -> str:
+        """What this running process reports as its version everywhere:
+        settings.VERSION (this property), the FastAPI app's own `version=`,
+        the root endpoint, and /api/health and /api/health/detailed. One
+        property, so there is exactly one place either half can come from --
+        see the class docstring above.
+        """
+        return f"{self.GIT_SHA}-{self.BUILD_DATE}"
     
     # Database
     POSTGRES_HOST: str = Field(default="postgres")

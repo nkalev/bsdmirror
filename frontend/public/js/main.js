@@ -196,6 +196,36 @@ const MirrorStatus = {
     }
 };
 
+// Footer build/version display
+//
+// index.html no longer hardcodes a version string in .footer-version -- that
+// string (v1.0.1) and backend/app/core/config.py's old VERSION (1.0.0) had
+// already drifted from each other and from whatever was actually deployed.
+// The footer now asks the API, which reports GIT_SHA-BUILD_DATE baked into
+// the backend image at build time (see backend/Dockerfile), so there is
+// exactly one place either half of that string can come from.
+//
+// /api/health, not /api/health/detailed: the latter pings Postgres and Redis
+// on every call, and this runs on every page load to display a build stamp
+// that never changes between deploys. It should not cost a database round
+// trip, and a database blip should not blank out or misrepresent a value that
+// has nothing to do with the database.
+const FooterVersion = {
+    async load() {
+        const el = document.querySelector('.footer-version');
+        if (!el) return;
+
+        const data = await API.get('/health');
+
+        // API unreachable, or answered without a version: leave the element
+        // exactly as it started (empty). A blank line is honest; guessing, or
+        // repeating whatever was there before, is not.
+        if (!data || !data.version) return;
+
+        el.textContent = data.version;
+    }
+};
+
 // Toast notifications
 const Toast = {
     show(message, duration = 3000) {
@@ -255,6 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setHostname();
     bindCopyRsyncButtons();
     MirrorStatus.load();
+    FooterVersion.load();
 
     // Refresh status every 60 seconds
     setInterval(() => MirrorStatus.load(), 60000);
