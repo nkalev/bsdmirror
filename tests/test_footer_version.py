@@ -50,12 +50,12 @@ requires_node = pytest.mark.skipif(
     reason="node is not installed; the behavioural footer-version checks cannot run",
 )
 
-REQUIRED_SETTINGS_KWARGS = dict(
-    POSTGRES_PASSWORD="x",
-    REDIS_PASSWORD="x",
-    SECRET_KEY="x",
-    ADMIN_PASSWORD="x",
-)
+REQUIRED_SETTINGS_KWARGS = {
+    "POSTGRES_PASSWORD": "x",
+    "REDIS_PASSWORD": "x",
+    "SECRET_KEY": "x",
+    "ADMIN_PASSWORD": "x",
+}
 
 
 # ---------------------------------------------------------------------------
