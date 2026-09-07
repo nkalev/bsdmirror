@@ -629,6 +629,18 @@ body {
     margin: 0 auto;
 }
 
+/* .section-title / .section-subtitle default to text-align: center (see
+   above); Mirrors and Mirror Status keep that. The About heading now lives
+   inside .about-content, on the same 700px measure as .about-text below,
+   so it reads on one left-aligned axis with the body copy instead of
+   floating centred above ragged-left prose. Scoped to this section's own
+   wrapper via the child combinator, not by editing the shared classes'
+   text-align -- Mirrors/Status are untouched. */
+.about-content > .section-title,
+.about-content > .section-subtitle {
+    text-align: left;
+}
+
 .about-text p {
     color: var(--text-secondary);
     margin-bottom: 24px;
