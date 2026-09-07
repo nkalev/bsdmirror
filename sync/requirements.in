@@ -1,0 +1,24 @@
+# Direct dependencies for the sync image, hand-edited.
+#
+# requirements.txt is GENERATED from this file, constrained by the already
+# -compiled backend/requirements.txt so the eight packages both images use
+# (asyncpg, croniter, httpx, pydantic-settings, python-dotenv, redis,
+# sqlalchemy, structlog) -- and anything transitive underneath them -- land on
+# the exact versions backend already pinned, not just versions that happen to
+# satisfy both independently. Never hand-edit requirements.txt; regenerate it
+# with scripts/compile-requirements.sh. See that script's header for how and
+# when, and README.md#dependency-lockfiles for the short version.
+#
+# Every line below is a package sync_service.py imports or invokes directly.
+# Anything pulled in only transitively belongs in requirements.txt, never here.
+
+# Sync service dependencies
+asyncpg==0.29.0
+sqlalchemy[asyncio]==2.0.25
+redis==5.0.1
+pydantic-settings==2.1.0
+python-dotenv==1.2.3
+structlog==24.1.0
+croniter==2.0.1
+httpx==0.26.0
+aiohttp==3.14.3

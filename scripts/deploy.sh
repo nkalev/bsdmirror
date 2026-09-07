@@ -1421,7 +1421,12 @@ verify_bcrypt_pin() {
     # running the version requirements.txt asks for, not whatever the last
     # unpinned resolve happened to fetch.
     local pinned running
-    pinned=$(grep -m1 -E '^bcrypt==' backend/requirements.txt 2>/dev/null | cut -d= -f3 || true)
+    # -oE, not -E: backend/requirements.txt is hash-pinned now, so the
+    # matching line is "bcrypt==5.0.0 \" continuing onto indented
+    # --hash=... lines below. A plain -E match would carry that trailing
+    # " \" into $pinned and this check would fail on every deploy,
+    # forever, regardless of what is actually running.
+    pinned=$(grep -m1 -oE '^bcrypt==[^[:space:]]+' backend/requirements.txt 2>/dev/null | cut -d= -f3 || true)
     if [ -z "$pinned" ]; then
         warn "backend/requirements.txt has no exact 'bcrypt==' pin at this SHA; skipping the version check"
         return 0

@@ -62,7 +62,12 @@ jobs:
 
       - name: Install ruff at the version pinned in backend/requirements.txt
         run: |
-          pin="$(grep -E '^ruff==' backend/requirements.txt || true)"
+          # -oE, not -E: backend/requirements.txt is hash-pinned now, so the
+          # matching line is "ruff==0.2.1 \" continuing onto indented
+          # --hash=... lines below. A plain -E match would hand pip the
+          # trailing " \" as part of the version and fail to parse; -oE with
+          # a run of non-space characters stops right after the version.
+          pin="$(grep -oE '^ruff==[^[:space:]]+' backend/requirements.txt || true)"
           if [ -z "$pin" ]; then
             echo "::error file=backend/requirements.txt::no 'ruff==' pin found. CI installs the pinned version on purpose and will not guess one."
             exit 1
@@ -92,7 +97,10 @@ jobs:
 
       - name: Install bandit at the version pinned in backend/requirements.txt
         run: |
-          pin="$(grep -E '^bandit==' backend/requirements.txt || true)"
+          # See the matching comment in the ruff job: -oE stops at the first
+          # pin, before the " \" that continues onto the --hash=... lines a
+          # hash-pinned requirements.txt now uses.
+          pin="$(grep -oE '^bandit==[^[:space:]]+' backend/requirements.txt || true)"
           if [ -z "$pin" ]; then
             echo "::error file=backend/requirements.txt::no 'bandit==' pin found. CI installs the pinned version on purpose and will not guess one."
             exit 1
@@ -166,12 +174,24 @@ jobs:
             backend/requirements.txt
             sync/requirements.txt
 
-      # The two files overlap on eight packages (asyncpg, croniter, httpx,
-      # pydantic-settings, python-dotenv, redis, sqlalchemy, structlog). Today
-      # they agree. This makes a future disagreement a named error here rather
-      # than a pip ResolutionImpossible wall further down, and it also catches
-      # the case pip cannot: one file pinning `redis==5.0.1` while the other
-      # says `redis>=5.0`, which resolves cleanly and drifts silently.
+      # The two files overlap on eight DIRECT packages (asyncpg, croniter,
+      # httpx, pydantic-settings, python-dotenv, redis, sqlalchemy,
+      # structlog). Today they agree. This makes a future disagreement a named
+      # error here rather than a pip ResolutionImpossible wall further down,
+      # and it also catches the case pip cannot: one file pinning
+      # `redis==5.0.1` while the other says `redis>=5.0`, which resolves
+      # cleanly and drifts silently.
+      #
+      # Both files are now hash-pinned, full transitive closures (see
+      # scripts/compile-requirements.sh), so the real overlap is bigger than
+      # eight -- 23 at the time of writing, once anyio, certifi, h11 and
+      # everything else the eight direct packages pull in underneath them is
+      # counted too -- and this check compares every shared name, not just
+      # those eight. It also now compares the recorded --hash= sets, not only
+      # the version: the two files are meant to be compiled together
+      # (sync/requirements.txt with backend/requirements.txt passed as a
+      # `pip-compile --constraint`), and a same-version-different-hash finding
+      # would mean they were not.
       #
       # It also fails on any direct dependency that is not pinned with `==`.
       # That is the CI half of pinning bcrypt: `bcrypt>=4.0.0` let a rebuild
@@ -186,29 +206,57 @@ jobs:
           def norm(name):                      # PEP 503
               return re.sub(r"[-_.]+", "-", name).lower()
 
+          def logical_lines(path):
+              # A hash-pinned requirements.txt (pip-compile --generate-hashes)
+              # spreads one requirement across several physical lines:
+              #     pkg==1.2.3 \
+              #         --hash=sha256:aaa... \
+              #         --hash=sha256:bbb...
+              # Reassemble those into one logical line per requirement, the
+              # same way pip reads a backslash continuation, so a `--hash=`
+              # fragment is never mistaken for a bare pip option line and a
+              # trailing `\` never ends up glued to the version.
+              buf, start = [], None
+              with open(path) as fh:
+                  for lineno, raw in enumerate(fh, 1):
+                      code = raw.split("#", 1)[0].rstrip("\n").rstrip()
+                      if not code:
+                          continue
+                      if start is None:
+                          start = lineno
+                      continued = code.endswith("\\")
+                      if continued:
+                          code = code[:-1].rstrip()
+                      buf.append(code)
+                      if not continued:
+                          yield start, " ".join(buf)
+                          buf, start = [], None
+              if buf:
+                  yield start, " ".join(buf)
+
           seen = defaultdict(list)
           problems = []
 
           for path in sys.argv[1:]:
-              with open(path) as fh:
-                  for lineno, raw in enumerate(fh, 1):
-                      line = raw.split("#", 1)[0].strip()
-                      if not line:
-                          continue
-                      if line.startswith("-"):
-                          problems.append("%s:%d: pip option lines are not supported "
-                                          "by this check: %s" % (path, lineno, line))
-                          continue
-                      m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*(.*)$", line)
-                      if not m:
-                          problems.append("%s:%d: cannot parse requirement: %s"
-                                          % (path, lineno, line))
-                          continue
-                      name, extras, spec = m.group(1), (m.group(2) or ""), m.group(3).strip()
-                      seen[norm(name)].append((path, lineno, extras, spec, line))
+              for lineno, joined in logical_lines(path):
+                  hashes = tuple(sorted(re.findall(r"--hash=(\S+)", joined)))
+                  line = re.sub(r"--hash=\S+", "", joined).strip()
+                  if not line:
+                      continue
+                  if line.startswith("-"):
+                      problems.append("%s:%d: pip option lines are not supported "
+                                      "by this check: %s" % (path, lineno, line))
+                      continue
+                  m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*(.*)$", line)
+                  if not m:
+                      problems.append("%s:%d: cannot parse requirement: %s"
+                                      % (path, lineno, line))
+                      continue
+                  name, extras, spec = m.group(1), (m.group(2) or ""), m.group(3).strip()
+                  seen[norm(name)].append((path, lineno, extras, spec, hashes, line))
 
           for name, entries in sorted(seen.items()):
-              for path, lineno, _extras, spec, line in entries:
+              for path, lineno, _extras, spec, _hashes, line in entries:
                   if not spec.startswith("=="):
                       problems.append(
                           "%s:%d: '%s' is not pinned with '=='; found '%s'. A floating "
@@ -216,15 +264,26 @@ jobs:
                           "version nobody reviewed."
                           % (path, lineno, line, spec or "(no specifier)"))
 
-          # Extras may legitimately differ between the two trees. The version may not.
+          # Extras may legitimately differ between the two trees. The version
+          # -- and now that both files are hash-pinned, the resolved artifact
+          # set -- may not.
           for name, entries in sorted(seen.items()):
               if len(entries) < 2:
                   continue
-              if len({spec for (_p, _l, _e, spec, _r) in entries}) > 1:
-                  where = "; ".join("%s:%d %s" % (p, l, r) for (p, l, _e, _s, r) in entries)
+              if len({spec for (_p, _l, _e, spec, _h, _r) in entries}) > 1:
+                  where = "; ".join("%s:%d %s" % (p, l, r) for (p, l, _e, _s, _h, r) in entries)
                   problems.append(
                       "'%s' is declared in more than one requirements file with "
                       "different versions: %s -- update every copy in the same commit."
+                      % (name, where))
+                  continue
+              if len({h for (_p, _l, _e, _s, h, _r) in entries}) > 1:
+                  where = "; ".join("%s:%d" % (p, l) for (p, l, _e, _s, _h, _r) in entries)
+                  problems.append(
+                      "'%s' pins the same version in more than one requirements file "
+                      "but the recorded hashes disagree (%s) -- the locks were not "
+                      "compiled together; regenerate sync/requirements.txt against "
+                      "backend/requirements.txt with scripts/compile-requirements.sh."
                       % (name, where))
 
           shared = sorted(n for n, e in seen.items() if len(e) > 1)
@@ -235,7 +294,7 @@ jobs:
               print("::error::%s" % p)
           if problems:
               sys.exit(1)
-          print("all direct dependencies pinned, all shared pins agree")
+          print("all direct dependencies pinned, all shared pins and hashes agree")
           PYCHECK
 
       # sync/sync_service.py:15 does `from aiohttp import web` at module scope,
@@ -272,6 +331,14 @@ jobs:
           for path in sys.argv[1:]:
               for raw in open(path):
                   line = raw.split("#", 1)[0].strip()
+                  # A hash-pinned entry's first line ends "pkg==1.2.3 \" to
+                  # continue onto the `--hash=...` lines below; strip that
+                  # marker so `want` is the bare version below, not
+                  # "1.2.3 \" which could never match an installed version.
+                  # The `--hash=...` continuation lines themselves already
+                  # start with "-" and are skipped by the next check.
+                  if line.endswith("\\"):
+                      line = line[:-1].strip()
                   if not line or line.startswith("-"):
                       continue
                   m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)(?:\[[^\]]*\])?==(.+)$", line)
