@@ -23,9 +23,20 @@ HEALTH_CHECK_TIMEOUT = 5  # seconds
 
 @router.get("/health")
 async def health_check() -> Dict[str, str]:
-    """Basic health check endpoint."""
+    """Basic health check endpoint.
+
+    Carries "version" (settings.VERSION -- GIT_SHA-BUILD_DATE baked into the
+    image at build time, see app/core/config.py) rather than only the
+    dependency-free liveness fields below. It is deliberately not read from
+    /api/health/detailed for this: that endpoint pings Postgres and Redis on
+    every call, and the public footer (frontend/public/js/main.js) fetches
+    this endpoint on every page load just to display a build stamp that never
+    changes between deploys -- it should not cost a database round trip, and
+    it should not go degraded because Postgres is briefly unreachable.
+    """
     return {
         "status": "healthy",
+        "version": settings.VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 

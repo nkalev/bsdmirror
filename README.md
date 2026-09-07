@@ -208,6 +208,23 @@ Exit codes: `0` deployed and verified, `1` preflight error, `2` a gate
 refused and nothing was touched, `3` the deploy failed but the old containers
 are still serving, `4` the new code is live but failed verification.
 
+### Which commit is actually running
+
+`GET /api/health` reports a `version` field, and the public site's footer
+shows the same value, fetched from that endpoint at page load. It is
+`<short-sha>-<build-date>` (e.g. `2250188-2026-09-07`), baked into the backend
+image as a build arg (`backend/Dockerfile`) rather than a hand-maintained
+constant — the two constants that used to serve this purpose,
+`frontend/public/index.html`'s `v1.0.1` and `config.py`'s `VERSION = "1.0.0"`,
+had never been bumped and already disagreed with each other by the time this
+was written.
+
+`scripts/deploy.sh` sets `GIT_SHA`/`BUILD_DATE` from the commit it is actually
+deploying and verifies the running container reports exactly that value
+before calling the deploy successful (`verify_deployed_version`). Building an
+image by hand (`docker compose build` with neither variable exported) reports
+`unknown-unknown` — deliberately not a value that could pass for a real one.
+
 ## Architecture
 
 ```
