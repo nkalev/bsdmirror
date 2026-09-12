@@ -52,7 +52,14 @@ TimeoutStartSec=300
 # `systemctl start bsdmirror-health` after each.
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
+# read-only, not true. On the production host /data is a symlink to
+# /home/data, so ProtectHome=true hid the mirror tree from this service
+# entirely: the first runs under this unit on 2026-09-12 logged "disk check
+# skipped: /data/mirrors does not exist on this host" and still reported "all
+# checks passed". Probed there with transient units -- true: not visible;
+# read-only: visible; false: visible. The check only stats the tree, so
+# read-only keeps the protection's intent without blinding the check.
+ProtectHome=read-only
 ProtectSystem=full
 ProtectControlGroups=true
 ProtectKernelTunables=true
