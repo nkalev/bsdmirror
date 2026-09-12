@@ -540,9 +540,22 @@ human_age() {
 check_disk() {
     local usage
     if [ ! -d "$MIRROR_DATA_PATH" ]; then
-        warn "disk check skipped: $MIRROR_DATA_PATH does not exist on this host"
-        carry_forward "disk"
-        return 0
+        # Not being able to see the mirror data is a problem, not a pass.
+        #
+        # This used to warn, carry forward any earlier disk condition, and
+        # return 0. With no earlier condition that carried nothing, so the run
+        # ended "0 bad, N ok -- all checks passed" without ever looking at the
+        # disk. That is what happened on 2026-09-12, when the unit's
+        # ProtectHome=true hid /data (a symlink into /home) from this process:
+        # hourly runs reported all clear with disk unchecked, on the check that
+        # matters most now that EOL releases are protected from deletion.
+        #
+        # Same "disk" key as the usage conditions, so a later successful check
+        # recovers it rather than leaving a stale entry, and an existing
+        # over-threshold condition continues instead of alerting twice.
+        add_condition "disk" "disk" \
+            "cannot see $MIRROR_DATA_PATH: missing, unmounted, or hidden from this process by a sandbox"
+        return 1
     fi
     usage=$(df -P "$MIRROR_DATA_PATH" 2>/dev/null | awk 'NR==2 {gsub(/%/,"",$5); print $5}') || usage=""
     if ! printf '%s' "$usage" | grep -Eq '^[0-9]+$'; then
