@@ -3,25 +3,28 @@
 This repository is public. `.gitignore` covered `.env` and `.credentials` and
 nothing else -- not the backups of them, which is where the risk actually sits:
 
-  scripts/backup.sh:8   BACKUP_DIR defaults to /opt/bsdmirror/backups, INSIDE
-                        the git working tree, and line 31 copies .env there as
+  scripts/backup.sh     BACKUP_DIR defaulted to /opt/bsdmirror/backups, INSIDE
+                        the git working tree, and copies .env there as
                         env_<ts>.backup next to a gzipped pg_dump of the whole
-                        database. Every run adds another unignored copy.
+                        database. The default is now /var/backups/bsdmirror,
+                        and the script refuses a location inside the checkout
+                        (tests/test_backup_script.py); these patterns stay for
+                        an older copy of the script or a hand-made backup.
   .deploy-bak/          deploy-time copies, including env.<ts>.bak
   .env.bak.<ts>         observed on the production host
 
-Two such files exist on production today holding all four of
-POSTGRES_PASSWORD, REDIS_PASSWORD, SECRET_KEY and ADMIN_PASSWORD in plaintext.
-They are mode 600 and were never committed -- checked with `git log --all` over
-those paths.
+Two such files existed on production holding all four of POSTGRES_PASSWORD,
+REDIS_PASSWORD, SECRET_KEY and ADMIN_PASSWORD in plaintext. They were mode 600,
+were never committed -- checked with `git log --all` over those paths -- and
+were moved out of the checkout on 2026-09-13.
 
 Calibrate the risk honestly: deployment is one-way, repo -> server. Nobody
-commits from /opt/bsdmirror, so the production copies are not realistically
+commits from /opt/bsdmirror, so the production copies were never realistically
 one command from being published. What this guards is the developer side,
-where the same defaults apply and the direction of travel is toward the public
-remote: `scripts/backup.sh` run in a local clone writes .env and a full
-database dump into ./backups/, and before this file existed nothing there was
-ignored. That is a plausible accident, not a hypothetical one.
+where the direction of travel is toward the public remote: an older
+`scripts/backup.sh` run in a local clone wrote .env and a full database dump
+into ./backups/, and before this file existed nothing there was ignored. That
+is a plausible accident, not a hypothetical one.
 
 The filenames below are the REAL ones observed on the host, not invented
 examples. A pattern that matches a plausible name but not the actual one is

@@ -66,8 +66,24 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # tool being noticed. ubuntu-24.04, where .github/workflows/ci.yml's `pytest`
 # job runs this same suite directly on the runner rather than in this image,
 # ships jq already.
+#
+# original-awk is Debian's package for onetrue-awk -- the "one true awk"
+# lineage macOS ships as /usr/bin/awk, and NOT what this image already has:
+# python:3.12-slim's own base pulls in mawk as /usr/bin/awk (a Debian
+# `Priority: important` dependency, not something this file ever asked for),
+# the same family as the Ubuntu deploy target's default. tests/
+# test_health_check_redact.py parametrizes redact()'s behavioural test over
+# both, because BSD/onetrue awk rejects a `-v name=value` whose value
+# contains a raw newline with "newline in string" -- mawk and gawk silently
+# accept it, which is why a webhook URL breaking redact() on every manual run
+# from a laptop never showed up against production. That test's original-awk
+# case skips (shutil.which) rather than errors when the binary is absent,
+# matching the RSYNC/NODE/CHROME pattern above -- but unlike those, nothing
+# in this change installs original-awk for ubuntu-24.04's bare `pytest` job
+# (.github/workflows/ci.yml), which cannot be edited from here, so that job
+# still exercises only the default awk until someone gives it the package too.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y chromium rsync jq \
+ && apt-get install --no-install-recommends -y chromium rsync jq original-awk \
  && rm -rf /var/lib/apt/lists/*
 
 # Both requirement sets in ONE pip invocation, deliberately.
