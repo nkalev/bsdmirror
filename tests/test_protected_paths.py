@@ -349,6 +349,216 @@ async def test_real_rsync_freebsd_survives_an_eol_prune_across_every_shape_at_on
 
 
 # ---------------------------------------------------------------------------
+# --safe-links: refuse a symlink whose target escapes the transfer root
+#
+# sync_service.py's run_rsync now always includes --safe-links (see its
+# comment there for the threat: plain rsync:// with no transport integrity,
+# an nginx config that follows symlinks with autoindex on, and `-l` above
+# copying a symlink's target verbatim with no validation of its own). rsync's
+# own definition of "safe" is purely lexical -- does the target, resolved
+# relative to the symlink's own directory, ever leave the transfer root --
+# decided without regard to whether the target exists, which matters below:
+# a target that resolves to nothing at all is refused exactly like one that
+# resolves to something real.
+# ---------------------------------------------------------------------------
+
+
+@requires_rsync
+async def test_real_rsync_safe_links_keeps_in_tree_relative_symlinks(tmp_path):
+    """The legitimate shapes real mirrors depend on must keep working:
+    FreeBSD's `releases/<arch>/<V> -> <subarch>/<V>` directory link, one of
+    the ~422 `../`-laden file links inside `releases/*/ISO-IMAGES/X.Y/`, and
+    NetBSD's `pub/NetBSD/iso -> images`. All three are relative and resolve
+    to a target inside the transfer root, so --safe-links must not change
+    anything about them.
+    """
+    service = _real_rsync_service()
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+
+    _touch(
+        source / "releases" / "amd64" / "amd64" / "14.3-RELEASE" / "base.txz",
+        "release-content",
+        mtime_offset=-10,
+    )
+    (source / "releases" / "amd64" / "14.3-RELEASE").symlink_to("amd64/14.3-RELEASE")
+    (source / "releases" / "ISO-IMAGES" / "14.3").mkdir(parents=True)
+    (source / "releases" / "ISO-IMAGES" / "14.3" / "base.txz.link").symlink_to(
+        "../../amd64/amd64/14.3-RELEASE/base.txz"
+    )
+    _touch(source / "images" / "netbsd.iso", "iso-content", mtime_offset=-10)
+    (source / "iso").symlink_to("images")
+
+    ok, output, _ = await service.run_rsync(f"{source}/", str(dest), "FreeBSD", MirrorType.FREEBSD)
+    assert ok is True, output
+
+    dir_link = dest / "releases" / "amd64" / "14.3-RELEASE"
+    file_link = dest / "releases" / "ISO-IMAGES" / "14.3" / "base.txz.link"
+    iso_link = dest / "iso"
+
+    assert dir_link.is_symlink() and os.readlink(dir_link) == "amd64/14.3-RELEASE"
+    assert (dir_link / "base.txz").read_text() == "release-content"
+
+    assert file_link.is_symlink()
+    assert os.readlink(file_link) == "../../amd64/amd64/14.3-RELEASE/base.txz"
+    assert file_link.read_text() == "release-content"
+
+    assert iso_link.is_symlink() and os.readlink(iso_link) == "images"
+    assert (iso_link / "netbsd.iso").read_text() == "iso-content"
+
+
+@requires_rsync
+async def test_real_rsync_safe_links_refuses_absolute_and_escaping_symlinks(tmp_path):
+    """The other half of the same coin, and the actual attack this change
+    closes: an absolute target, and relative targets with enough `../` to
+    walk out of the transfer root, must not be created at all -- not
+    skipped-with-a-placeholder, not created pointing somewhere else, simply
+    absent. `pub/OpenBSD/x -> /etc/passwd` served by nginx's autoindex is
+    exactly this shape.
+
+    The two `../`-escaping targets are NetBSD's own real ones (2026-09-13
+    production scan, depth-4): `packages/distfiles` and
+    `arch/hpcmips/cross/cross-netbsd.tgz`, both of which resolve outside
+    `pub/NetBSD` -- the only tree this mirror syncs -- which is also why they
+    are already dangling locally today, not merely unsafe in theory. rsync
+    does not check whether a target exists before deciding it is unsafe, so
+    a dangling escape is refused exactly like a live one -- proven here by
+    also including a target (`evil-rel-dangling`) that resolves to nothing
+    at all, real or not.
+
+    Mutation-checked: removing --safe-links from run_rsync's argv makes this
+    fail (the absolute link gets created), which is the whole point of it.
+    """
+    service = _real_rsync_service()
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+
+    (source / "sub").mkdir(parents=True)
+    (source / "evil-abs").symlink_to("/etc/passwd")
+    (source / "sub" / "evil-rel-dangling").symlink_to("../../nonexistent-target")
+    (source / "packages").mkdir(parents=True)
+    (source / "packages" / "distfiles").symlink_to("../../pkgsrc/distfiles")
+    (source / "arch" / "hpcmips" / "cross").mkdir(parents=True)
+    (source / "arch" / "hpcmips" / "cross" / "cross-netbsd.tgz").symlink_to(
+        "../../../../incoming/sakamoto/cross-netbsd.tgz"
+    )
+    _touch(source / "sub" / "real.txt", "real", mtime_offset=-10)
+
+    ok, output, _ = await service.run_rsync(f"{source}/", str(dest), "NetBSD", MirrorType.NETBSD)
+    assert ok is True, output
+
+    assert not os.path.lexists(dest / "evil-abs")
+    assert not os.path.lexists(dest / "sub" / "evil-rel-dangling")
+    assert not os.path.lexists(dest / "packages" / "distfiles")
+    assert not os.path.lexists(dest / "arch" / "hpcmips" / "cross" / "cross-netbsd.tgz")
+    assert (dest / "sub" / "real.txt").read_text() == "real"
+
+
+@requires_rsync
+async def test_real_rsync_safe_links_and_delete_on_a_pre_existing_unsafe_symlink(
+    tmp_path, monkeypatch
+):
+    """What happens, on the very next --delete sync, to an unsafe symlink
+    that is ALREADY on disk locally (planted before --safe-links existed, or
+    by any other means) -- established against the real binary, in both an
+    unprotected directory and one covered by a PROTECTED_PATHS pattern:
+
+    Phase A -- upstream still serves the identical unsafe link at that path:
+    rsync reports (with -v; run_rsync does not pass it, so this is silent in
+    production) "ignoring unsafe symlink" and leaves the path completely
+    alone -- not deleted, not overwritten, in EITHER directory. --safe-links
+    only refuses to CREATE an unsafe link; it does not make --delete remove
+    one that is already there while upstream keeps offering something at
+    that path. So turning this flag on is not, by itself, a remediation for
+    a link that already exists -- only for one that has not been planted yet.
+
+    Phase B -- upstream stops serving that path at all: ordinary --delete
+    rules resume. The unprotected copy is deleted like any other file
+    upstream no longer has. The one inside the protected tree survives --
+    the same protect-filter mechanism that saves an ordinary file, applied
+    to a symlink instead.
+    """
+    monkeypatch.setitem(PROTECTED_PATHS, MirrorType.OPENBSD, ("/protected/***",))
+    service = _real_rsync_service()
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+
+    for tree in ("unprotected", "protected"):
+        (source / tree).mkdir(parents=True)
+        (source / tree / "evil").symlink_to("/etc/passwd")
+        (dest / tree).mkdir(parents=True)
+        (dest / tree / "evil").symlink_to("/etc/passwd")
+
+    # Phase A: upstream still serves the same unsafe link at both paths.
+    ok, output, _ = await service.run_rsync(f"{source}/", str(dest), "OpenBSD", MirrorType.OPENBSD)
+    assert ok is True, output
+    assert os.path.lexists(
+        dest / "unprotected" / "evil"
+    ), "not a deletion candidate while upstream still serves it, protected or not"
+    assert os.path.lexists(dest / "protected" / "evil")
+    # Untouched, not merely present: still points exactly where it did before.
+    assert os.readlink(dest / "unprotected" / "evil") == "/etc/passwd"
+    assert os.readlink(dest / "protected" / "evil") == "/etc/passwd"
+
+    # Phase B: upstream withdraws it entirely.
+    (source / "unprotected" / "evil").unlink()
+    (source / "protected" / "evil").unlink()
+    ok, output, _ = await service.run_rsync(f"{source}/", str(dest), "OpenBSD", MirrorType.OPENBSD)
+    assert ok is True, output
+    assert not os.path.lexists(
+        dest / "unprotected" / "evil"
+    ), "ordinary --delete resumes once upstream drops the path entirely"
+    assert os.path.lexists(
+        dest / "protected" / "evil"
+    ), "the protect filter still saves it, exactly as it would a regular file"
+
+
+@requires_rsync
+async def test_netbsds_known_escaping_symlinks_survive_the_next_sync(tmp_path):
+    """The concrete, currently-live case (2026-09-13 production scan, depth-4
+    below pub/NetBSD): two real symlinks already resolve outside the only
+    tree this mirror syncs -- `packages/distfiles ->
+    ../../pkgsrc/distfiles` and `arch/hpcmips/cross/cross-netbsd.tgz ->
+    ../../../../incoming/sakamoto/cross-netbsd.tgz` -- and are therefore
+    already dangling locally (this host has no `pkgsrc/` or `incoming/`
+    sibling of `pub/NetBSD` for either target to resolve to).
+
+    Per test_real_rsync_safe_links_and_delete_on_a_pre_existing_unsafe_symlink's
+    Phase A: as long as upstream keeps serving these two exact paths, this
+    fix's next nightly sync leaves both exactly as they are today. --delete
+    does NOT remove them -- --safe-links stops a new escaping link from
+    being planted, but these two predate it and are not retroactively
+    cleaned up. Neither is covered by a PROTECTED_PATHS pattern (those only
+    cover release directories), so removing them, if desired, is a separate,
+    manual step, not something this change does for free.
+    """
+    service = _real_rsync_service()
+    source = tmp_path / "source"
+    dest = tmp_path / "dest"
+
+    (source / "packages").mkdir(parents=True)
+    (source / "packages" / "distfiles").symlink_to("../../pkgsrc/distfiles")
+    (source / "arch" / "hpcmips" / "cross").mkdir(parents=True)
+    (source / "arch" / "hpcmips" / "cross" / "cross-netbsd.tgz").symlink_to(
+        "../../../../incoming/sakamoto/cross-netbsd.tgz"
+    )
+    # dest starts as an exact copy -- these were already synced before
+    # --safe-links existed, not created by the run below.
+    shutil.copytree(source, dest, symlinks=True)
+
+    ok, output, _ = await service.run_rsync(f"{source}/", str(dest), "NetBSD", MirrorType.NETBSD)
+    assert ok is True, output
+
+    assert os.path.lexists(dest / "packages" / "distfiles")
+    assert os.path.lexists(dest / "arch" / "hpcmips" / "cross" / "cross-netbsd.tgz")
+    assert os.readlink(dest / "packages" / "distfiles") == "../../pkgsrc/distfiles"
+    assert (
+        os.readlink(dest / "arch" / "hpcmips" / "cross" / "cross-netbsd.tgz")
+        == "../../../../incoming/sakamoto/cross-netbsd.tgz"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Archive-inventory / real-rsync cross-check: does the archive-inventory
 # parser's "covered" verdict agree with what the REAL rsync binary actually
 # protects?

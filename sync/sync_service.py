@@ -640,6 +640,18 @@ class SyncService:
         cmd = [
             "rsync",
             "-rlptHz",
+            # Refuse a symlink whose target escapes the transfer root --
+            # absolute (`-> /etc/passwd`) or relative via enough `../` to walk
+            # out of the tree. `-l` above copies a symlink's target verbatim
+            # with no validation of its own, upstream is plain rsync:// with
+            # no transport integrity, and nginx serves this tree with
+            # symlinks followed -- so a hostile or compromised upstream could
+            # otherwise plant a link nginx would happily serve straight out
+            # of the container's filesystem. In-tree links (FreeBSD's
+            # releases/<arch>/<V> directory links and ISO-IMAGES `../` file
+            # links, NetBSD's pub/NetBSD/iso) resolve inside the tree and are
+            # unaffected -- see tests/test_protected_paths.py.
+            "--safe-links",
             "--delete",
             "--delete-delay",
             "--delay-updates",
