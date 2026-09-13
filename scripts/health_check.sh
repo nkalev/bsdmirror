@@ -228,6 +228,21 @@ usage() {
 # sed or ${var//pat/rep}: both of those interpret their pattern, and a URL
 # that happens to contain a metacharacter would either fail to match or match
 # too much. Failing to match is the dangerous direction here.
+#
+# The secret list reaches awk through ENVIRON, never `-v`. Once a webhook is
+# configured, REDACT_LIST contains literal newlines (one secret per line, see
+# redact_register), and BSD/onetrue awk -- what macOS ships, and what a
+# contributor's manual run or `--test-alert` from a laptop uses (see the
+# comment above check_containers) -- refuses a `-v name=value` whose value
+# contains a raw newline with "newline in string", so every line this script
+# would print broke there the moment a webhook was set. mawk and gawk, on the
+# Ubuntu deploy target, silently accept it, which is why production never
+# showed this. Reading the same value back out of ENVIRON inside the awk
+# program is not parsed as a `-v` assignment and hits none of that.
+#
+# The secret list is passed as that one awk process's environment
+# (`NAME=value awk ...`), not exported into the rest of this script, and never
+# as an argv word -- argv is what `ps` shows a co-tenant on the box.
 # ---------------------------------------------------------------------------
 REDACT_LIST=""
 
@@ -246,9 +261,9 @@ redact() {
         printf '%s' "$text"
         return 0
     fi
-    printf '%s' "$text" | awk -v secrets="$REDACT_LIST" '
+    printf '%s' "$text" | REDACT_SECRETS="$REDACT_LIST" awk '
         BEGIN {
-            n = split(secrets, s, "\n")
+            n = split(ENVIRON["REDACT_SECRETS"], s, "\n")
         }
         {
             line = $0
