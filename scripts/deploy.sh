@@ -224,7 +224,9 @@ Escape hatches. Each prints a loud banner naming what it bypassed:
                           Requires an interactive typed confirmation; refuses
                           outright when stdin is not a terminal.
   --force-sync-restart    Restart the sync service even though an rsync is in
-                          progress. This kills the transfer.
+                          progress, or when whether one is running cannot be
+                          determined. This kills any transfer. --yes alone is
+                          not enough in either case.
   --skip-nginx            Do not touch nginx even though this deploy changes
                           files under nginx/. The change will not take effect
                           and the header verification will report the old
@@ -708,9 +710,22 @@ require_no_sync_in_progress() {
     if [ "$rc" -ne 0 ] || [ -z "$running" ] || ! printf '%s' "$running" | grep -q '^[0-9]\+$'; then
         warn "could not determine sync state (psql query failed or returned '$running')"
         warn "proceeding would restart the sync container blind"
-        if [ "$ASSUME_YES" -eq 1 ] || [ "$FORCE_SYNC_RESTART" -eq 1 ]; then
-            warn "continuing anyway (--yes / --force-sync-restart)"
+        if [ "$FORCE_SYNC_RESTART" -eq 1 ]; then
+            banner "$C_RED" "BYPASSING THE SYNC GATE (--force-sync-restart)" \
+                "The sync state could not be read, so an rsync may be running right now." \
+                "" \
+                "Recreating the sync container would SIGTERM it: the in-progress" \
+                "transfer is lost, and a mirror can be left at SYNCING with no way to" \
+                "clear it from the admin UI."
             return 0
+        fi
+        # --yes answers prompts; it is not an override. It used to be accepted
+        # here as one, and every production deploy passes --yes, so an unreadable
+        # sync state went through unchallenged -- while the branch below, where a
+        # sync is known to be running, demands --force-sync-restart. Not knowing
+        # must not be the weaker gate.
+        if [ "$ASSUME_YES" -eq 1 ]; then
+            die_gate "refusing to deploy without knowing whether an rsync is running. Check that postgres answers, or --force-sync-restart to override."
         fi
         confirm "Continue without knowing whether an rsync is running?" || die_gate "aborted"
         return 0
