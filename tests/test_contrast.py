@@ -332,6 +332,8 @@ PUBLIC_PAIRS = [
     (".btn-primary", ".btn-primary", "color", ("own",), 4.5),
     (".btn-secondary:hover", ".btn-secondary:hover", "color", ("own",), 4.5),
     (".footer-content p", ".footer-content p", "color", ("parent", ".footer"), 4.5),
+    (".footer-content a", ".footer-content a", "color", ("parent", ".footer"), 4.5),
+    (".about-text a", ".about-text a", "color", ("parent", "body"), 4.5),
     (".method-card p", ".method-card p", "color", ("parent", ".method-card"), 4.5),
 ]
 
@@ -834,6 +836,8 @@ DYNAMIC_PUBLIC_CHECKS = [
     (".btn-primary", "light", 4.5), (".btn-primary", "dark", 4.5),
     (".btn-secondary:hover", "light", 4.5), (".btn-secondary:hover", "dark", 4.5),
     (".footer-content p", "light", 4.5), (".footer-content p", "dark", 4.5),
+    (".footer-content a", "light", 4.5), (".footer-content a", "dark", 4.5),
+    (".about-text a", "light", 4.5), (".about-text a", "dark", 4.5),
     (".footer-version", "light", 4.5), (".footer-version", "dark", 4.5),
     (".method-card p", "light", 4.5), (".method-card p", "dark", 4.5),
 ]
