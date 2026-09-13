@@ -386,21 +386,24 @@ def test_freebsd_modified_is_iso8601_utc(tmp_path):
     assert parsed.utcoffset().total_seconds() == 0
 
 
-def test_an_mtime_datetime_fromtimestamp_cannot_represent_gives_modified_null(tmp_path):
+def test_an_mtime_datetime_fromtimestamp_cannot_represent_gives_modified_null():
     """F6: the `fromtimestamp` guard in _newest_mtime, pinned directly
     rather than just asserted to exist. A 64-bit filesystem can store an
     mtime far beyond datetime.MAXYEAR (9999); that must degrade `modified`
     to null for this one release, not raise for the whole mirror.
-    """
-    root = _build_freebsd_root(tmp_path)
-    releases = root / "releases"
-    target = releases / "amd64" / "amd64" / "14.4-RELEASE"
-    huge = 99999999999999.0  # far beyond what datetime.fromtimestamp can hold
-    os.utime(target, (huge, huge))
 
-    result = build_mirror_inventory(MirrorType.FREEBSD, str(root), ())
-    r = _by_version(result["releases"])["14.4-RELEASE"]
-    assert r["modified"] is None
+    Called on the helper, not through os.utime on a real directory: ext4
+    clamps timestamps to 2446-05-10, so on CI's runner the huge mtime never
+    reached the guard, while the test container's tmpfs kept it -- this
+    passed locally and failed in CI. The helper takes the mtimes the walk
+    captured, so feeding it one exercises the same code on any filesystem.
+    """
+    huge = 99999999999999.0  # far beyond what datetime.fromtimestamp can hold
+    assert archive_inventory._newest_mtime({"loc": huge}, ["loc"]) is None
+    # An ordinary mtime still formats, so a helper that always returned None
+    # would not pass either.
+    ordinary = archive_inventory._newest_mtime({"loc": 1_700_000_000.0}, ["loc"])
+    assert ordinary == "2023-11-14T22:13:20+00:00"
 
 
 # ---------------------------------------------------------------------------
