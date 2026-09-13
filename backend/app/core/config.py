@@ -83,6 +83,14 @@ class Settings(BaseSettings):
     
     # Mirror paths
     MIRROR_DATA_PATH: str = Field(default="/data/mirrors")
+
+    # Where scripts/health_check.sh's schema-1 status report lands, read
+    # through a read-only bind mount -- see app.core.health_status for the
+    # view built from it (GET /api/admin/health-checks). Not this process's
+    # own liveness check (app.api.health); this is a report ABOUT a script
+    # that runs outside this container, on a schedule this container does
+    # not control.
+    HEALTH_STATUS_FILE: str = Field(default="/health-status/status.json")
     
     # Database pool
     DB_POOL_SIZE: int = Field(default=10)

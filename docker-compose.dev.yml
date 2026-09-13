@@ -35,6 +35,10 @@ services:
       - ./data/mirrors:/data/mirrors:ro
       - ./backend/app:/app/app:ro
       - ./shared:/app/shared:ro
+      # Same target as the base file's /health-status mount; overriding it
+      # with a path under ./data/ keeps a macOS dev stack from ever binding a
+      # host /var/lib path, the same reason /data/mirrors is overridden above.
+      - ./data/health-status:/health-status:ro
     environment:
       - LOG_LEVEL=DEBUG
   

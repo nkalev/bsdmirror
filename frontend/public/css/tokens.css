@@ -97,6 +97,11 @@
     --c-green-500: #22c55e;
     --c-amber-500: #F59E0B;
     --c-sky-500: #0ea5e9;
+    /* Lighter than --c-sky-500 on purpose, same reasoning as --c-red-400
+       above: sky-500 only reaches 4.16:1 against --status-info-bg below
+       (needs 4.5:1 as text). Text duty only; see --status-info-text below.
+       Matches Tailwind's sky-400. */
+    --c-sky-400: #38BDF8;
 
     /* BSD distribution identity */
     --c-freebsd: #AB2B28;
@@ -150,22 +155,33 @@
        status-error as text. */
     --status-error-text: var(--c-red-400);
 
+    /* Same shape as --status-error-text just above: --status-info (sky-500)
+       reaches only 4.16:1 against --status-info-bg below (needs 4.5:1 as
+       text). Used by the admin health-checks card's "incomplete" badge -- a
+       fifth state squeezed alongside Mirror.status's four, that needs to
+       read as "not a hard failure, but not clean either" without being
+       confused for --status-syncing's amber "stale" badge next to it. Not
+       consumed by the public site. */
+    --status-info-text: var(--c-sky-400);
+
     /* Solid, precomputed equivalents of what a 15-20% status-colour tint over
-       the admin surface's --bg-card used to look like, for the three status
+       the admin surface's --bg-card used to look like, for the status
        badges/pills that render a coloured label on a soft coloured chip.
        Precomputed rather than left as a live rgba() tint because an rgba()
        tint's contrast depends on whatever is behind it -- and something IS,
        reliably: `tr:hover td` repaints the row to --bg-tertiary, which is
-       lighter than --bg-card, and every one of the three tints measured
-       below 4.5:1 for its own text against that lighter backdrop. A solid
-       colour has no backdrop to depend on. Recompute by hand if the inputs
-       below change (--bg-card, or the status colour/alpha):
+       lighter than --bg-card, and every one of these tints measured below
+       4.5:1 for its own text against that lighter backdrop. A solid colour
+       has no backdrop to depend on. Recompute by hand if the inputs below
+       change (--bg-card, or the status colour/alpha):
          --status-healthy-bg: #22c55e at 20% over --bg-card (#1A1A2E)
          --status-syncing-bg: #F59E0B at 20% over --bg-card (#1A1A2E)
-         --status-error-bg:   --c-red-400 at 20% over --bg-card (#1A1A2E) */
+         --status-error-bg:   --c-red-400 at 20% over --bg-card (#1A1A2E)
+         --status-info-bg:    --c-sky-400 at 20% over --bg-card (#1A1A2E) */
     --status-healthy-bg: #1C3C38;
     --status-syncing-bg: #463427;
     --status-error-bg: #462B3B;
+    --status-info-bg: #203B56;
 
     /* Foreground for text/glyphs painted on a solid --accent-primary or
        --status-error fill (primary buttons, the active sidebar item, the

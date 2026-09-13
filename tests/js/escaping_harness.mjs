@@ -46,7 +46,8 @@ sandbox.globalThis = sandbox;
 const EPILOGUE = `
 ;({ html, escapeHtml, interpolateHtml, trustedHtml, setHtml, SafeHtml,
     renderLayout, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
-    renderDashboard, renderSyncFailures, renderProtectedPaths, filesDeletedBadge,
+    renderDashboard, renderSyncFailures, renderProtectedPaths, renderHealthChecksCard,
+    filesDeletedBadge,
     LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
 `;
 
@@ -580,6 +581,98 @@ async function main() {
         });
         assert(out.includes('No protected paths configured.'), `expected the empty state, got ${out}`);
         assert(out.includes('freebsd'), 'the unconfigured mirror type did not render at all');
+        return '';
+    });
+
+    // --- Health checks card (Dashboard) -------------------------------------
+    //
+    // bad[].detail, skipped[].reason and warnings/ok entries are all text a
+    // script running on a production host wrote into a JSON file this backend
+    // merely passes through (see app/core/health_status.py's own module
+    // docstring) -- untrusted from this file's point of view the same way
+    // rsync's stderr is for renderSyncFailures, so they get the same hostile
+    // payloads.
+
+    await check('renderHealthChecksCard escapes bad, skipped, warning and ok entries end-to-end', () => {
+        const out = String(mod.renderHealthChecksCard({
+            state: 'failing',
+            reason: PAYLOADS.script_tag,
+            finished_at: '2026-09-13T07:29:49Z',
+            age_seconds: 120,
+            stale_after_seconds: 7800,
+            counts: { ok: 5, bad: 1 },
+            ok: [PAYLOADS.img_onerror],
+            bad: [{ key: 'disk', label: PAYLOADS.attr_breakout, detail: PAYLOADS.attr_breakout_tagclose }],
+            skipped: [{ check: 'containers', reason: PAYLOADS.attr_single }],
+            warnings: [PAYLOADS.two_quoted_spans],
+            alerting: { channels: ['discord'], notification: 'none' },
+            state_persisted: true
+        }));
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(tagNames(out).includes('li'), 'the checklist sections did not render at all');
+        assert(out.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'reason/ok text not escaped');
+        return '';
+    });
+
+    await check('renderHealthChecksCard renders unknown when given no data', () => {
+        const out = String(mod.renderHealthChecksCard(null));
+        assert(out.includes('status-badge disabled'), `expected the unknown badge, got ${out}`);
+        assert(!out.includes('status-badge active'), `must not show the ok badge on a failed fetch: ${out}`);
+        assert(out.includes('No failing checks'), 'expected the empty-list placeholders, got no lists at all');
+        return '';
+    });
+
+    await check('renderDashboard renders the health-checks card end-to-end via its own fetch', async () => {
+        const dashboardPayload = {
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [],
+            recent_activity: []
+        };
+        const healthPayload = {
+            state: 'incomplete',
+            reason: 'no checks reported ok',
+            finished_at: '2026-09-13T07:29:49Z',
+            age_seconds: 90,
+            stale_after_seconds: 7800,
+            counts: { ok: 0, bad: 0 },
+            ok: [],
+            bad: [],
+            skipped: [{ check: 'containers', reason: PAYLOADS.script_tag }],
+            warnings: [],
+            alerting: { channels: [], notification: 'none' },
+            state_persisted: true
+        };
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/health-checks' ? healthPayload : dashboardPayload);
+
+        const out = String(await mod.renderDashboard());
+        assert(out.includes('Health Checks'), 'the health-checks card heading is missing from the dashboard');
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(out.includes('&lt;script&gt;alert(1)&lt;/script&gt;'), 'skipped.reason not escaped through renderDashboard');
+        return '';
+    });
+
+    await check('renderDashboard shows the health-checks card as unknown, not a false all-clear, when that fetch fails', async () => {
+        const dashboardPayload = {
+            mirrors: { total: 4, active: 4, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [],
+            recent_activity: []
+        };
+        mod.api.get = async (endpoint) => {
+            if (endpoint === '/admin/health-checks') throw new Error('network disabled in harness');
+            return dashboardPayload;
+        };
+
+        const out = String(await mod.renderDashboard());
+        assert(out.includes('4'), 'the rest of the dashboard did not render alongside the failed card');
+        assert(out.includes('status-badge disabled'), `expected the unknown badge, got ${out}`);
+        assert(!out.includes('status-badge active'), `must not show a false all-clear: ${out}`);
         return '';
     });
 

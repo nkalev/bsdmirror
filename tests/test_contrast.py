@@ -445,6 +445,12 @@ ADMIN_PAIRS = [
     (".login-error", ".login-error", "color", ("own",), 4.5),
     (".u-text-muted", ".u-text-muted", "color", ("parent", ".card"), 4.5),
     (".log-pre-error", ".log-pre-error", "color", ("parent", ".log-pre"), 4.5),
+    # Health-checks card (dashboard): the "incomplete" state's own badge
+    # variant, and the .card-title-adjacent subheading the card's four
+    # checklists use instead of it. Same shape as the pairs above, just two
+    # selectors that did not exist before that card did.
+    (".status-badge.health-incomplete", ".status-badge.health-incomplete", "color", ("own",), 4.5),
+    (".card-subtitle", ".card-subtitle", "color", ("parent", ".card"), 4.5),
 ]
 
 
@@ -655,6 +661,20 @@ CSS_MUTATIONS = [
         "       itself is 3.65-3.71:1 here (needs 4.5:1 as text). */\n"
         "    color: var(--status-error);",
         ".status-badge.error",
+    ),
+    (
+        # Same shape as the mutation above, for the health-checks card's
+        # "incomplete" badge: reverts its `color` back to --status-info,
+        # which is 4.16:1 here (needs 4.5:1 as text) -- the reason
+        # --status-info-text exists at all.
+        "status_badge_health_incomplete_reverts_color_to_status_info",
+        ADMIN_CSS,
+        "ADMIN",
+        ".status-badge.health-incomplete {\n    background: var(--status-info-bg);\n"
+        "    color: var(--status-info-text);",
+        ".status-badge.health-incomplete {\n    background: var(--status-info-bg);\n"
+        "    color: var(--status-info);",
+        ".status-badge.health-incomplete",
     ),
 ]
 

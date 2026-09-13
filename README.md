@@ -287,6 +287,7 @@ Key environment variables in `.env`:
 | `DISK_WARN_PCT` / `DISK_CRIT_PCT` | Disk usage that warns / alerts | `85` / `95` |
 | `API_URL` | Base URL the health check probes. Empty derives `https://$DOMAIN` | *(derived)* |
 | `ALERT_SOURCE_LABEL` | Name shown in alerts. Empty uses `DOMAIN`, then the hostname | *(derived)* |
+| `HEALTH_STATUS_DIR` | Directory `scripts/health_check.sh` writes `status.json` into after every real run, and that `docker-compose.yml` binds read-only into the backend at `/health-status`. Deliberately not under `STATE_DIRECTORY`/`HEALTH_STATE_FILE`'s private, 0700 directory — see "Status file for the admin dashboard" below | `/var/lib/bsdmirror-status` |
 
 Upstream URLs can also be changed from the admin panel without restarting services.
 
@@ -667,6 +668,43 @@ command of an `||` list it is not exempt from `errexit`. Confirmed on bash 5.2.2
 (Ubuntu 24.04, the deploy target). bash 3.2.57 (macOS) wrongly exempts the whole
 list and does *not* abort, which is why it survived review on a laptop. Every
 counter in the script now uses `n=$((n + 1))`.
+
+### Status file for the admin dashboard
+
+A quiet Discord channel means either everything is fine or the timer stopped
+firing — the two look identical from outside. `scripts/health_check.sh` writes
+`$HEALTH_STATUS_DIR/status.json` at the end of **every real run** (`MODE=run`,
+not `--dry-run`), whether the checks passed or failed, right after the dedup
+state save. `--dry-run`, `--test-alert`, `--check-deps` and `--show-state` never
+write it, and neither does a run that exits before reaching that point (`exit
+2`: missing prerequisites, bad channel config) — the file just goes stale, and
+the admin view reports that rather than a false "all clear". It is written with
+`mkdir -p` + `chmod 0755` on the directory and a `mv -f` from a `chmod 0644`
+temp file in the same directory, both explicit because the script runs under
+`umask 077`. Every string in it — labels, details, warnings — is passed through
+the same `redact()` used for the console and webhook output, so a webhook URL
+cannot reach it any more than it can reach a log line.
+
+`docker-compose.yml` binds the **directory**, not the file, read-only into the
+backend at `/health-status`, which reads `/health-status/status.json`: a
+single-file bind mount would keep pointing at the inode that existed when the
+container started, and `mv -f` replaces that inode on every write. The
+directory defaults to `/var/lib/bsdmirror-status`, and `HEALTH_STATUS_DIR`
+overrides it from `.env` or the environment like any other setting in the
+table above. It is deliberately its own top-level path rather than a
+subdirectory of `HEALTH_STATE_FILE`'s directory (the systemd unit's private,
+0700 `StateDirectory=bsdmirror`): this stack normally comes up before
+`install-health-timer.sh` runs, so on a fresh host this bind mount is what
+would otherwise cause Docker to auto-create that private directory itself, at
+Docker's own permissive default mode rather than the 0700 the unit intends —
+and systemd does not tighten the mode of a directory that already exists once
+its `StateDirectory=` later runs. `docker-compose.dev.yml` points the same
+target at `./data/health-status` instead, so a laptop checkout never binds a
+host `/var/lib` path, the same reason `/data/mirrors` is overridden there.
+
+nginx never serves this path: it is not under `MIRROR_DATA_PATH`, it is not
+mounted into the nginx container at all, and it carries no `location` block in
+any site config.
 
 ## Security
 

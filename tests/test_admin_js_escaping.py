@@ -146,6 +146,10 @@ HARNESS_CHECKS = [
     "renderSyncFailures shows a placeholder when there are no incidents",
     "renderProtectedPaths escapes pattern text and mirror names end-to-end",
     "renderProtectedPaths shows every mirror type even when none are configured",
+    "renderHealthChecksCard escapes bad, skipped, warning and ok entries end-to-end",
+    "renderHealthChecksCard renders unknown when given no data",
+    "renderDashboard renders the health-checks card end-to-end via its own fetch",
+    "renderDashboard shows the health-checks card as unknown, not a false all-clear, when that fetch fails",
 ]
 
 

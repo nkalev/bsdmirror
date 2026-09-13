@@ -130,6 +130,24 @@ services:
       - OPENBSD_UPSTREAM=${OPENBSD_UPSTREAM:-rsync://ftp2.eu.openbsd.org/OpenBSD/}
     volumes:
       - ${MIRROR_DATA_PATH:-/data/mirrors}:/data/mirrors:ro
+      # scripts/health_check.sh writes status.json here after every real run
+      # (never --dry-run) and replaces it with `mv -f`, which swaps the
+      # directory entry to a new inode. A single-file mount would keep
+      # pointing at the inode that existed when this container started
+      # instead of following the rename, so the whole DIRECTORY is mounted
+      # read-only and the backend reads /health-status/status.json. See
+      # README.md's "Monitoring and alerting" section.
+      #
+      # A dedicated path, NOT a subdirectory of the systemd unit's private
+      # StateDirectory (/var/lib/bsdmirror, mode 0700): this stack normally
+      # comes up before install-health-timer.sh runs, so on a fresh host this
+      # bind mount is what causes /var/lib/bsdmirror to be auto-created by
+      # Docker in the first place, at Docker's own default (0755) rather than
+      # the 0700 the unit intends -- and systemd does not tighten the mode of
+      # a directory that already exists once its own StateDirectory= later
+      # runs. Keeping this on its own top-level path means Docker never has a
+      # reason to create the private one.
+      - ${HEALTH_STATUS_DIR:-/var/lib/bsdmirror-status}:/health-status:ro
     depends_on:
       postgres:
         condition: service_healthy

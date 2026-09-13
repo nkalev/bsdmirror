@@ -14,6 +14,7 @@ import structlog
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.disk import get_disk_usage
+from app.core.health_status import get_health_status_view
 from app.core.protected_paths_view import protected_paths_view
 from app.core.security import hash_password_async
 from app.core.sync_failures import group_failure_incidents, mirror_failure_summary
@@ -604,6 +605,26 @@ async def get_dashboard(
             for log in recent_logs.scalars().all()
         ]
     }
+
+
+# ===========================================
+# Health Checks (hourly script status)
+# ===========================================
+
+@router.get("/health-checks")
+async def get_health_checks(
+    current_user: Annotated[User, Depends(get_current_user)],
+) -> dict:
+    """Last-run view of scripts/health_check.sh's hourly report (systemd
+    timer, owned by devops-sre), read from settings.HEALTH_STATUS_FILE.
+
+    Always 200 to an authorised request, whatever the file contains -- see
+    app.core.health_status for the state machine (unknown/stale/failing/
+    incomplete/ok) and why a missing or malformed file is one of those
+    states rather than a 500. Same auth as /dashboard: any authenticated
+    role may read it, admin or not.
+    """
+    return await get_health_status_view(settings.HEALTH_STATUS_FILE)
 
 
 # ===========================================

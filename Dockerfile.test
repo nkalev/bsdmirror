@@ -56,8 +56,18 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # instead of silently skipping. This is otherwise a `sync/Dockerfile` package
 # (it installs rsync too, for the real service) rather than a `developer`
 # one; noted in the PR that added it for whoever owns this file next.
+#
+# jq is for tests/test_health_check_status.py, which runs scripts/
+# health_check.sh's real write_status() -- the function builds status.json
+# with jq itself precisely to avoid string concatenation, so the test has no
+# mock to substitute. python:3.12-slim ships none. Unlike NODE/CHROME/RSYNC
+# above, this one is deliberately NOT behind a skipif: that file's own header
+# explains why a skip there would be a silent pass rather than a missing
+# tool being noticed. ubuntu-24.04, where .github/workflows/ci.yml's `pytest`
+# job runs this same suite directly on the runner rather than in this image,
+# ships jq already.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y chromium rsync \
+ && apt-get install --no-install-recommends -y chromium rsync jq \
  && rm -rf /var/lib/apt/lists/*
 
 # Both requirement sets in ONE pip invocation, deliberately.
