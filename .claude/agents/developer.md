@@ -21,10 +21,10 @@ backend/app/core/database.py        init_db() verifies alembic_version; create_a
 backend/app/core/disk.py            statvfs-based disk usage; used by /api/admin/dashboard
 shared/models/                      the ONLY model definitions (imported by both services)
 backend/alembic/                    revisions live here, NOT ./alembic
-sync/sync_service.py                1360 lines -- read a range, not the whole file
-frontend/public/admin/js/admin.js   1305 lines; the html`` tagged template is at ~:1164
+sync/sync_service.py                1352 lines -- read a range, not the whole file
+frontend/public/admin/js/admin.js   1842 lines; the html`` tagged template is at ~:1682
 frontend/public/js/main.js
-tests/                              16 files, 697 collected tests + tests/js/*.mjs harnesses
+tests/                              25 test_*.py files, 1073 collected tests + tests/js/*.mjs harnesses
 pyproject.toml                      ruff + pytest config; no [project] table on purpose
 ```
 

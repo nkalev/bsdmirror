@@ -11,6 +11,7 @@ from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 import structlog
 
+from app.core.archive_inventory import get_archive_inventory_view
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.disk import get_disk_usage
@@ -487,6 +488,34 @@ async def get_protected_paths(
     mirrors = result.scalars().all()
 
     return {"groups": protected_paths_view(mirrors)}
+
+
+# ===========================================
+# Archive Inventory (read-only)
+# ===========================================
+
+@router.get("/archive-inventory")
+async def get_archive_inventory(
+    current_user: Annotated[User, Depends(get_current_user)], db: AsyncSession = Depends(get_db)
+) -> dict:
+    """What each mirror actually has on disk, and whether
+    shared/protected_paths.py would keep it once upstream prunes it.
+
+    Same auth as /protected-paths -- any authenticated role may read it.
+    Always 200 to an authorised request: a missing mount, a permission
+    error, a symlink loop or an unrecognised protect-filter pattern all
+    become a per-mirror `available: false` / `protection: "unknown"` state
+    inside the body, never a 500 -- see app.core.archive_inventory for the
+    scanning and classification logic this view is built on.
+
+    The scan is real, bounded filesystem I/O (os.scandir/os.lstat against
+    the read-only /data/mirrors mount), so it runs on a worker thread via
+    get_archive_inventory_view -- never awaited directly here.
+    """
+    result = await db.execute(select(Mirror))
+    mirrors = result.scalars().all()
+
+    return await get_archive_inventory_view(mirrors)
 
 
 # ===========================================

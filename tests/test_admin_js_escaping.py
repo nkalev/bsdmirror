@@ -146,6 +146,13 @@ HARNESS_CHECKS = [
     "renderSyncFailures shows a placeholder when there are no incidents",
     "renderProtectedPaths escapes pattern text and mirror names end-to-end",
     "renderProtectedPaths shows every mirror type even when none are configured",
+    "renderProtectedPaths escapes a hostile architecture directory name in an "
+    "archive-inventory location end-to-end",
+    "renderProtectedPaths shows an inventory error but still renders the pattern list "
+    "when the archive-inventory fetch fails",
+    "renderProtectedPaths shows a per-mirror unavailable state without a 500",
+    "renderProtectedPaths escapes hostile names in current/unclassified/errors "
+    "end-to-end",
     "renderHealthChecksCard escapes bad, skipped, warning and ok entries end-to-end",
     "renderHealthChecksCard renders unknown when given no data",
     "renderDashboard renders the health-checks card end-to-end via its own fetch",

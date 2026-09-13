@@ -412,6 +412,92 @@ that is the point. As of this change: OpenBSD 7.5–7.8, NetBSD 7.2/8.3/9.0/9.5/
 15.0), matched with `**` because the same release exists at different depths
 depending on architecture.
 
+**Knowing the patterns is not the same as knowing what is on disk.** The
+pattern list alone cannot answer "which releases would this mirror actually
+lose if upstream pruned right now" — that needs a live filesystem scan
+classified against `shared/protected_paths.py`, not just the list itself.
+`GET /api/admin/archive-inventory` (any authenticated role, same as
+`/protected-paths`, cached in-process for 60s behind a single-flight lock so
+concurrent callers share one scan) is that scan: one bounded, hardened,
+read-only walk per mirror (`backend/app/core/archive_inventory.py`), grouped
+into a release per line — FreeBSD's `14.3-RELEASE`, its ISO images and its
+arch-specific symlinks all fold into one entry — and classified as
+`full`/`partial`/`none`/`unknown` protection.
+
+**`at_risk` means "not effectively current and not fully protected", not
+"not the newest of its major line".** The latter sounds equivalent but is not:
+the day a new major ships, the previous major's last release is "latest in
+its major" forever by version arithmetic alone, whether or not it is still
+served, which would hide the exact release this feature exists to catch.
+`shared/protected_paths.py` now carries a second, explicit, human-reviewed
+list, `CURRENT_RELEASES` — disjoint from `PROTECTED_PATHS` by construction
+(a still-served release must never also be protected) — and that is what
+`at_risk` actually keys off; `newest`/`latest_in_major` remain in the
+response but are informational only. "Effectively current" excludes a
+*stale* entry: CURRENT_RELEASES appending a new release next to an outgoing
+one instead of replacing it (the upgrade procedure's step 2, done only
+half-way) leaves both tagged `current`, but the outgoing one is no longer
+the newest (OpenBSD/NetBSD) or latest-in-its-major (FreeBSD) *among
+CURRENT_RELEASES' own entries* — a per-mirror `stale_current` list names
+it, and it is `at_risk` unless fully protected, same as any other
+unprotected non-current release. A pre-release is `at_risk` only if
+something in `PROTECTED_PATHS` actually targets it but does not fully cover
+it; an ordinary, never-protected pre-release's normal lifecycle is not a
+risk. `unprotected_locations` names which of a `partial` release's locations
+would go; `protected_not_on_disk`, `current_not_on_disk` and `stale_current`
+flag three independent directions of drift between the two human-maintained
+lists and what a live scan actually finds.
+
+**Coverage depends on entry type, not just path.** rsync draws a hard line at
+whether the matched entry is a directory: a `NAME/***` pattern protects a
+directory and everything under it but not a same-named symlink, and a bare
+`NAME` pattern is the reverse — it protects a symlink (or other non-directory
+leaf) but, checked against the real binary in
+`tests/test_protected_paths.py`, does not stop `--delete` from
+removing a file that disappears from *inside* a same-named directory while
+upstream keeps serving it. This module treats bare-only coverage of a
+directory as `partial`, never `full`, for exactly that reason.
+
+**Always 200 to an authorised request, and never a symlink followed
+unexamined.** A missing mount, a permission error, a protect-filter pattern
+using an rsync wildcard this literal-path parser does not model (`?`, `[`,
+`\`), or a name that is not valid UTF-8 (rsync copies bytes verbatim; nothing
+upstream promises otherwise) all become a per-mirror `available: false` /
+`protection: "unknown"` state or a display-safe, backslash-escaped name
+inside the body, respectively — a guarantee kept by three independent
+layers: every label is built display-safe at its point of construction, the
+whole per-mirror result is swept again before it is returned, and the
+in-process cache independently confirms the result can actually be encoded
+before storing it, so a spot the first two layers missed still cannot leave
+a 500-producing response cached for the next 60 seconds. `releases` itself
+(and, on OpenBSD/NetBSD, the mirror root itself) is opened with `O_NOFOLLOW`
+after an `lstat` that only exists to give a symlink there its own clear
+error message — so a mirror root that is itself a symlink is reported
+unavailable rather than walked, on all three mirror types, even if it were
+swapped for one after the `lstat` ran. Every subdirectory below it is opened
+the same O_NOFOLLOW way, right before it is scanned rather than ahead of
+time, so a directory swapped for a symlink between listing and opening is
+refused, not followed, and a directory with thousands of children never
+costs more than a handful of open file descriptors at once. A single bad
+entry (a permission error, a directory that vanished mid-scan) is recorded
+in a capped per-mirror `errors` list without taking down the rest of the
+scan; a self-looping same-named symlink is never resolved and never reaches
+that list at all — it is recorded as an ordinary (necessarily unprotected)
+location, the same as any other symlink whose name happens to match a
+release. A release-looking name that fails the strict match (an rsync
+wildcard slipping past as a literal, a stray `NetBSD-7.1.2`) is surfaced in
+a capped `unclassified` list instead of being silently dropped or silently
+trusted. A per-mirror `incomplete` flag is set whenever any of `truncated`,
+a non-empty `errors`, a non-empty `unclassified`, or (FreeBSD only) content
+skipped behind the depth limit means the result may not be the full
+picture — the admin panel renders it, `stale_current` and
+`current_not_on_disk` as warnings the operator should act on, not as the
+same muted, informational text a merely-empty list gets.
+
+The admin panel's **Protected Paths** page renders this as an "On disk" table
+above the existing pattern list for each mirror, unchanged if this fetch
+fails independently of it.
+
 **Disk capacity is visible for the same reason.** Protecting a release is
 also removing the implicit bound `--delete` used to put on the tree's size —
 it grew roughly with upstream before; now it only grows. `GET

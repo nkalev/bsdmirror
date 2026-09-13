@@ -84,6 +84,8 @@ MATRIX = [
          "get_current_user", frozenset(ROLES), 200),
     Case("protected-paths", "GET", "/api/admin/protected-paths",
          "get_current_user", frozenset(ROLES), 200),
+    Case("archive-inventory", "GET", "/api/admin/archive-inventory",
+         "get_current_user", frozenset(ROLES), 200),
     Case("health-checks", "GET", "/api/admin/health-checks",
          "get_current_user", frozenset(ROLES), 200),
 ]

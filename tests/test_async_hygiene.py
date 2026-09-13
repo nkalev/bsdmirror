@@ -60,6 +60,10 @@ BLOCKING_CALLS = {
     "read_health_status_document": (
         "blocking file IO; call get_health_status_view instead (app/core/health_status.py)"
     ),
+    "read_archive_inventory": (
+        "blocking filesystem scan; call get_archive_inventory_view instead "
+        "(app/core/archive_inventory.py)"
+    ),
 }
 
 # Kept out of the literal above so this file does not itself trip a
