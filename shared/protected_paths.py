@@ -120,6 +120,47 @@ NetBSD-9.5's directory was touched today (2026-09-06) and NetBSD-11.0 (final)
 was not touched since 2026-08-23, and NetBSD-9.5 is still the one that is
 correctly protected -- 11.0 is newer by release order regardless of which
 directory rsync last wrote to.
+
+CURRENT_RELEASES, AND WHY IT IS DATA TOO, NOT A COMPUTED PROPERTY
+-----------------------------------------------------------------
+backend/app/core/archive_inventory.py used to infer "is this still served"
+from version order alone: the highest release within a major line. That is
+wrong the moment a new major ships. Once OpenBSD 8.0 exists, 7.9 is still --
+and forever will be -- "the latest release in major 7" by that arithmetic,
+even though it is no longer current, is not in PROTECTED_PATHS above, and is
+one upstream prune away from vanishing with nothing left to show it existed.
+An unprotected FreeBSD 13.5-RELEASE (major 13, long since superseded) is
+hidden the same way: it is trivially "the latest in major 13" because
+nothing else in that major exists any more. Version arithmetic cannot know
+FreeBSD's 13.x line ended; only a human who read the release announcement
+can, which is exactly why this is a second, explicit, reviewed list rather
+than something derived from the first.
+
+A name here must never also appear as a protected pattern's subject --
+test_current_releases_are_never_protected (tests/test_protected_paths.py)
+checks that on every run. A still-served release is exactly the one thing
+the "WHY THE NEWEST RELEASE ... IS DELIBERATELY NOT HERE" section above
+already says must keep mirroring faithfully, protected or not; the two
+lists are meant to be non-overlapping -- never both naming the same release
+-- not to jointly cover every release this project has ever shipped. An
+old release that is neither protected nor current (an EOL line nobody has
+gotten around to adding to PROTECTED_PATHS yet) is not a contradiction of
+that rule; it is exactly the gap archive_inventory.py's `at_risk` exists to
+surface.
+
+THE UPGRADE PROCEDURE: when upstream ships a new release, in the same
+change:
+  1. Add the release CURRENT_RELEASES currently names for that mirror (or,
+     for FreeBSD, the branch the new one supersedes) to PROTECTED_PATHS
+     above -- it is now EOL and needs the same protection every other
+     retired release gets -- with a one-line reason and today's date, like
+     every other entry there.
+  2. Replace that name in CURRENT_RELEASES below with the new one.
+Doing only step 2 first is fine and self-correcting: the outgoing release is
+briefly neither current nor protected, and archive_inventory.py's `at_risk`
+rule (see that module) will correctly, loudly flag it until step 1 catches
+up -- that is the mechanism working, not a bug to route around by reordering
+the steps.
 """
 from typing import Dict, List, Optional, Tuple
 
@@ -130,10 +171,15 @@ PROTECTED_PATHS: Dict[MirrorType, Tuple[str, ...]] = {
     # Flat, one real directory per release (confirmed on the server: no
     # symlinks under pub/OpenBSD/), so one pattern each is enough.
     #
-    # 7.9 is the current release and 7.8 is "previous" -- both still
-    # officially supported -- and are left mirroring faithfully. 7.5-7.7 are
-    # already EOL per the project's own support policy and survive only
-    # because upstream has not pruned them yet.
+    # 7.9 is the current release and is deliberately left unprotected here
+    # (see the "WHY THE NEWEST RELEASE ... IS DELIBERATELY NOT HERE" section
+    # above) -- it is in CURRENT_RELEASES below instead. 7.5-7.8 are all
+    # protected: 7.8 was OpenBSD's "previous" officially-supported release
+    # when this list was written, and 7.5-7.7 are already EOL per the
+    # project's own support policy, but upstream has not pruned any of the
+    # four yet -- protecting all of them means none silently vanishes
+    # whenever that prune happens, regardless of which of them still
+    # happened to be inside the support window at the time.
     MirrorType.OPENBSD: (
         "/7.5/***",
         "/7.6/***",
@@ -233,6 +279,18 @@ PROTECTED_PATHS: Dict[MirrorType, Tuple[str, ...]] = {
         "**/15.0-RELEASE/***",
         "**/ISO-IMAGES/15.0/***",
     ),
+}
+
+
+# See "CURRENT_RELEASES, AND WHY IT IS DATA TOO" above for what this is and
+# the upgrade procedure for keeping it correct. Every value here must be
+# ABSENT from PROTECTED_PATHS -- a current release is never also listed as
+# protected -- checked by test_current_releases_are_never_protected.
+CURRENT_RELEASES: Dict[MirrorType, Tuple[str, ...]] = {
+    MirrorType.OPENBSD: ("7.9",),
+    MirrorType.NETBSD: ("NetBSD-11.0",),
+    # FreeBSD supports two branches at once -- see PROTECTED_PATHS above.
+    MirrorType.FREEBSD: ("14.5-RELEASE", "15.1-RELEASE"),
 }
 
 

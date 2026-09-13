@@ -451,6 +451,16 @@ ADMIN_PAIRS = [
     # selectors that did not exist before that card did.
     (".status-badge.health-incomplete", ".status-badge.health-incomplete", "color", ("own",), 4.5),
     (".card-subtitle", ".card-subtitle", "color", ("parent", ".card"), 4.5),
+    # Archive inventory (Protected Paths page): the informational tag variant
+    # (Newest / Latest-in-major / Pre-release) and the "At risk" warning pill
+    # -- see releaseTagBadges in admin.js. Both are their own solid fill, the
+    # same "own" shape as the other .status-badge variants above.
+    (".status-badge.info", ".status-badge.info", "color", ("own",), 4.5),
+    (".status-badge.at-risk", ".status-badge.at-risk", "color", ("own",), 4.5),
+    # The location-name chips joinCodeList's <code> elements render as, once
+    # scoped by the .code-chip-list wrapper (renderMirrorInventoryCard,
+    # releaseRows). Its own solid background, not the ambient card/table one.
+    (".code-chip-list code", ".code-chip-list code", "color", ("own",), 4.5),
 ]
 
 
@@ -675,6 +685,32 @@ CSS_MUTATIONS = [
         ".status-badge.health-incomplete {\n    background: var(--status-info-bg);\n"
         "    color: var(--status-info);",
         ".status-badge.health-incomplete",
+    ),
+    (
+        # Same shape again, for the archive-inventory table's informational
+        # tag variant (Newest / Latest-in-major / Pre-release): reverts its
+        # `color` back to --status-info, 4.16:1 here (needs 4.5:1 as text).
+        "status_badge_info_reverts_color_to_status_info",
+        ADMIN_CSS,
+        "ADMIN",
+        ".status-badge.info {\n    background: var(--status-info-bg);\n"
+        "    color: var(--status-info-text);",
+        ".status-badge.info {\n    background: var(--status-info-bg);\n"
+        "    color: var(--status-info);",
+        ".status-badge.info",
+    ),
+    (
+        # Same shape as status_badge_error_reverts_color_to_status_error, for
+        # the "At risk" pill: reverts its `color` back to --status-error,
+        # which is 3.34:1 against this pill's own background (needs 4.5:1).
+        "status_badge_at_risk_reverts_color_to_status_error",
+        ADMIN_CSS,
+        "ADMIN",
+        ".status-badge.at-risk {\n    background: var(--status-error-bg);\n"
+        "    color: var(--status-error-text);",
+        ".status-badge.at-risk {\n    background: var(--status-error-bg);\n"
+        "    color: var(--status-error);",
+        ".status-badge.at-risk",
     ),
 ]
 

@@ -147,9 +147,9 @@
     --status-info: var(--c-sky-500);
 
     /* status-error rendered as TEXT on the admin surface's dark backgrounds
-       (a sync-log error line, an "error" badge label). --status-error itself
-       stays red-500 for the roles it already covers at 3:1 -- borders, the
-       3px toast rail, small dots -- changing its value would touch those
+       (a sync-log error line, an "error"/"at-risk" badge label). --status-error
+       itself stays red-500 for the roles it already covers at 3:1 -- borders,
+       the 3px toast rail, small dots -- changing its value would touch those
        too. This is additive, for the one role red-500 cannot cover: 4.5:1
        text. Not consumed by the public site, which never renders
        status-error as text. */
@@ -160,8 +160,11 @@
        text). Used by the admin health-checks card's "incomplete" badge -- a
        fifth state squeezed alongside Mirror.status's four, that needs to
        read as "not a hard failure, but not clean either" without being
-       confused for --status-syncing's amber "stale" badge next to it. Not
-       consumed by the public site. */
+       confused for --status-syncing's amber "stale" badge next to it -- and
+       by the archive-inventory table's Newest/Latest-in-major/Pre-release
+       tags (see .status-badge.info in admin.css), which need the same
+       "purely informational, not a status judgement" read. Not consumed by
+       the public site. */
     --status-info-text: var(--c-sky-400);
 
     /* Solid, precomputed equivalents of what a 15-20% status-colour tint over

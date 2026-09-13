@@ -402,6 +402,35 @@ tr:hover td {
     color: var(--status-info-text);
 }
 
+/* Archive-inventory tags (Protected Paths page): Newest / Latest-in-major /
+   Pre-release are purely informational, not a status judgement -- reusing
+   .disabled here would read as "inactive", which is what that tint means
+   everywhere else in this file (nav items, the mirror status badges). Same
+   info hue .status-badge.health-incomplete uses above; see tokens.css for
+   why status-info-text, not status-info, is used for text. */
+.status-badge.info {
+    background: var(--status-info-bg);
+    color: var(--status-info-text);
+}
+
+/* "At risk" (same page, releaseTagBadges in admin.js): the one state the
+   operator must notice before the next upstream prune deletes this release
+   locally. It can land next to protection: "none" just as easily as
+   "partial" (a release that is not fully protected and is not an actually-
+   current release -- see archive_inventory.py's _annotate_cross_release_
+   fields -- is at risk regardless of how much of it happens to be covered),
+   so this pill, not the protection badge beside it, is the one reliable
+   "look here" signal in the row. Reuses .status-badge.error's exact colour
+   pair rather than a softer one: it needs to read at least as urgently as
+   an "Unknown" protection badge does. status-error-text, not status-error:
+   see tokens.css -- status-error itself is 3.71:1 against a hovered row's
+   --bg-tertiary (needs 4.5:1 as text), the same reasoning as
+   .status-badge.error above. */
+.status-badge.at-risk {
+    background: var(--status-error-bg);
+    color: var(--status-error-text);
+}
+
 .status-dot {
     width: 6px;
     height: 6px;
@@ -842,6 +871,26 @@ tr:hover td {
     padding: 8px;
     background: var(--bg-tertiary);
     border-radius: 6px;
+}
+
+/* Archive-inventory location chips (Protected Paths page): joinCodeList's
+   unprotected_locations / protected_not_on_disk names, one <code> per
+   location, scoped to the .code-chip-list wrapper so a plain <code> used
+   elsewhere in this file (the protected-paths pattern list, the intro
+   paragraph) is unaffected. inline-block, not flex: joinCodeList still joins
+   entries with a literal ", " (see admin.js), and plain inline content
+   already wraps at the container's edge on its own -- flex-wrap would turn
+   each ", " into its own anonymous flex item and gap it away from the chip
+   it follows. Its own explicit colour, not inherited, so a chip reads the
+   same neutral "this is just a name" way inside both the muted "Unprotected"
+   line and the higher-alert "Protected but missing from disk" one. */
+.code-chip-list code {
+    display: inline-block;
+    background: var(--bg-tertiary);
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
 }
 
 /* Shared by the error and output panes of the sync-job detail view. They

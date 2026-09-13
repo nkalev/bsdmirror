@@ -793,11 +793,19 @@ async function renderSyncFailures() {
 
 /**
  * Which release trees are frozen against rsync --delete
- * (GET /api/admin/protected-paths).
+ * (GET /api/admin/protected-paths), plus what is actually on disk and
+ * whether it lines up with that list (GET /api/admin/archive-inventory).
  *
- * Read-only by design -- see shared/protected_paths.py and
- * app.core.protected_paths_view. There is no corresponding PATCH/POST action
- * anywhere in this file; do not add one here.
+ * The patterns list is read-only by design -- see shared/protected_paths.py
+ * and app.core.protected_paths_view. There is no corresponding PATCH/POST
+ * action anywhere in this file; do not add one here.
+ *
+ * Two independent fetches, the same shape renderDashboard already uses for
+ * its health-checks card: a failed archive-inventory fetch degrades that
+ * section alone to an error card (see renderArchiveInventorySection) and
+ * must never take down the pattern list below it, which has its own,
+ * separate failure mode (the first try/catch, unchanged from before this
+ * inventory existed).
  */
 async function renderProtectedPaths() {
     try {
@@ -807,6 +815,15 @@ async function renderProtectedPaths() {
     }
 
     const groups = state.data.protectedPaths.groups;
+
+    let inventory = null;
+    let inventoryError = null;
+    try {
+        inventory = await api.get('/admin/archive-inventory');
+        state.data.archiveInventory = inventory;
+    } catch (error) {
+        inventoryError = error.message;
+    }
 
     return html`
         <div class="card">
@@ -819,6 +836,8 @@ async function renderProtectedPaths() {
                 </p>
             </div>
         </div>
+
+        ${renderArchiveInventorySection(inventory, inventoryError)}
 
         ${groups.map(g => html`
         <div class="card u-mt-md">
@@ -838,6 +857,207 @@ async function renderProtectedPaths() {
         </div>
         `)}
     `;
+}
+
+// Reuses the four existing `.status-badge` colour variants (see admin.css)
+// the same way renderHealthChecksCard's HEALTH_STATE_BADGE_CLASS does --
+// full/partial/none/unknown has no state of its own to draw from. `none` is
+// deliberately the muted `disabled` tint, not red: it is the expected,
+// correct state for a mirror's actively-served release (see
+// shared/protected_paths.py's "WHY THE NEWEST RELEASE ... IS DELIBERATELY
+// NOT HERE"), not a problem on its own -- `at_risk` (below) is what actually
+// flags a problem.
+const PROTECTION_BADGE_CLASS = {
+    full: 'active',
+    partial: 'syncing',
+    none: 'disabled',
+    unknown: 'error',
+};
+
+const PROTECTION_LABEL = {
+    full: 'Protected',
+    partial: 'Partial',
+    none: 'Unprotected',
+    unknown: 'Unknown',
+};
+
+function protectionBadge(protection) {
+    const cls = PROTECTION_BADGE_CLASS[protection] || 'disabled';
+    const label = PROTECTION_LABEL[protection] || protection;
+    return html`<span class="status-badge ${cls}">${label}</span>`;
+}
+
+/**
+ * Newest / latest-in-major / pre-release / at-risk, as a row of small badges
+ * -- an array of SafeHtml, not a joined string, so html`` can interpolate it
+ * the same way it already does for `groups.map(...)` elsewhere in this file.
+ */
+function releaseTagBadges(release) {
+    const tags = [];
+    // .info, not .disabled: .disabled's muted tint means "inactive"
+    // everywhere else in this file (nav items, the mirror status badges),
+    // and these are purely informational. See .status-badge.info in
+    // admin.css.
+    //
+    // `current` (shared.protected_paths.CURRENT_RELEASES) is the field
+    // at_risk actually keys off; newest/latest_in_major below are shown too
+    // but are informational only -- see archive_inventory.py's module
+    // docstring for why neither is a safe stand-in for "still served".
+    if (release.current) {
+        tags.push(html`<span class="status-badge info">Current</span>`);
+    }
+    if (release.kind === 'prerelease') {
+        tags.push(html`<span class="status-badge info">Pre-release</span>`);
+    }
+    if (release.newest) {
+        tags.push(html`<span class="status-badge info">Newest</span>`);
+    } else if (release.latest_in_major) {
+        tags.push(html`<span class="status-badge info">Latest in major</span>`);
+    }
+    // .status-badge.at-risk, not the old plain .u-text-error text: needs to
+    // read as a pill matching its row-mates. See that class in admin.css for
+    // why it is the most alarming colour available here, not a softer one.
+    if (release.at_risk) {
+        tags.push(html`<span class="status-badge at-risk">⚠️ At risk</span>`);
+    }
+    return tags;
+}
+
+/**
+ * A comma-separated list of <code> spans -- used for both a release's
+ * unprotected_locations and a mirror's protected_not_on_disk. Every item is
+ * a directory name upstream controls (an architecture directory is an
+ * arbitrary string as far as this file is concerned), so each one goes
+ * through html`` like any other untrusted field; there is no shortcut here
+ * because "it's just a path".
+ */
+function joinCodeList(items) {
+    return items.map((item, i) => html`${i > 0 ? ', ' : ''}<code>${item}</code>`);
+}
+
+function releaseRows(release) {
+    const unprotectedRow = release.protection === 'partial' && release.unprotected_locations.length
+        ? html`
+        <tr>
+            <td colspan="5">
+                <span class="u-text-muted u-text-sm code-chip-list">Unprotected: ${joinCodeList(release.unprotected_locations)}</span>
+            </td>
+        </tr>
+        ` : '';
+
+    return html`
+        <tr>
+            <td><strong>${release.version}</strong></td>
+            <td>${protectionBadge(release.protection)}</td>
+            <td><span class="u-row-8">${releaseTagBadges(release)}</span></td>
+            <td>${release.location_count.toLocaleString()}</td>
+            <td>${formatDate(release.modified)}</td>
+        </tr>
+        ${unprotectedRow}
+    `;
+}
+
+function renderMirrorInventoryTable(mirror) {
+    if (!mirror.releases.length) {
+        return html`<p class="u-text-muted u-pad-body">No releases found on disk.</p>`;
+    }
+
+    return html`
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Version</th>
+                        <th>Protection</th>
+                        <th>Tags</th>
+                        <th>Locations</th>
+                        <th>Last Changed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${mirror.releases.map(release => releaseRows(release))}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderMirrorInventoryCard(mirror) {
+    const title = mirror.mirror_names.length ? mirror.mirror_names.join(', ') : mirror.mirror_type;
+
+    return html`
+    <div class="card u-mt-md">
+        <div class="card-header">
+            <h3 class="card-title">${title} -- On Disk</h3>
+            ${mirror.available ? html`
+            <span class="u-text-muted u-text-sm">${mirror.releases.length.toLocaleString()} releases</span>
+            ` : ''}
+        </div>
+        ${mirror.available
+            ? renderMirrorInventoryTable(mirror)
+            : html`<p class="u-text-error u-pad-body">Unavailable: ${mirror.error}</p>`}
+        ${mirror.available && mirror.incomplete ? html`
+        <p class="u-text-error u-text-sm u-pad-body">
+            This scan is incomplete -- treat the list above as a lower bound, not the full picture.
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.protected_not_on_disk.length ? html`
+        <p class="u-text-error u-text-sm u-pad-body code-chip-list">
+            Protected but missing from disk: ${joinCodeList(mirror.protected_not_on_disk)}
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.current_not_on_disk && mirror.current_not_on_disk.length ? html`
+        <p class="u-text-error u-text-sm u-pad-body code-chip-list">
+            Listed as current but missing from disk (CURRENT_RELEASES needs updating):
+            ${joinCodeList(mirror.current_not_on_disk)}
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.stale_current && mirror.stale_current.length ? html`
+        <p class="u-text-error u-text-sm u-pad-body code-chip-list">
+            Listed as current but superseded by a newer current release (CURRENT_RELEASES needs
+            updating): ${joinCodeList(mirror.stale_current)}
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.unclassified && mirror.unclassified.length ? html`
+        <p class="u-text-error u-text-sm u-pad-body code-chip-list">
+            Not recognised as a release: ${joinCodeList(mirror.unclassified)}
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.errors && mirror.errors.length ? html`
+        <p class="u-text-error u-text-sm u-pad-body code-chip-list">
+            Skipped while scanning: ${joinCodeList(mirror.errors)}
+        </p>
+        ` : ''}
+        ${mirror.available && mirror.truncated ? html`
+        <p class="u-text-muted u-text-sm u-pad-body">
+            This mirror has more entries than could be scanned; the list above may be incomplete.
+        </p>
+        ` : ''}
+    </div>
+    `;
+}
+
+/**
+ * The "On disk" inventory (GET /api/admin/archive-inventory), rendered above
+ * the pattern list in renderProtectedPaths. `error` is the fetch's own
+ * failure (network, an expired token) -- distinct from an individual
+ * mirror's `available: false`, which is a normal, per-mirror state the
+ * backend already reports inside a 200 (see app.core.archive_inventory) and
+ * is handled by renderMirrorInventoryCard instead.
+ */
+function renderArchiveInventorySection(inventory, error) {
+    if (error) {
+        return html`
+        <div class="card u-mt-md">
+            <div class="card-header">
+                <h3 class="card-title">On Disk</h3>
+            </div>
+            <p class="u-text-error u-pad-body">Error loading archive inventory: ${error}</p>
+        </div>
+        `;
+    }
+
+    return html`${(inventory?.mirrors || []).map(mirror => renderMirrorInventoryCard(mirror))}`;
 }
 
 async function renderUsers() {

@@ -584,6 +584,167 @@ async function main() {
         return '';
     });
 
+    // --- Archive inventory (Protected Paths page) ---------------------------
+    //
+    // A location string is a directory name upstream controls -- an
+    // architecture directory is an arbitrary string as far as this file is
+    // concerned -- so it is untrusted exactly like rsync's stderr or a
+    // health-check detail string, and gets the same hostile-payload
+    // treatment. renderProtectedPaths now fetches two endpoints, so these
+    // checks route api.get by endpoint rather than using the generic
+    // renderWith(), the same way the health-checks-card checks below do for
+    // renderDashboard.
+
+    await check(
+        'renderProtectedPaths escapes a hostile architecture directory name in an archive-inventory location end-to-end',
+        async () => {
+            const protectedPayload = {
+                groups: [{ mirror_type: 'freebsd', mirror_names: ['FreeBSD'], patterns: [] }]
+            };
+            const hostileLocation = `releases/${PAYLOADS.img_onerror}/14.3-RELEASE`;
+            const inventoryPayload = {
+                generated_at: '2026-09-13T00:00:00Z',
+                mirrors: [{
+                    mirror_type: 'freebsd',
+                    mirror_names: ['FreeBSD'],
+                    root: '/data/mirrors/freebsd/pub/FreeBSD',
+                    available: true,
+                    error: null,
+                    truncated: false,
+                    protected_not_on_disk: [PAYLOADS.attr_breakout],
+                    releases: [{
+                        version: PAYLOADS.attr_breakout_tagclose,
+                        line: '14.3',
+                        major: '14',
+                        kind: 'release',
+                        protection: 'partial',
+                        unprotected_locations: [hostileLocation],
+                        locations: [hostileLocation, 'releases/amd64/amd64/14.3-RELEASE'],
+                        location_count: 2,
+                        newest: false,
+                        latest_in_major: true,
+                        at_risk: true,
+                        modified: '2026-09-06T04:00:00+00:00'
+                    }]
+                }]
+            };
+            mod.api.get = async (endpoint) =>
+                (endpoint === '/admin/archive-inventory' ? inventoryPayload : protectedPayload);
+
+            const out = String(await mod.renderProtectedPaths());
+            assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+            assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+            assert(tagNames(out).includes('table'), 'the inventory table did not render at all');
+            assert(
+                out.includes(`releases/${'&lt;img src=x onerror=alert(1)&gt;'}/14.3-RELEASE`),
+                'hostile location not escaped as text'
+            );
+            assert(out.includes('At risk'), 'the at_risk badge did not render');
+            return '';
+        }
+    );
+
+    await check(
+        'renderProtectedPaths shows an inventory error but still renders the pattern list when the archive-inventory fetch fails',
+        async () => {
+            const protectedPayload = {
+                groups: [{ mirror_type: 'openbsd', mirror_names: [], patterns: ['/7.5/***'] }]
+            };
+            mod.api.get = async (endpoint) => {
+                if (endpoint === '/admin/archive-inventory') {
+                    throw new Error('network disabled in harness');
+                }
+                return protectedPayload;
+            };
+
+            const out = String(await mod.renderProtectedPaths());
+            assert(out.includes('/7.5/***'), 'the pattern list must still render');
+            assert(
+                out.includes('Error loading archive inventory'),
+                `expected an inventory error state, got ${out}`
+            );
+            return '';
+        }
+    );
+
+    await check('renderProtectedPaths shows a per-mirror unavailable state without a 500', async () => {
+        const protectedPayload = {
+            groups: [{ mirror_type: 'openbsd', mirror_names: [], patterns: [] }]
+        };
+        const inventoryPayload = {
+            generated_at: '2026-09-13T00:00:00Z',
+            mirrors: [{
+                mirror_type: 'openbsd',
+                mirror_names: [],
+                root: null,
+                available: false,
+                error: PAYLOADS.attr_breakout,
+                truncated: false,
+                protected_not_on_disk: [],
+                releases: []
+            }]
+        };
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/archive-inventory' ? inventoryPayload : protectedPayload);
+
+        const out = String(await mod.renderProtectedPaths());
+        assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+        assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+        assert(out.includes('Unavailable'), 'expected the unavailable state to render');
+        return '';
+    });
+
+    await check(
+        'renderProtectedPaths escapes hostile names in current/unclassified/errors end-to-end',
+        async () => {
+            const protectedPayload = {
+                groups: [{ mirror_type: 'openbsd', mirror_names: ['OpenBSD'], patterns: [] }]
+            };
+            const inventoryPayload = {
+                generated_at: '2026-09-13T00:00:00Z',
+                mirrors: [{
+                    mirror_type: 'openbsd',
+                    mirror_names: ['OpenBSD'],
+                    root: '/data/mirrors/openbsd/pub/OpenBSD',
+                    available: true,
+                    error: null,
+                    truncated: false,
+                    protected_not_on_disk: [],
+                    current_not_on_disk: [PAYLOADS.img_onerror],
+                    unclassified: [PAYLOADS.attr_breakout_tagclose],
+                    errors: [PAYLOADS.two_quoted_spans],
+                    releases: [{
+                        version: '7.9',
+                        line: '7.9',
+                        major: '7',
+                        kind: 'release',
+                        protection: 'none',
+                        unprotected_locations: [],
+                        locations: ['7.9'],
+                        location_count: 1,
+                        newest: true,
+                        latest_in_major: true,
+                        current: true,
+                        at_risk: false,
+                        modified: null
+                    }]
+                }]
+            };
+            mod.api.get = async (endpoint) =>
+                (endpoint === '/admin/archive-inventory' ? inventoryPayload : protectedPayload);
+
+            const out = String(await mod.renderProtectedPaths());
+            assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
+            assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
+            assert(out.includes('Current'), 'the Current badge did not render');
+            assert(
+                out.includes('&lt;img src=x onerror=alert(1)&gt;'),
+                'current_not_on_disk entry not escaped'
+            );
+            return '';
+        }
+    );
+
     // --- Health checks card (Dashboard) -------------------------------------
     //
     // bad[].detail, skipped[].reason and warnings/ok entries are all text a
