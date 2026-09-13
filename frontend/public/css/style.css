@@ -646,6 +646,16 @@ body {
     margin-bottom: 24px;
 }
 
+/* Links in running text keep the colour of the text around them, which is
+   already held to AA in both themes, and are told apart by the underline
+   rather than a hue. With no rule at all they fell back to the browser's
+   default blue, well under AA on the dark theme. */
+.about-text a {
+    color: var(--text-secondary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
 .about-text h4 {
     font-size: 1rem;
     font-weight: 600;
@@ -670,6 +680,13 @@ body {
 .footer-content p {
     color: var(--text-muted);
     font-size: 0.875rem;
+}
+
+/* Same treatment as .about-text a: the footer's own muted colour, underlined. */
+.footer-content a {
+    color: var(--text-muted);
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .footer-version {

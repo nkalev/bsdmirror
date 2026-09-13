@@ -313,6 +313,8 @@ const PUBLIC_PROBES = [
     { id: '.btn-primary', selector: '.mirror-actions .btn-primary', bgSelector: '.mirror-actions .btn-primary' },
     { id: '.btn-secondary:hover', selector: '.mirror-actions .btn-secondary', bgSelector: '.mirror-actions .btn-secondary', hover: true },
     { id: '.footer-content p', selector: '.footer-content p:not(.footer-version)', bgSelector: '.footer' },
+    { id: '.footer-content a', selector: '.footer-content p a', bgSelector: '.footer' },
+    { id: '.about-text a', selector: '.about-text a', bgSelector: 'body' },
     { id: '.footer-version', selector: '.footer-version', bgSelector: '.footer' },
     { id: '.method-card p', selector: '.method-card p', bgSelector: '.method-card' }
 ];
