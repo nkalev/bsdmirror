@@ -236,6 +236,25 @@ body {
     font-weight: 600;
 }
 
+/* A subheading one level below .card-title, for a labelled group inside a
+   card's body (e.g. the four "Bad (n)" / "Skipped (n)" / "Warnings (n)" /
+   "OK (n)" lists on the health-checks card) -- .card-title itself is sized
+   for a card's own <h3> header and is too heavy reused on an in-body <h4>,
+   competing with the card's real title instead of reading as a subsection
+   of it. */
+.card-subtitle {
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-muted);
+    margin: 16px 0 8px;
+}
+
+.card-subtitle:first-child {
+    margin-top: 0;
+}
+
 /* Stats Grid */
 .stats-grid {
     display: grid;
@@ -371,6 +390,16 @@ tr:hover td {
 .status-badge.disabled {
     background: var(--bg-tertiary);
     color: var(--text-muted);
+}
+
+/* A fifth state for the health-checks card only: Mirror.status has no
+   "incomplete" of its own, and reusing .syncing here would make it look
+   identical to that card's "stale" badge, the one thing the two are required
+   to not do. status-info-text, not status-info: see tokens.css -- status-info
+   itself is 4.16:1 here (needs 4.5:1 as text). */
+.status-badge.health-incomplete {
+    background: var(--status-info-bg);
+    color: var(--status-info-text);
 }
 
 .status-dot {
@@ -600,6 +629,51 @@ tr:hover td {
 .activity-time {
     font-size: 0.75rem;
     color: var(--text-muted);
+}
+
+/* Health Checks card (Dashboard)
+   A lighter row than .activity-item/.activity-icon: four short lists stacked
+   in one card (bad/skipped/warnings/ok) read as a checklist, not an activity
+   feed, and a 32px icon circle per row for a one-line entry was too heavy
+   repeated that many times in one place. The leading icon is the emoji
+   renderHealthChecksCard already passes in (kept, not decorative -- it is
+   the per-row, non-colour signal alongside each list's own .card-subtitle,
+   for the row itself where a screen reader lands mid-list). */
+.health-check-list {
+    list-style: none;
+}
+
+.health-check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.health-check-row:last-child {
+    border-bottom: none;
+}
+
+.health-check-icon {
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+
+.health-check-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.health-check-text {
+    font-size: 0.875rem;
+    line-height: 1.4;
+    /* bad[].detail / skipped[].reason / warnings[] are free text from a
+       script outside this container (see admin.js's comment on this card)
+       and the backend caps them at 500 chars, not at a width that fits this
+       card -- wrap rather than push the card wider than its .stats-grid
+       siblings on any viewport. */
+    overflow-wrap: break-word;
 }
 
 /* Login Page */

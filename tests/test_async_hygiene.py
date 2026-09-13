@@ -57,6 +57,9 @@ BLOCKING_CALLS = {
     "socket.create_connection": "blocking socket; use asyncio's transports",
     "os.statvfs": "blocking syscall; go through app.core.disk.get_disk_usage",
     "read_disk_usage": "blocking; call get_disk_usage instead (app/core/disk.py)",
+    "read_health_status_document": (
+        "blocking file IO; call get_health_status_view instead (app/core/health_status.py)"
+    ),
 }
 
 # Kept out of the literal above so this file does not itself trip a

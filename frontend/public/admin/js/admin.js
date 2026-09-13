@@ -19,6 +19,7 @@ const state = {
     currentPage: 'dashboard',
     data: {
         dashboard: null,
+        healthChecks: null,
         mirrors: null,
         syncFailures: null,
         protectedPaths: null,
@@ -407,6 +408,20 @@ async function renderDashboard() {
 
     const d = state.data.dashboard;
 
+    // A second, independent fetch. GET /api/admin/health-checks always
+    // answers 200 on its own (see backend/app/core/health_status.py), but
+    // the fetch itself can still fail here -- an expired token mid-load, a
+    // network blip -- and that failure must degrade to the "unknown" card
+    // below, not take the rest of an otherwise-working dashboard down with
+    // it (renderHealthChecksCard treats null the same as a real "unknown").
+    let healthChecks = null;
+    try {
+        healthChecks = await api.get('/admin/health-checks');
+    } catch (error) {
+        healthChecks = null;
+    }
+    state.data.healthChecks = healthChecks;
+
     return html`
         <div class="stats-grid">
             <div class="stat-card">
@@ -457,6 +472,8 @@ async function renderDashboard() {
             </div>
         </div>
 
+        ${renderHealthChecksCard(healthChecks)}
+
         <div class="u-grid-2">
             <div class="card">
                 <div class="card-header">
@@ -494,6 +511,123 @@ async function renderDashboard() {
                         </li>
                     `) : html`<li class="activity-item"><div class="activity-content">No recent activity</div></li>`}
                 </ul>
+            </div>
+        </div>
+    `;
+}
+
+// ===========================================
+// Health Checks card (Dashboard)
+// ===========================================
+//
+// GET /api/admin/health-checks (backend/app/core/health_status.py) reports
+// on scripts/health_check.sh -- the hourly, systemd-timed script that alerts
+// Discord on a transition, not this backend's own liveness check. That
+// script's only visible output today is a Discord message, so a quiet
+// channel and a dead timer look identical from here; this card is what
+// closes that gap on the dashboard itself.
+//
+// `health` is null both for a real fetch failure (see renderDashboard) and
+// for a value the backend itself could not produce (its own "unknown"
+// states use null fields the same way) -- UNREACHABLE_HEALTH mirrors that
+// exact shape so both paths render through the one function below instead
+// of a second, easily-drifting "fetch failed" branch.
+
+const UNREACHABLE_HEALTH = {
+    state: 'unknown',
+    reason: 'Could not load health-check status.',
+    finished_at: null,
+    age_seconds: null,
+    stale_after_seconds: null,
+    counts: null,
+    ok: [],
+    bad: [],
+    skipped: [],
+    warnings: [],
+    alerting: null,
+    state_persisted: null
+};
+
+// Reuses three of the four existing `.status-badge` colour variants (see
+// admin.css) -- none of the five health states maps onto Mirror.status's set
+// exactly. `active` (green) and `error` (red) fit ok and failing; unknown
+// gets the muted `disabled` tint, since "no signal at all" is a different
+// thing from "a problem was seen". stale and incomplete needed their own
+// look rather than sharing `syncing`: a checker that hasn't reported in a
+// while (stale) and one that ran but skipped checks or never sent its alert
+// (incomplete) are different problems, and this card exists precisely so
+// neither is ever mistaken for the others -- least of all for ok. `stale`
+// keeps the amber `syncing` tint (still "time-based, not a hard failure");
+// `incomplete` gets its own blue `health-incomplete` tint, defined
+// alongside the other four in admin.css.
+const HEALTH_STATE_BADGE_CLASS = {
+    ok: 'active',
+    stale: 'syncing',
+    incomplete: 'health-incomplete',
+    failing: 'error',
+    unknown: 'disabled'
+};
+
+const HEALTH_STATE_LABEL = {
+    ok: 'OK',
+    stale: 'Stale',
+    incomplete: 'Incomplete',
+    failing: 'Failing',
+    unknown: 'Unknown'
+};
+
+/**
+ * One of the four lists on the card: a heading with a count, then either the
+ * items (via `renderItem`, which may return a plain string or a nested
+ * html`` fragment -- both are escaped the same way by the outer template)
+ * or a placeholder `<li>` when there are none, matching the empty-state
+ * shape Recent Sync Jobs / Recent Activity above already use.
+ */
+function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
+    return html`
+        <h4 class="card-subtitle">${title} (${items.length})</h4>
+        <ul class="health-check-list">
+            ${items.length ? items.map(item => html`
+                <li class="health-check-row">
+                    <div class="health-check-icon">${icon}</div>
+                    <div class="health-check-content">
+                        <div class="health-check-text">${renderItem(item)}</div>
+                    </div>
+                </li>
+            `) : html`<li class="health-check-row"><div class="health-check-content">${emptyLabel}</div></li>`}
+        </ul>
+    `;
+}
+
+function renderHealthChecksCard(health) {
+    const h = health || UNREACHABLE_HEALTH;
+    const badgeClass = HEALTH_STATE_BADGE_CLASS[h.state] || 'disabled';
+    const label = HEALTH_STATE_LABEL[h.state] || h.state || 'Unknown';
+    const age = formatHealthAge(h.age_seconds);
+
+    return html`
+        <div class="card u-mt-md">
+            <div class="card-header">
+                <h3 class="card-title">Health Checks</h3>
+            </div>
+            <div class="u-row-8">
+                <span class="status-badge ${badgeClass}">${label}</span>
+                <span>${h.reason || 'No health-check report is available.'}</span>
+            </div>
+            <p class="u-text-muted u-text-sm u-mt-sm">
+                ${h.finished_at
+                    ? html`Last ran ${formatDate(h.finished_at)}${age ? html` (${age})` : ''}`
+                    : 'Last run: unknown'}
+            </p>
+            <div class="u-mt-sm">
+                ${healthChecklistSection('Bad', h.bad || [], 'No failing checks', '❌',
+                    (item) => `${item.label}: ${item.detail}`)}
+                ${healthChecklistSection('Skipped', h.skipped || [], 'No skipped checks', '⏭️',
+                    (item) => `${item.check}: ${item.reason}`)}
+                ${healthChecklistSection('Warnings', h.warnings || [], 'No warnings', '⚠️',
+                    (item) => item)}
+                ${healthChecklistSection('OK', h.ok || [], 'No checks reported ok', '✅',
+                    (item) => item)}
             </div>
         </div>
     `;
@@ -1399,6 +1533,25 @@ function formatDate(dateStr) {
         hour: '2-digit',
         minute: '2-digit'
     });
+}
+
+/**
+ * `age_seconds` on the health-checks card: the backend's own computation
+ * (server clock vs the report's finished_epoch), shown alongside
+ * formatDate()'s client-computed "ago" so a card about clock-based staleness
+ * is not itself silently trusting the viewer's browser clock for the number
+ * that actually drove the stale/failing/incomplete decision.
+ */
+function formatHealthAge(seconds) {
+    if (seconds == null) return null;
+    const total = Math.max(0, Math.floor(seconds));
+    const days = Math.floor(total / 86400);
+    const hours = Math.floor((total % 86400) / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h ago`;
+    if (hours > 0) return `${hours}h ${minutes}m ago`;
+    if (minutes > 0) return `${minutes}m ago`;
+    return `${total}s ago`;
 }
 
 function formatAction(action) {

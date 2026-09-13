@@ -76,7 +76,7 @@ set -euo pipefail
 # What load_env may read from .env.
 DOTENV_KEYS=(DISCORD_WEBHOOK_URL SLACK_WEBHOOK EMAIL_RECIPIENT ALERT_CHANNELS
              STALE_AFTER_HOURS ALERT_REMIND_HOURS DISK_WARN_PCT DISK_CRIT_PCT
-             MIRROR_DATA_PATH DOMAIN API_URL ALERT_SOURCE_LABEL)
+             MIRROR_DATA_PATH DOMAIN API_URL ALERT_SOURCE_LABEL HEALTH_STATUS_DIR)
 
 # Which of those the environment set, recorded BEFORE the defaults below are
 # assigned. load_env used to ask "is it still empty?" instead, and a key with a
@@ -125,6 +125,31 @@ ALERT_REMIND_HOURS="${ALERT_REMIND_HOURS:-24}"
 # systemd sets STATE_DIRECTORY from StateDirectory= in the unit; /var/lib is
 # the fallback for a manual run.
 HEALTH_STATE_FILE="${HEALTH_STATE_FILE:-${STATE_DIRECTORY:-/var/lib/bsdmirror}/health-state.json}"
+
+# Where the last-run snapshot for the admin dashboard is written (see
+# write_status): a whole DIRECTORY, bind-mounted read-only into the backend
+# container, because the file inside it is replaced with `mv -f` and a
+# single-file mount would keep pointing at the inode that existed when the
+# container started rather than following the rename.
+#
+# Deliberately its OWN top-level path, NOT ${STATE_DIRECTORY:-/var/lib/
+# bsdmirror}/status the way an earlier version of this had it (a subdirectory
+# of HEALTH_STATE_FILE's directory, following the same fallback). README's
+# own install order runs `docker compose up` before install-health-timer.sh,
+# so on a fresh host Compose is the first thing to need /var/lib/bsdmirror/
+# status to exist as a bind-mount source and creates every missing path
+# component itself, as root, at Docker's own default mode (0755) -- including
+# /var/lib/bsdmirror, the directory StateDirectory=bsdmirror in the systemd
+# unit privately owns at 0700 and which also holds HEALTH_STATE_FILE.
+# systemd does not tighten the mode of a directory that already exists when
+# its unit later starts, so that directory would stay world-traversable for
+# the life of the host. (Production is unaffected: /var/lib/bsdmirror already
+# existed there, at 0700, before this feature did.) A dedicated path side by
+# side with it, rather than inside it, means Docker creating it at 0755 is
+# exactly the intended mode for THIS directory, and Docker never has a reason
+# to touch the private one -- the dedup state also no longer has any way to
+# end up nested inside the tree this script bind-mounts out to a container.
+HEALTH_STATUS_DIR="${HEALTH_STATUS_DIR:-/var/lib/bsdmirror-status}"
 
 # HTTP. Retries exist so a single blip does not produce an alert/recovery pair
 # on an hourly timer.
@@ -177,7 +202,17 @@ fi
 info() { [ "$QUIET" -eq 1 ] || printf '%s\n' "$(redact "$*")"; }
 ok()   { [ "$QUIET" -eq 1 ] || printf '  %s[ OK ]%s %s\n' "$C_GRN" "$C_OFF" "$(redact "$*")"; }
 bad()  { printf '  %s[FAIL]%s %s\n' "$C_RED" "$C_OFF" "$(redact "$*")" >&2; }
-warn() { printf '  %s[WARN]%s %s\n' "$C_YEL" "$C_OFF" "$(redact "$*")" >&2; }
+warn() {
+    # Also captured into WARN_MESSAGES for status.json (see write_status),
+    # already redacted since that is what a reader of the file should see too.
+    # A warn() called inside a command substitution runs in a subshell, so
+    # the append here is lost while the printf below still reaches the
+    # terminal/journal -- acceptable, see write_status's header comment.
+    local _msg
+    _msg="$(redact "$*")"
+    WARN_MESSAGES+=("$_msg")
+    printf '  %s[WARN]%s %s\n' "$C_YEL" "$C_OFF" "$_msg" >&2
+}
 err()  { printf '%s[ERROR]%s %s\n' "$C_RED" "$C_OFF" "$(redact "$*")" >&2; }
 
 usage() {
@@ -304,6 +339,17 @@ require_deps() {
 FS_US=$'\037'
 
 BAD_RECORDS=()
+# The following three exist only to feed write_status's status.json snapshot;
+# nothing else reads them. WARN_MESSAGES is declared here rather than next to
+# warn() itself (which only appends to it) so all four status.json inputs are
+# declared together -- BAD_RECORDS above included. Declared as empty arrays,
+# not left unset: `arr+=(x)` on a truly unset array auto-vivifies it under
+# `set -u`, but a plain read of an unset array (${#arr[@]}, "${arr[@]}") does
+# not and aborts the script -- and write_status reads all four before a run
+# guarantees any of them was ever appended to.
+OK_MESSAGES=()      # every pass_condition message, in order
+SKIPPED_RECORDS=()  # check<FS_US>reason for every check that skipped
+WARN_MESSAGES=()    # every warn() message, already redacted, in order
 CHECKS_OK=0
 CHECKS_BAD=0
 API_HEALTHY=0
@@ -317,7 +363,22 @@ add_condition() {
 
 pass_condition() {
     CHECKS_OK=$((CHECKS_OK + 1))
+    OK_MESSAGES+=("$1")
     ok "$1"
+}
+
+# skip_check CHECK REASON
+#
+# Records, for status.json, that CHECK returned without reaching a verdict on
+# anything -- distinct from add_condition (a bad verdict) and pass_condition
+# (a good one). CHECK is always one of the four names in README's "What is
+# checked" table ("api", "mirrors", "disk", "containers"), never a per-mirror
+# key, so the admin view has a small, fixed vocabulary regardless of how many
+# mirrors are configured. Callers sit right above each carry_forward call
+# below and in check_containers, which is every place today that can return
+# without an add_condition/pass_condition of its own.
+skip_check() {
+    SKIPPED_RECORDS+=("${1}${FS_US}${2}")
 }
 
 # carry_forward PREFIX
@@ -439,12 +500,16 @@ check_mirrors() {
         else
             warn "mirror freshness UNKNOWN: /api/stats/health returned HTTP $HTTP_CODE (the api condition above covers it)"
         fi
+        skip_check "mirrors" \
+            "GET $API_URL/api/stats/health returned HTTP $HTTP_CODE; mirror freshness is UNKNOWN"
         carry_forward "mirror-"
         return 1
     fi
 
     if ! printf '%s' "$HTTP_BODY" | jq -e '.mirrors' >/dev/null 2>&1; then
         add_condition "mirror-api" "mirror-api" \
+            "/api/stats/health returned HTTP 200 but no .mirrors object; mirror freshness is UNKNOWN"
+        skip_check "mirrors" \
             "/api/stats/health returned HTTP 200 but no .mirrors object; mirror freshness is UNKNOWN"
         carry_forward "mirror-stale:"
         carry_forward "mirror-error:"
@@ -491,6 +556,7 @@ check_mirrors() {
     if [ -z "$parsed" ]; then
         add_condition "mirror-api" "mirror-api" \
             "could not parse /api/stats/health; mirror freshness is UNKNOWN"
+        skip_check "mirrors" "could not parse /api/stats/health; mirror freshness is UNKNOWN"
         carry_forward "mirror-stale:"
         carry_forward "mirror-error:"
         return 1
@@ -600,6 +666,7 @@ check_containers() {
     local unhealthy rc=0
     if ! command -v docker >/dev/null 2>&1; then
         warn "container check skipped: docker not found on this host"
+        skip_check "containers" "docker not found on this host"
         carry_forward "containers"
         return 0
     fi
@@ -913,6 +980,7 @@ webhook_post() {
 # Channel selection
 # ---------------------------------------------------------------------------
 SELECTED_CHANNELS=""
+NOTIFICATION_RESULT="none"  # none | delivered | failed -- for status.json
 
 select_channels() {
     local requested name found
@@ -1044,6 +1112,139 @@ dispatch() {
 }
 
 # ---------------------------------------------------------------------------
+# Status snapshot for the admin dashboard.
+#
+# HEALTH_STATE_FILE (above) is this script's own dedup bookkeeping: 0600,
+# never read by anything but this script. status.json is different on
+# purpose: a small, redacted summary of the last run, read by the backend's
+# non-root appuser through a read-only bind mount of the DIRECTORY
+# $HEALTH_STATUS_DIR (never a single-file mount -- see the mount comment in
+# docker-compose.yml).
+#
+# Called exactly once, from main(), right after state_save, only when
+# MODE=run and DRY_RUN=0 -- never by --dry-run, --test-alert, --check-deps or
+# --show-state, and not at all if the script exits before reaching that point
+# (missing prerequisites or bad channel config: exit 2). The admin view then
+# reports a stale heartbeat instead, which is the correct signal: silence,
+# not a false "all clear".
+#
+# Failure here warns and changes nothing else: not the exit code, not
+# alerting, not the dedup state -- see the `|| true` at the call site. No
+# string reaches the file without going through redact() first (WARN_MESSAGES
+# is the one exception: it is captured already-redacted inside warn() itself,
+# so this is the one place that shows exactly what was captured there).
+#
+# scripts/systemd/bsdmirror-health.service runs this under ProtectSystem=full,
+# which leaves /var (and so $HEALTH_STATUS_DIR) writable; the stricter
+# ProtectSystem=strict is deliberately not enabled (see that unit's own
+# comment). If it ever is, it would need `ReadWritePaths=/var/lib/
+# bsdmirror-status` added alongside it, or every mkdir/chmod/jq/mv above
+# starts failing under this function's own `|| true` -- which does not fail
+# the run or change the exit code, so a sandboxing regression here shows up
+# on the admin card as a stale heartbeat, not as an error anywhere loud.
+# ---------------------------------------------------------------------------
+write_status() {
+    local dir="$HEALTH_STATUS_DIR" file tmp
+    file="$dir/status.json"
+    tmp="$dir/status.json.tmp.$$"
+
+    if ! mkdir -p "$dir" 2>/dev/null; then
+        warn "cannot create $dir; health status will not be published"
+        return 1
+    fi
+    # umask 077 (see above) would otherwise leave this 0700. The reader is a
+    # different, non-root container user reaching it only through a
+    # read-only bind mount, so the directory has to stay traversable on
+    # every run, not just the one that happened to create it.
+    if ! chmod 0755 "$dir" 2>/dev/null; then
+        warn "cannot chmod $dir to 0755; health status will not be published"
+        return 1
+    fi
+
+    local finished_epoch finished_at persisted
+    local ok_json bad_json skipped_json warn_json channels_json
+
+    finished_epoch=$(date -u +%s)
+    finished_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Each block below is guarded on the array being non-empty before it is
+    # ever expanded with "${arr[@]}" -- see the identical guard on
+    # BAD_RECORDS in reconcile() above. Redaction happens on the whole
+    # newline-joined blob in one call: redact() substitutes per input line
+    # (awk's default record separator), so this is equivalent to redacting
+    # each element separately and avoids one subprocess per line.
+    ok_json='[]'
+    if [ "${#OK_MESSAGES[@]}" -gt 0 ]; then
+        ok_json=$(redact "$(printf '%s\n' "${OK_MESSAGES[@]}")" | jq -R -s \
+            'split("\n") | map(select(length > 0))') || ok_json='[]'
+    fi
+
+    bad_json='[]'
+    if [ "${#BAD_RECORDS[@]}" -gt 0 ]; then
+        bad_json=$(redact "$(printf '%s\n' "${BAD_RECORDS[@]}")" | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(split("\u001f"))
+            | map({key: (.[0] // ""), label: (.[1] // ""), detail: (.[2] // "")})') \
+            || bad_json='[]'
+    fi
+
+    skipped_json='[]'
+    if [ "${#SKIPPED_RECORDS[@]}" -gt 0 ]; then
+        skipped_json=$(redact "$(printf '%s\n' "${SKIPPED_RECORDS[@]}")" | jq -R -s '
+            split("\n") | map(select(length > 0)) | map(split("\u001f"))
+            | map({check: (.[0] // ""), reason: (.[1] // "")})') || skipped_json='[]'
+    fi
+
+    warn_json='[]'
+    if [ "${#WARN_MESSAGES[@]}" -gt 0 ]; then
+        warn_json=$(printf '%s\n' "${WARN_MESSAGES[@]}" | jq -R -s \
+            'split("\n") | map(select(length > 0))') || warn_json='[]'
+    fi
+
+    # SELECTED_CHANNELS is names only, space separated, never a URL -- see
+    # select_channels above.
+    channels_json=$(printf '%s' "$SELECTED_CHANNELS" | jq -R -s \
+        'split(" ") | map(select(length > 0))') || channels_json='[]'
+
+    persisted="true"
+    [ "$STATE_DEGRADED" -eq 0 ] || persisted="false"
+
+    if ! jq -n \
+            --arg finished_at "$finished_at" \
+            --argjson finished_epoch "$finished_epoch" \
+            --argjson ok_count "$CHECKS_OK" \
+            --argjson bad_count "$CHECKS_BAD" \
+            --argjson ok "$ok_json" \
+            --argjson bad "$bad_json" \
+            --argjson skipped "$skipped_json" \
+            --argjson warnings "$warn_json" \
+            --argjson channels "$channels_json" \
+            --arg notification "$NOTIFICATION_RESULT" \
+            --argjson state_persisted "$persisted" \
+            '{schema: 1, finished_at: $finished_at, finished_epoch: $finished_epoch,
+              counts: {ok: $ok_count, bad: $bad_count},
+              ok: $ok, bad: $bad, skipped: $skipped, warnings: $warnings,
+              alerting: {channels: $channels, notification: $notification},
+              state_persisted: $state_persisted}' > "$tmp" 2>/dev/null; then
+        warn "cannot build $tmp; health status will not be published"
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+
+    if ! chmod 0644 "$tmp" 2>/dev/null; then
+        warn "cannot chmod $tmp to 0644; health status will not be published"
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+
+    if ! mv -f "$tmp" "$file" 2>/dev/null; then
+        warn "cannot replace $file; health status will not be published"
+        rm -f "$tmp" 2>/dev/null || true
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
 # main
 # ---------------------------------------------------------------------------
 main() {
@@ -1158,10 +1359,12 @@ If you can read this, alerting is wired up.")"; then
                 case "$kind" in NEW|REMIND) notify_keys+=("$key") ;; esac
             done <<< "$TRANSITIONS"
             if dispatch "$message"; then
+                NOTIFICATION_RESULT="delivered"
                 if [ "${#notify_keys[@]}" -gt 0 ]; then
                     state_mark_notified "$now" "${notify_keys[@]}"
                 fi
             else
+                NOTIFICATION_RESULT="failed"
                 # Not marked as notified on purpose: an undelivered alert must
                 # be re-attempted next run, otherwise a webhook outage during
                 # the transition suppresses that problem forever.
@@ -1172,6 +1375,11 @@ If you can read this, alerting is wired up.")"; then
 
     if [ "$DRY_RUN" -eq 0 ]; then
         state_save || true
+        # MODE is always "run" here: check-deps, show-state and test-alert all
+        # exit above. Written right after state_save, unconditionally on pass
+        # or fail, so the admin view has a heartbeat even when every check is
+        # bad; never by --dry-run, which must change nothing on disk.
+        write_status || true
     fi
 
     [ "$CHECKS_BAD" -eq 0 ] || exit 1
