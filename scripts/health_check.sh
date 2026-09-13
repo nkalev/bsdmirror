@@ -68,9 +68,28 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# Configuration. Every one of these is overridable from the environment or
-# from .env; environment wins. None of them has to be edited here.
+# Configuration. Every one of these is overridable from the environment, and
+# the ones in DOTENV_KEYS from .env too: the environment wins, then .env, then
+# the defaults below. None of them has to be edited here.
 # ---------------------------------------------------------------------------
+
+# What load_env may read from .env.
+DOTENV_KEYS=(DISCORD_WEBHOOK_URL SLACK_WEBHOOK EMAIL_RECIPIENT ALERT_CHANNELS
+             STALE_AFTER_HOURS ALERT_REMIND_HOURS DISK_WARN_PCT DISK_CRIT_PCT
+             MIRROR_DATA_PATH DOMAIN API_URL ALERT_SOURCE_LABEL)
+
+# Which of those the environment set, recorded BEFORE the defaults below are
+# assigned. load_env used to ask "is it still empty?" instead, and a key with a
+# default never is, so .env silently could not change STALE_AFTER_HOURS,
+# ALERT_REMIND_HOURS, DISK_WARN_PCT, DISK_CRIT_PCT or MIRROR_DATA_PATH, though
+# README.md documents all five as .env settings and scripts/setup.sh writes two
+# of them there. An empty value still counts as not set.
+ENV_PROVIDED=" "
+for _key in "${DOTENV_KEYS[@]}"; do
+    [ -z "${!_key:-}" ] || ENV_PROVIDED="${ENV_PROVIDED}${_key} "
+done
+unset _key
+
 ENV_FILE="${ENV_FILE:-/opt/bsdmirror/.env}"
 
 # Where to ask. The public endpoints are used on purpose: they need no
@@ -237,15 +256,11 @@ load_env() {
         info "note: $ENV_FILE not found; using environment and defaults only"
         return 0
     fi
-    for key in DISCORD_WEBHOOK_URL SLACK_WEBHOOK EMAIL_RECIPIENT ALERT_CHANNELS \
-               STALE_AFTER_HOURS ALERT_REMIND_HOURS DISK_WARN_PCT DISK_CRIT_PCT \
-               MIRROR_DATA_PATH DOMAIN API_URL ALERT_SOURCE_LABEL; do
-        # Only fill in what the environment did not already provide.
-        eval "value=\${$key:-}"
-        if [ -z "$value" ]; then
-            if value=$(env_lookup "$key" "$ENV_FILE"); then
-                eval "$key=\$value"
-            fi
+    for key in "${DOTENV_KEYS[@]}"; do
+        # The environment wins; otherwise .env replaces the default.
+        case "$ENV_PROVIDED" in *" $key "*) continue ;; esac
+        if value=$(env_lookup "$key" "$ENV_FILE"); then
+            eval "$key=\$value"
         fi
     done
 }
