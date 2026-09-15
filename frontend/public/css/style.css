@@ -483,7 +483,7 @@ body {
 }
 
 .status-indicator.healthy {
-    background: rgba(34, 197, 94, 0.15);
+    background: var(--status-healthy-tint);
 }
 
 .status-indicator.healthy::before {
@@ -495,7 +495,7 @@ body {
 }
 
 .status-indicator.degraded {
-    background: rgba(239, 68, 68, 0.15);
+    background: var(--status-error-tint);
 }
 
 .status-indicator.degraded::before {
@@ -509,7 +509,11 @@ body {
 }
 
 .status-indicator.syncing {
-    background: rgba(232, 93, 4, 0.15);
+    /* --status-syncing-tint, not a plain 15% --accent-primary tint: see the
+       comment on that token in tokens.css -- the dot on top of this tint is
+       --accent-primary (unchanged), so the fix for this pairing's contrast
+       had to come from lightening the tint instead. */
+    background: var(--status-syncing-tint);
 }
 
 .status-indicator.syncing::before {

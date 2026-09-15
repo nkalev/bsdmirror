@@ -335,6 +335,38 @@ PUBLIC_PAIRS = [
     (".footer-content a", ".footer-content a", "color", ("parent", ".footer"), 4.5),
     (".about-text a", ".about-text a", "color", ("parent", "body"), 4.5),
     (".method-card p", ".method-card p", "color", ("parent", ".method-card"), 4.5),
+    # Mirror-status dots: WCAG 2.1 SC 1.4.11 (a UI indicator needs 3:1 against
+    # what is next to it), not the 4.5:1 text bar every pair above checks --
+    # and the foreground property is `background` (the dot's own fill), not
+    # `color`; there is no text inside a dot. .status-dot.* sits directly on
+    # its mirror card (.mirror-status, its immediate parent, declares no
+    # background of its own); .status-indicator.*::before sits on the
+    # translucent-tint-turned-token its own .status-indicator.* parent
+    # declares.
+    (".status-dot.healthy", ".status-dot.healthy", "background", ("parent", ".mirror-card"), 3.0),
+    (".status-dot.syncing", ".status-dot.syncing", "background", ("parent", ".mirror-card"), 3.0),
+    (".status-dot.error", ".status-dot.error", "background", ("parent", ".mirror-card"), 3.0),
+    (
+        ".status-indicator.healthy::before",
+        ".status-indicator.healthy::before",
+        "background",
+        ("parent", ".status-indicator.healthy"),
+        3.0,
+    ),
+    (
+        ".status-indicator.degraded::before",
+        ".status-indicator.degraded::before",
+        "background",
+        ("parent", ".status-indicator.degraded"),
+        3.0,
+    ),
+    (
+        ".status-indicator.syncing::before",
+        ".status-indicator.syncing::before",
+        "background",
+        ("parent", ".status-indicator.syncing"),
+        3.0,
+    ),
 ]
 
 
@@ -583,6 +615,24 @@ TOKEN_MUTATIONS = [
         "--status-error-text: var(--c-red-500);",
         None,  # breaks an ADMIN_CHECKS id, checked below
     ),
+    (
+        "status_healthy_light_reverts_to_the_old_failing_shade",
+        "--status-healthy: var(--c-green-700);",
+        "--status-healthy: var(--c-green-500);",
+        None,  # breaks two PUBLIC_CHECKS ids at once, checked below
+    ),
+    (
+        "status_syncing_light_reverts_to_the_old_failing_shade",
+        "--status-syncing: var(--c-amber-650);",
+        "--status-syncing: var(--c-amber-500);",
+        ".status-dot.syncing [light]",
+    ),
+    (
+        "status_syncing_tint_light_reverts_to_the_old_failing_alpha",
+        "--status-syncing-tint: #FDEFE6;",
+        "--status-syncing-tint: #FCE7D9;",
+        ".status-indicator.syncing::before [light]",
+    ),
 ]
 
 
@@ -635,6 +685,24 @@ def test_status_error_text_mutation_breaks_the_error_badge():
     results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
     assert results[".status-badge.error"] < 4.5
     assert results[".log-pre-error"] < 4.5
+
+
+def test_status_healthy_mutation_breaks_both_light_consumers():
+    """--status-healthy backs both .status-dot.healthy (a plain dot on
+    --bg-card) and .status-indicator.healthy::before (a dot on
+    --status-healthy-tint, a slightly darker backdrop than --bg-card) --
+    darkening it for one and not the other was never on the table, so one
+    mutation must break both."""
+    mutated_text = TOKENS_TEXT.replace(
+        "--status-healthy: var(--c-green-700);", "--status-healthy: var(--c-green-500);"
+    )
+    light, dark, _ = build_themes(mutated_text)
+    results = {
+        cid: ratio
+        for cid, ratio, *_ in compute_public_checks(STYLE_CSS_TEXT, {"light": light, "dark": dark})
+    }
+    assert results[".status-dot.healthy [light]"] < 3.0
+    assert results[".status-indicator.healthy::before [light]"] < 3.0
 
 
 CSS_MUTATIONS = [
@@ -843,6 +911,15 @@ DYNAMIC_PUBLIC_CHECKS = [
     (".about-text a", "light", 4.5), (".about-text a", "dark", 4.5),
     (".footer-version", "light", 4.5), (".footer-version", "dark", 4.5),
     (".method-card p", "light", 4.5), (".method-card p", "dark", 4.5),
+    # UI indicators (WCAG 2.1 SC 1.4.11): 3:1, not 4.5:1. Only three of the
+    # six dots test_public_site_contrast checks statically are reachable
+    # here at all -- see contrast_harness.mjs's docstring for why
+    # .status-dot.error and the "degraded"/"healthy" .status-indicator
+    # states are static-only.
+    (".status-dot.healthy", "light", 3.0), (".status-dot.healthy", "dark", 3.0),
+    (".status-dot.syncing", "light", 3.0), (".status-dot.syncing", "dark", 3.0),
+    (".status-indicator.syncing::before", "light", 3.0),
+    (".status-indicator.syncing::before", "dark", 3.0),
 ]
 # fmt: on
 
