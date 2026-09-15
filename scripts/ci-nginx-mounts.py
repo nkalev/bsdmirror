@@ -108,7 +108,9 @@ def main(argv: list[str]) -> int:
     # the output. This is what makes "CI must change with the scheme" mechanical
     # rather than a note in a review checklist.
     declared = sorted(v["target"] for v in nginx_volumes)
-    emitted = sorted(a.rsplit(":", 2)[1] if a.endswith(":ro") else a.split(":")[-1] for a in args[1::2])
+    emitted = sorted(
+        a.rsplit(":", 2)[1] if a.endswith(":ro") else a.split(":")[-1] for a in args[1::2]
+    )
     if declared != emitted:
         fail(f"mapped {emitted} but docker-compose.yml declares {declared}")
 

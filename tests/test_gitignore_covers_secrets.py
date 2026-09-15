@@ -103,8 +103,17 @@ def test_no_credential_backup_was_ever_committed():
     """
     try:
         result = subprocess.run(
-            ["git", "log", "--all", "--format=%H", "--",
-             "*.env.bak*", ".deploy-bak/*", "backups/*", "env_*.backup"],
+            [
+                "git",
+                "log",
+                "--all",
+                "--format=%H",
+                "--",
+                "*.env.bak*",
+                ".deploy-bak/*",
+                "backups/*",
+                "env_*.backup",
+            ],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True,

@@ -37,21 +37,20 @@ async def health_check() -> Dict[str, str]:
     return {
         "status": "healthy",
         "version": settings.VERSION,
-        "timestamp": datetime.now(timezone.utc).isoformat()
+        "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
 
 @router.get("/health/detailed")
 async def detailed_health_check(
-    db: AsyncSession = Depends(get_db),
-    redis_client: redis.Redis = Depends(get_redis)
+    db: AsyncSession = Depends(get_db), redis_client: redis.Redis = Depends(get_redis)
 ) -> Dict[str, Any]:
     """Detailed health check with database and Redis status."""
     health_status = {
         "status": "healthy",
         "version": settings.VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "services": {}
+        "services": {},
     }
 
     # Check PostgreSQL with timeout
@@ -65,15 +64,12 @@ async def detailed_health_check(
         health_status["status"] = "degraded"
         health_status["services"]["postgres"] = {
             "status": "unhealthy",
-            "error": "connection timeout"
+            "error": "connection timeout",
         }
     except Exception as e:
         logger.error("PostgreSQL health check failed", error=str(e))
         health_status["status"] = "degraded"
-        health_status["services"]["postgres"] = {
-            "status": "unhealthy",
-            "error": "connection error"
-        }
+        health_status["services"]["postgres"] = {"status": "unhealthy", "error": "connection error"}
 
     # Check Redis with timeout
     try:
@@ -84,16 +80,10 @@ async def detailed_health_check(
     except asyncio.TimeoutError:
         logger.error("Redis health check timed out")
         health_status["status"] = "degraded"
-        health_status["services"]["redis"] = {
-            "status": "unhealthy",
-            "error": "connection timeout"
-        }
+        health_status["services"]["redis"] = {"status": "unhealthy", "error": "connection timeout"}
     except Exception as e:
         logger.error("Redis health check failed", error=str(e))
         health_status["status"] = "degraded"
-        health_status["services"]["redis"] = {
-            "status": "unhealthy",
-            "error": "connection error"
-        }
+        health_status["services"]["redis"] = {"status": "unhealthy", "error": "connection error"}
 
     return health_status

@@ -136,7 +136,6 @@ def _parse_sync_schedule(raw: str) -> str:
     return value
 
 
-
 def _parse_int(key: str, raw: str) -> int:
     value = raw.strip()
     try:
@@ -181,7 +180,7 @@ def _parse_sync_on_startup(raw: str) -> bool:
         return False
     raise SettingError(
         f"sync_on_startup: {raw!r} is not a boolean. Use 'true' or 'false'. "
-        f"It used to be compared with `.lower() == \"true\"`, so a typo like "
+        f'It used to be compared with `.lower() == "true"`, so a typo like '
         f"'ture' was silently read as false."
     )
 

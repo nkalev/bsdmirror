@@ -72,8 +72,7 @@ def test_error_pages_have_no_inline_style_block_or_attribute():
     assert offenders == [], (
         "inline styling in a static error page. Each one is a reason the CSP "
         "must keep style-src 'unsafe-inline'. Move the declarations into "
-        "frontend/public/css/error.css and name a class instead:\n  "
-        + "\n  ".join(offenders)
+        "frontend/public/css/error.css and name a class instead:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -131,9 +130,10 @@ def test_error_pages_load_only_tokens_and_error_css():
     for page in ERROR_PAGES:
         html = page.read_text()
         linked_names = {p.name for p in _linked_stylesheets(html)}
-        assert linked_names == expected, (
-            "%s links %s, expected exactly %s"
-            % (page.name, sorted(linked_names), sorted(expected))
+        assert linked_names == expected, "%s links %s, expected exactly %s" % (
+            page.name,
+            sorted(linked_names),
+            sorted(expected),
         )
 
 
@@ -178,7 +178,7 @@ def _dark_block_of_tokens_css() -> dict:
     css = TOKENS_CSS.read_text()
     m = re.search(r'^\[data-theme="dark"\]\s*\{', css, re.M)
     assert m, 'tokens.css has no [data-theme="dark"] rule'
-    body = css[m.end():css.index("}", m.end())]
+    body = css[m.end() : css.index("}", m.end())]
     return dict(re.findall(r"(--[\w-]+)\s*:\s*(var\(--c-[\w-]+\))\s*;", body))
 
 
@@ -186,7 +186,7 @@ def _error_css_dark_overrides() -> dict:
     css = ERROR_CSS.read_text()
     m = re.search(r"@media\s*\(prefers-color-scheme:\s*dark\)\s*\{", css)
     assert m, "error.css has no prefers-color-scheme block"
-    return dict(re.findall(r"(--[\w-]+)\s*:\s*(var\(--c-[\w-]+\))\s*;", css[m.end():]))
+    return dict(re.findall(r"(--[\w-]+)\s*:\s*(var\(--c-[\w-]+\))\s*;", css[m.end() :]))
 
 
 def test_error_page_dark_mapping_matches_tokens_css():
@@ -203,15 +203,10 @@ def test_error_page_dark_mapping_matches_tokens_css():
     assert overrides, "the prefers-color-scheme block defines no tokens"
 
     mismatched = {
-        tok: (val, dark.get(tok))
-        for tok, val in overrides.items()
-        if dark.get(tok) != val
+        tok: (val, dark.get(tok)) for tok, val in overrides.items() if dark.get(tok) != val
     }
-    assert not mismatched, (
-        "error.css disagrees with tokens.css's dark theme: "
-        + "; ".join(
-            "%s is %s here but %s there" % (t, a, b) for t, (a, b) in mismatched.items()
-        )
+    assert not mismatched, "error.css disagrees with tokens.css's dark theme: " + "; ".join(
+        "%s is %s here but %s there" % (t, a, b) for t, (a, b) in mismatched.items()
     )
 
 

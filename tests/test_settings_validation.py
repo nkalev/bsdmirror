@@ -55,6 +55,7 @@ WEDGE_SCHEDULE = "every 4 hours"
 # Layer 1: the spec
 # ---------------------------------------------------------------------------
 
+
 def test_the_spec_covers_exactly_the_seeded_keys():
     """backend/app/main.py seeds from SETTING_SPECS, so this pins the set of
     keys the whole system has an opinion about. A key added to one and not the
@@ -119,6 +120,7 @@ VALID_SCHEDULES = [
     ("last-day-of-month", "0 4 L * *"),
 ]
 
+# fmt: off
 INVALID_SCHEDULES = [
     ("the-wedge", WEDGE_SCHEDULE, "prose, not cron -- the value from the incident"),
     ("empty", "", "an empty box submitted"),
@@ -137,6 +139,7 @@ INVALID_SCHEDULES = [
     # schedule that silently never fires.
     ("reboot-nickname", "@reboot", "no next occurrence to schedule"),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize("name,value", VALID_SCHEDULES, ids=[c[0] for c in VALID_SCHEDULES])
@@ -144,9 +147,7 @@ def test_valid_cron_expressions_are_accepted(name, value):
     assert parse_setting("sync_schedule", value) == value
 
 
-@pytest.mark.parametrize(
-    "name,value,why", INVALID_SCHEDULES, ids=[c[0] for c in INVALID_SCHEDULES]
-)
+@pytest.mark.parametrize("name,value,why", INVALID_SCHEDULES, ids=[c[0] for c in INVALID_SCHEDULES])
 def test_invalid_cron_expressions_are_rejected(name, value, why):
     with pytest.raises(SettingError) as exc:
         parse_setting("sync_schedule", value)
@@ -171,6 +172,7 @@ def test_the_wedge_value_would_have_wedged_the_scheduler():
 
 # --- sync_timeout ----------------------------------------------------------
 
+# fmt: off
 TIMEOUT_CASES = [
     ("one-second", "1", False, "the brief's example: parses, breaks every sync"),
     ("zero", "0", False, "rsync reads 0 as 'no timeout' -- the hang this bounds"),
@@ -185,11 +187,10 @@ TIMEOUT_CASES = [
     ("float", "600.5", False, "rsync --timeout takes whole seconds"),
     ("empty", "", False, "an empty box submitted"),
 ]
+# fmt: on
 
 
-@pytest.mark.parametrize(
-    "name,value,ok,why", TIMEOUT_CASES, ids=[c[0] for c in TIMEOUT_CASES]
-)
+@pytest.mark.parametrize("name,value,ok,why", TIMEOUT_CASES, ids=[c[0] for c in TIMEOUT_CASES])
 def test_sync_timeout_bounds(name, value, ok, why):
     if ok:
         assert parse_setting("sync_timeout", value) == int(value)
@@ -200,6 +201,7 @@ def test_sync_timeout_bounds(name, value, ok, why):
 
 # --- sync_bandwidth_limit --------------------------------------------------
 
+# fmt: off
 BANDWIDTH_CASES = [
     ("unlimited", "0", True, "rsync's documented 'no limit', and the seeded default"),
     ("negative", "-1", False, "not a rate"),
@@ -214,11 +216,10 @@ BANDWIDTH_CASES = [
     ("bytes-not-kb", "1000000000", False, "1 GB/s entered in bytes"),
     ("not-a-number", "unlimited", False, "the word, not the number"),
 ]
+# fmt: on
 
 
-@pytest.mark.parametrize(
-    "name,value,ok,why", BANDWIDTH_CASES, ids=[c[0] for c in BANDWIDTH_CASES]
-)
+@pytest.mark.parametrize("name,value,ok,why", BANDWIDTH_CASES, ids=[c[0] for c in BANDWIDTH_CASES])
 def test_sync_bandwidth_limit_bounds(name, value, ok, why):
     if ok:
         assert parse_setting("sync_bandwidth_limit", value) == int(value)
@@ -241,8 +242,9 @@ ON_STARTUP_CASES = [
 ]
 
 
-@pytest.mark.parametrize("name,value,expected", ON_STARTUP_CASES,
-                         ids=[c[0] for c in ON_STARTUP_CASES])
+@pytest.mark.parametrize(
+    "name,value,expected", ON_STARTUP_CASES, ids=[c[0] for c in ON_STARTUP_CASES]
+)
 def test_sync_on_startup_accepted_spellings(name, value, expected):
     assert parse_setting("sync_on_startup", value) is expected
 
@@ -281,15 +283,18 @@ def test_stored_value_is_canonical(key, raw, stored):
 
 # --- batch behaviour -------------------------------------------------------
 
+
 def test_a_batch_reports_every_bad_value_not_just_the_first():
     """One round trip, one complete answer. Reporting only the first means an
     operator fixes it, resubmits, and finds the next one."""
     with pytest.raises(SettingError) as exc:
-        validate_settings({
-            "sync_schedule": WEDGE_SCHEDULE,
-            "sync_timeout": "1",
-            "sync_bandwidth_limit": "0",
-        })
+        validate_settings(
+            {
+                "sync_schedule": WEDGE_SCHEDULE,
+                "sync_timeout": "1",
+                "sync_bandwidth_limit": "0",
+            }
+        )
     message = str(exc.value)
     assert "sync_schedule" in message
     assert "sync_timeout" in message
@@ -297,10 +302,12 @@ def test_a_batch_reports_every_bad_value_not_just_the_first():
 
 
 def test_a_batch_of_valid_values_comes_back_canonical():
-    assert validate_settings({
-        "sync_schedule": " 0 4 * * * ",
-        "sync_on_startup": "TRUE",
-    }) == {"sync_schedule": "0 4 * * *", "sync_on_startup": "true"}
+    assert validate_settings(
+        {
+            "sync_schedule": " 0 4 * * * ",
+            "sync_on_startup": "TRUE",
+        }
+    ) == {"sync_schedule": "0 4 * * *", "sync_on_startup": "true"}
 
 
 def test_unknown_keys_are_not_the_value_validator_s_business():
@@ -315,28 +322,23 @@ def test_unknown_keys_are_not_the_value_validator_s_business():
 # Layer 2: the API write boundary
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def settings_rows(db_session):
     """The four seeded rows, as backend/app/main.py's lifespan creates them."""
-    existing = {
-        s.key for s in db_session.execute(select(Setting)).scalars().all()
-    }
+    existing = {s.key for s in db_session.execute(select(Setting)).scalars().all()}
     for key, spec in SETTING_SPECS.items():
         if key in existing:
             continue
-        db_session.add(Setting(
-            key=key, value=spec.render(spec.default), description=spec.description
-        ))
+        db_session.add(
+            Setting(key=key, value=spec.render(spec.default), description=spec.description)
+        )
     db_session.commit()
-    return {
-        s.key: s for s in db_session.execute(select(Setting)).scalars().all()
-    }
+    return {s.key: s for s in db_session.execute(select(Setting)).scalars().all()}
 
 
 def stored(db_session, key):
-    return db_session.execute(
-        select(Setting.value).where(Setting.key == key)
-    ).scalar_one()
+    return db_session.execute(select(Setting.value).where(Setting.key == key)).scalar_one()
 
 
 async def test_the_wedge_value_is_rejected_at_the_api(client, seed, settings_rows, db_session):
@@ -367,14 +369,17 @@ async def test_the_rejection_message_names_the_key_and_the_value(client, seed, s
     assert WEDGE_SCHEDULE in messages
 
 
-@pytest.mark.parametrize("key,value", [
-    ("sync_schedule", WEDGE_SCHEDULE),
-    ("sync_timeout", "1"),
-    ("sync_timeout", "0"),
-    ("sync_bandwidth_limit", "-5"),
-    ("sync_bandwidth_limit", "1"),
-    ("sync_on_startup", "ture"),
-])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("sync_schedule", WEDGE_SCHEDULE),
+        ("sync_timeout", "1"),
+        ("sync_timeout", "0"),
+        ("sync_bandwidth_limit", "-5"),
+        ("sync_bandwidth_limit", "1"),
+        ("sync_on_startup", "ture"),
+    ],
+)
 async def test_unusable_values_are_rejected_at_the_api(
     client, seed, settings_rows, db_session, key, value
 ):
@@ -393,11 +398,13 @@ async def test_a_valid_batch_is_applied_and_stored_canonically(
 ):
     response = await client.patch(
         "/api/admin/settings",
-        json={"settings": {
-            "sync_schedule": "  30 5 * * *  ",
-            "sync_timeout": "0900",
-            "sync_on_startup": "TRUE",
-        }},
+        json={
+            "settings": {
+                "sync_schedule": "  30 5 * * *  ",
+                "sync_timeout": "0900",
+                "sync_on_startup": "TRUE",
+            }
+        },
         headers=auth_header(seed["users"]["admin"]),
     )
     assert response.status_code == 200, response.text
@@ -430,10 +437,12 @@ async def test_a_batch_with_an_unknown_key_applies_none_of_it(
 
     response = await client.patch(
         "/api/admin/settings",
-        json={"settings": {
-            "sync_schedule": "30 5 * * *",
-            "no_such_setting": "whatever",
-        }},
+        json={
+            "settings": {
+                "sync_schedule": "30 5 * * *",
+                "no_such_setting": "whatever",
+            }
+        },
         headers=auth_header(seed["users"]["admin"]),
     )
 
@@ -449,10 +458,12 @@ async def test_a_batch_with_one_bad_value_applies_none_of_it(
 
     response = await client.patch(
         "/api/admin/settings",
-        json={"settings": {
-            "sync_schedule": "30 5 * * *",   # fine
-            "sync_timeout": "1",             # not fine
-        }},
+        json={
+            "settings": {
+                "sync_schedule": "30 5 * * *",  # fine
+                "sync_timeout": "1",  # not fine
+            }
+        },
         headers=auth_header(seed["users"]["admin"]),
     )
 
@@ -491,7 +502,8 @@ def test_no_setting_is_mutated_before_every_key_has_been_resolved():
     source = pathlib.Path(admin_module.__file__).read_text()
     tree = ast.parse(source)
     func = next(
-        n for n in ast.walk(tree)
+        n
+        for n in ast.walk(tree)
         if isinstance(n, ast.AsyncFunctionDef) and n.name == "update_settings"
     )
 
@@ -502,7 +514,8 @@ def test_no_setting_is_mutated_before_every_key_has_been_resolved():
     def assigns_to_a_setting(node):
         return [
             ast.unparse(t)
-            for stmt in ast.walk(node) if isinstance(stmt, ast.Assign)
+            for stmt in ast.walk(node)
+            if isinstance(stmt, ast.Assign)
             for t in stmt.targets
             if isinstance(t, ast.Attribute) and "setting" in ast.unparse(t.value)
         ]
@@ -511,8 +524,7 @@ def test_no_setting_is_mutated_before_every_key_has_been_resolved():
         return [n for n in ast.walk(node) if isinstance(n, ast.Raise)]
 
     assert not assigns_to_a_setting(resolve), (
-        "the loop that can raise 404 must not mutate anything: "
-        f"{assigns_to_a_setting(resolve)}"
+        "the loop that can raise 404 must not mutate anything: " f"{assigns_to_a_setting(resolve)}"
     )
     assert raises(resolve), "the 404 belongs in the resolve loop"
     assert assigns_to_a_setting(write), "the write loop must be the one that writes"
@@ -549,6 +561,7 @@ async def test_authorisation_still_precedes_validation(
 # `service` and `factory` come from tests/conftest.py. The service they build
 # holds exactly the env defaults these tests start from: schedule "0 4 * * *",
 # timeout 600, bandwidth limit 0.
+
 
 def write_setting_directly(factory, key, value):
     """Bypass the API completely -- this is the psql path."""
@@ -596,9 +609,7 @@ async def test_reload_settings_adopts_the_spellings_a_person_types(service, fact
         assert service.sync_on_startup is True, spelling
 
 
-async def test_a_bad_sync_on_startup_row_keeps_the_current_value(
-    service, factory, caplog
-):
+async def test_a_bad_sync_on_startup_row_keeps_the_current_value(service, factory, caplog):
     service.sync_on_startup = True
     write_setting_directly(factory, "sync_on_startup", "ture")
 
@@ -609,9 +620,7 @@ async def test_a_bad_sync_on_startup_row_keeps_the_current_value(
     assert "Ignoring unusable setting" in caplog.text
 
 
-async def test_a_wedge_value_in_the_database_is_refused_on_read(
-    service, factory, caplog
-):
+async def test_a_wedge_value_in_the_database_is_refused_on_read(service, factory, caplog):
     """The value got in by another route. The service declines to adopt it and
     says so -- the old code had no guard on sync_schedule at all."""
     write_setting_directly(factory, "sync_schedule", WEDGE_SCHEDULE)
@@ -624,12 +633,15 @@ async def test_a_wedge_value_in_the_database_is_refused_on_read(
     assert WEDGE_SCHEDULE in caplog.text
 
 
-@pytest.mark.parametrize("key,attr,bad,previous", [
-    ("sync_timeout", "sync_timeout", "60O", 600),
-    ("sync_timeout", "sync_timeout", "1", 600),
-    ("sync_bandwidth_limit", "sync_bandwidth_limit", "-5", 0),
-    ("sync_bandwidth_limit", "sync_bandwidth_limit", "fast", 0),
-])
+@pytest.mark.parametrize(
+    "key,attr,bad,previous",
+    [
+        ("sync_timeout", "sync_timeout", "60O", 600),
+        ("sync_timeout", "sync_timeout", "1", 600),
+        ("sync_bandwidth_limit", "sync_bandwidth_limit", "-5", 0),
+        ("sync_bandwidth_limit", "sync_bandwidth_limit", "fast", 0),
+    ],
+)
 async def test_a_bad_numeric_value_is_refused_loudly_not_silently(
     service, factory, caplog, key, attr, bad, previous
 ):
@@ -679,9 +691,7 @@ async def test_the_scheduler_still_schedules_after_a_wedge_reaches_the_database(
     assert next_run > base
 
 
-async def test_the_scheduler_survives_a_value_that_never_passed_reload_settings(
-    service, caplog
-):
+async def test_the_scheduler_survives_a_value_that_never_passed_reload_settings(service, caplog):
     """The last hole: self.sync_schedule also comes from the SYNC_SCHEDULE
     environment variable, which nothing validates. _next_scheduled_run is the
     point of use, so it is checked there too, and the fallback is recorded on

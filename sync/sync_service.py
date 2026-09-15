@@ -69,7 +69,7 @@ structlog.configure(
         structlog.stdlib.filter_by_level,
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     context_class=dict,
@@ -172,7 +172,7 @@ _VANISHED_RE = re.compile(r'^file has vanished: "(?P<path>[^"]*)"(?: \(in [^)]*\
 # nothing else, so a different errno on the same path shape still fails.
 _SEND_FAILED_OPEN_RE = re.compile(
     r'^rsync: (?:\[[a-z]+\] )?send_files failed to open "(?P<path>[^"]*)"'
-    r'(?: \(in [^)]*\))?: Permission denied \(13\)$'
+    r"(?: \(in [^)]*\))?: Permission denied \(13\)$"
 )
 
 # The terminal "rsync error: ... (code N)" line. Only ignored when N is the
@@ -303,6 +303,7 @@ def _classify_partial_transfer(output: str, returncode: int) -> RsyncErrorVerdic
         unrecognised=tuple(unrecognised),
     )
 
+
 # rsync 3.x breaks its counts down by entry type:
 #     Number of files: 5,582 (reg: 4,321, dir: 1,261)
 # _BREAKDOWN_RE grabs the parenthesised part. rsync 2.6.9 and openrsync print
@@ -342,7 +343,7 @@ def _parse_count_field(value: str) -> tuple[Optional[int], dict]:
     breakdown = {}
     match = _BREAKDOWN_RE.search(value)
     if match:
-        head = value[:match.start()]
+        head = value[: match.start()]
         for item in _BREAKDOWN_ITEM_SEPARATOR_RE.split(match.group(1)):
             key, separator, raw = item.partition(":")
             if not separator:
@@ -430,6 +431,7 @@ def _regular_file_count(value: str) -> Optional[int]:
 # means a column, which means migrations, which this repo does not have. Adding
 # replicas without doing that would let one process reap another's live job.
 # ---------------------------------------------------------------------------
+
 
 class OrphanVerdict(NamedTuple):
     """Whether one sync job is abandoned, and why.
@@ -679,9 +681,7 @@ class SyncService:
             os.makedirs(destination, exist_ok=True)
 
             process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
             )
             self.current_sync = process
 
@@ -802,8 +802,10 @@ class SyncService:
                     stats["files_deleted"] = deleted
                 else:
                     logger.debug("Failed to parse rsync files_deleted", line=line.strip())
-            elif ("Number of regular files transferred:" in line
-                    or "Number of files transferred:" in line):
+            elif (
+                "Number of regular files transferred:" in line
+                or "Number of files transferred:" in line
+            ):
                 transferred = _to_int(value)
                 if transferred is not None:
                     stats["files_transferred"] = transferred
@@ -894,7 +896,7 @@ class SyncService:
                     bytes_transferred=stats.get("bytes_transferred"),
                     files_deleted=stats.get("files_deleted"),
                     rsync_output=output[-10000:] if len(output) > 10000 else output,
-                    error_message=None if success else output[-1000:]
+                    error_message=None if success else output[-1000:],
                 )
             )
 
@@ -907,7 +909,7 @@ class SyncService:
             # status, last_sync_error and the SyncJob row instead.
             mirror_update = {
                 "status": MirrorStatus.ACTIVE if success else MirrorStatus.ERROR,
-                "last_sync_error": None if success else output[-500:]
+                "last_sync_error": None if success else output[-500:],
             }
             if success:
                 mirror_update["last_sync_completed"] = now
@@ -925,9 +927,7 @@ class SyncService:
                 mirror_update["file_count"] = stats["regular_files"]
 
             await session.execute(
-                update(Mirror)
-                .where(Mirror.id == mirror_id)
-                .values(**mirror_update)
+                update(Mirror).where(Mirror.id == mirror_id).values(**mirror_update)
             )
             await session.commit()
 
@@ -944,9 +944,7 @@ class SyncService:
         """Create a new sync job and execute it (for scheduled syncs)."""
         async with self.session_maker() as session:
             sync_job = SyncJob(
-                mirror_id=mirror_id,
-                status=SyncStatus.PENDING,
-                triggered_by="scheduled"
+                mirror_id=mirror_id, status=SyncStatus.PENDING, triggered_by="scheduled"
             )
             session.add(sync_job)
             await session.commit()
@@ -1117,9 +1115,7 @@ class SyncService:
         logger.info("Starting scheduled sync for all mirrors")
 
         async with self.session_maker() as session:
-            result = await session.execute(
-                select(Mirror).where(Mirror.enabled.is_(True))
-            )
+            result = await session.execute(select(Mirror).where(Mirror.enabled.is_(True)))
             mirrors = result.scalars().all()
 
         for mirror in mirrors:
@@ -1188,9 +1184,13 @@ class SyncService:
                     await self.reload_settings()
                     # If schedule changed, recalculate next run
                     if self.sync_schedule != old_schedule:
-                        logger.info("Sync schedule changed", old=old_schedule, new=self.sync_schedule)
+                        logger.info(
+                            "Sync schedule changed", old=old_schedule, new=self.sync_schedule
+                        )
                         next_run = self._next_scheduled_run(datetime.now())
-                        logger.info("Next scheduled sync recalculated", next_run=next_run.isoformat())
+                        logger.info(
+                            "Next scheduled sync recalculated", next_run=next_run.isoformat()
+                        )
 
                 # Reap jobs abandoned by a process that is no longer running
                 # them. Also done once at startup, which is where a crash's
@@ -1229,11 +1229,9 @@ class SyncService:
 
     async def health_handler(self, request: web.Request) -> web.Response:
         """Health check endpoint handler."""
-        return web.json_response({
-            "status": "healthy",
-            "running": self.running,
-            "syncing": self.current_sync is not None
-        })
+        return web.json_response(
+            {"status": "healthy", "running": self.running, "syncing": self.current_sync is not None}
+        )
 
     async def start_health_server(self) -> None:
         """Start the health check HTTP server."""
@@ -1335,7 +1333,9 @@ class SyncService:
             if pending > 0:
                 logger.info("Processed pending jobs on startup", count=pending)
         except Exception as e:
-            logger.warning("Could not poll pending jobs on startup (tables may not exist yet)", error=str(e))
+            logger.warning(
+                "Could not poll pending jobs on startup (tables may not exist yet)", error=str(e)
+            )
 
         # Run initial sync on startup (optional).
         #

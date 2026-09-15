@@ -41,6 +41,7 @@ class Case:
     body: Optional[dict] = field(default=None)
 
 
+# fmt: off
 MATRIX = [
     # --- User management: admin only -------------------------------------
     Case("list-users", "GET", "/api/admin/users",
@@ -89,6 +90,7 @@ MATRIX = [
     Case("health-checks", "GET", "/api/admin/health-checks",
          "get_current_user", frozenset(ROLES), 200),
 ]
+# fmt: on
 
 
 def url_for(case: Case, seed) -> str:
@@ -114,13 +116,13 @@ async def test_rbac_matrix(client, seed, case, role):
     resp = await call(client, case, seed, auth_header(seed["users"][role]))
 
     if role in case.allowed:
-        assert resp.status_code == case.ok_status, (
-            f"{role} should be allowed {case.id}, got {resp.status_code}: {resp.text}"
-        )
+        assert (
+            resp.status_code == case.ok_status
+        ), f"{role} should be allowed {case.id}, got {resp.status_code}: {resp.text}"
     else:
-        assert resp.status_code == 403, (
-            f"{role} should be denied {case.id}, got {resp.status_code}: {resp.text}"
-        )
+        assert (
+            resp.status_code == 403
+        ), f"{role} should be denied {case.id}, got {resp.status_code}: {resp.text}"
         assert resp.json()["detail"] == GATE_MESSAGE[case.gate]
 
 
@@ -139,6 +141,7 @@ async def test_admin_api_rejects_invalid_token(client, seed, case):
 # ---------------------------------------------------------------------------
 # The role claim in the token must not be trusted
 # ---------------------------------------------------------------------------
+
 
 async def test_role_is_read_from_the_database_not_the_token(client, seed):
     """A validly signed token carrying role="admin" for a readonly account must
@@ -175,6 +178,7 @@ async def test_forged_user_id_claim_does_not_select_the_user(client, seed):
 # Denied requests must not have side effects
 # ---------------------------------------------------------------------------
 
+
 async def test_denied_mirror_update_leaves_the_mirror_untouched(client, seed, db_session):
     resp = await client.patch(
         f"/api/admin/mirrors/{seed['mirror_id']}",
@@ -207,8 +211,11 @@ async def test_denied_user_creation_creates_no_user(client, seed, db_session):
     resp = await client.post(
         "/api/admin/users",
         headers=auth_header(seed["users"]["operator"]),
-        json={"username": "smuggled-in", "password": "a-sufficiently-long-password",
-              "role": "admin"},
+        json={
+            "username": "smuggled-in",
+            "password": "a-sufficiently-long-password",
+            "role": "admin",
+        },
     )
     assert resp.status_code == 403
 
@@ -219,11 +226,10 @@ async def test_denied_user_creation_creates_no_user(client, seed, db_session):
 # Admin self-protection rules
 # ---------------------------------------------------------------------------
 
+
 async def test_admin_cannot_delete_themselves(client, seed):
     admin = seed["users"]["admin"]
-    resp = await client.delete(
-        f"/api/admin/users/{admin.id}", headers=auth_header(admin)
-    )
+    resp = await client.delete(f"/api/admin/users/{admin.id}", headers=auth_header(admin))
     assert resp.status_code == 400
     assert resp.json()["detail"] == "Cannot delete yourself"
 

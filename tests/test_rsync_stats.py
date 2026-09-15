@@ -153,6 +153,7 @@ total size is 17  speedup is 0.05
 # The core question: which number lands in Mirror.file_count?
 # ---------------------------------------------------------------------------
 
+
 def test_regular_files_is_the_reg_subcount_not_the_file_list_total():
     """`Number of files: 5,582 (reg: 4,321, dir: 1,261)`.
 
@@ -264,6 +265,7 @@ def test_device_and_special_entries_are_excluded():
 # The other three fields
 # ---------------------------------------------------------------------------
 
+
 def test_parses_every_field_from_rsync_3_output():
     """CHANGED: was four keys, now six. total_entries and files_deleted are
     new."""
@@ -312,6 +314,7 @@ def test_trailing_summary_lines_are_ignored():
 # ---------------------------------------------------------------------------
 # Version fragility
 # ---------------------------------------------------------------------------
+
 
 def test_rsync_2_6_9_transferred_count_is_matched():
     """CHANGED, was test_rsync_2_6_9_output_silently_loses_files_transferred.
@@ -395,6 +398,7 @@ def test_a_scaled_count_is_rejected_rather_than_truncated():
 # ---------------------------------------------------------------------------
 # Degenerate input
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "output",

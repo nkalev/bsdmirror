@@ -20,7 +20,7 @@ from app.core.security import (
     decode_access_token,
     blacklist_token,
     is_token_blacklisted,
-    TokenData
+    TokenData,
 )
 from shared.models import AuditLog, User, UserRole
 
@@ -59,7 +59,7 @@ class UserCreate(BaseModel):
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: AsyncSession = Depends(get_db),
-    redis_client: aioredis.Redis = Depends(get_redis)
+    redis_client: aioredis.Redis = Depends(get_redis),
 ) -> User:
     """Dependency to get the current authenticated user."""
     credentials_exception = HTTPException(
@@ -77,9 +77,7 @@ async def get_current_user(
         raise credentials_exception
 
     # Get user from database
-    result = await db.execute(
-        select(User).where(User.username == token_data.username)
-    )
+    result = await db.execute(select(User).where(User.username == token_data.username))
     user = result.scalar_one_or_none()
 
     if user is None or not user.is_active:
@@ -102,26 +100,18 @@ async def get_current_token_data(
     return token_data
 
 
-async def require_admin(
-    current_user: Annotated[User, Depends(get_current_user)]
-) -> User:
+async def require_admin(current_user: Annotated[User, Depends(get_current_user)]) -> User:
     """Dependency to require admin role."""
     if current_user.role != UserRole.ADMIN:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required"
-        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
     return current_user
 
 
-async def require_operator(
-    current_user: Annotated[User, Depends(get_current_user)]
-) -> User:
+async def require_operator(current_user: Annotated[User, Depends(get_current_user)]) -> User:
     """Dependency to require operator or admin role."""
     if current_user.role not in [UserRole.ADMIN, UserRole.OPERATOR]:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Operator access required"
+            status_code=status.HTTP_403_FORBIDDEN, detail="Operator access required"
         )
     return current_user
 
@@ -133,7 +123,7 @@ async def create_audit_log(
     resource_type: str,
     resource_id: Optional[str] = None,
     details: Optional[dict] = None,
-    request: Optional[Request] = None
+    request: Optional[Request] = None,
 ) -> None:
     """Create an audit log entry."""
     audit_log = AuditLog(
@@ -143,7 +133,7 @@ async def create_audit_log(
         resource_id=resource_id,
         details=details,
         ip_address=request.client.host if request and request.client else None,
-        user_agent=request.headers.get("user-agent") if request else None
+        user_agent=request.headers.get("user-agent") if request else None,
     )
     db.add(audit_log)
     await db.commit()
@@ -153,7 +143,7 @@ async def create_audit_log(
 async def login(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> Token:
     """Authenticate and get access token.
 
@@ -175,17 +165,14 @@ async def login(
     which is server-side only and is the record an operator needs.
     """
     # Get user
-    result = await db.execute(
-        select(User).where(User.username == form_data.username)
-    )
+    result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalar_one_or_none()
 
     # Verify credentials. Not short-circuited: `verify_password_async` accepts
     # None and hashes against a dummy digest, so the miss path costs the same as
     # the hit path.
     password_ok = await verify_password_async(
-        form_data.password,
-        user.password_hash if user is not None else None
+        form_data.password, user.password_hash if user is not None else None
     )
     if user is None:
         failure_reason = "unknown_user"
@@ -197,11 +184,7 @@ async def login(
         failure_reason = None
 
     if failure_reason is not None:
-        logger.warning(
-            "Failed login attempt",
-            username=form_data.username,
-            reason=failure_reason
-        )
+        logger.warning("Failed login attempt", username=form_data.username, reason=failure_reason)
         await create_audit_log(
             db=db,
             # Stays None even when the username resolves. `user_id` is the
@@ -211,7 +194,7 @@ async def login(
             action="login_failed",
             resource_type="auth",
             details={"username": form_data.username, "reason": failure_reason},
-            request=request
+            request=request,
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -225,29 +208,19 @@ async def login(
 
     # Create token
     access_token = create_access_token(
-        data={
-            "sub": user.username,
-            "user_id": user.id,
-            "role": user.role.value
-        }
+        data={"sub": user.username, "user_id": user.id, "role": user.role.value}
     )
 
     logger.info("User logged in", user_id=user.id, username=user.username)
     await create_audit_log(
-        db=db,
-        user_id=user.id,
-        action="login_success",
-        resource_type="auth",
-        request=request
+        db=db, user_id=user.id, action="login_success", resource_type="auth", request=request
     )
 
     return Token(access_token=access_token, token_type="bearer")
 
 
 @router.get("/me", response_model=UserResponse)
-async def get_current_user_info(
-    current_user: Annotated[User, Depends(get_current_user)]
-) -> User:
+async def get_current_user_info(current_user: Annotated[User, Depends(get_current_user)]) -> User:
     """Get current user information."""
     return current_user
 
@@ -258,7 +231,7 @@ async def logout(
     current_user: Annotated[User, Depends(get_current_user)],
     token_data: Annotated[TokenData, Depends(get_current_token_data)],
     redis_client: aioredis.Redis = Depends(get_redis),
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Logout current user and invalidate the token."""
     # Blacklist the token in Redis so it can't be reused
@@ -266,10 +239,6 @@ async def logout(
         await blacklist_token(redis_client, token_data.jti, token_data.exp)
 
     await create_audit_log(
-        db=db,
-        user_id=current_user.id,
-        action="logout",
-        resource_type="auth",
-        request=request
+        db=db, user_id=current_user.id, action="logout", resource_type="auth", request=request
     )
     return {"message": "Successfully logged out"}

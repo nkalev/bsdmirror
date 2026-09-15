@@ -9,7 +9,7 @@ from app.core.security import (
     hash_password_async,
     create_access_token,
     decode_access_token,
-    TokenData
+    TokenData,
 )
 
 __all__ = [

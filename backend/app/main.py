@@ -48,7 +48,7 @@ structlog.configure(
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer()
+        structlog.processors.JSONRenderer(),
     ],
     wrapper_class=structlog.stdlib.BoundLogger,
     context_class=dict,
@@ -71,9 +71,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Seed admin user and default mirrors if they don't exist
     async with async_session_maker() as session:
         # Admin user
-        result = await session.execute(
-            select(User).where(User.username == settings.ADMIN_USERNAME)
-        )
+        result = await session.execute(select(User).where(User.username == settings.ADMIN_USERNAME))
         admin_user = result.scalar_one_or_none()
         if admin_user is None:
             admin_user = User(
@@ -104,25 +102,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             {
                 "name": "OpenBSD",
                 "mirror_type": MirrorType.OPENBSD,
-                "upstream_url": os.getenv("OPENBSD_UPSTREAM", "rsync://ftp2.eu.openbsd.org/OpenBSD/"),
+                "upstream_url": os.getenv(
+                    "OPENBSD_UPSTREAM", "rsync://ftp2.eu.openbsd.org/OpenBSD/"
+                ),
                 "local_path": "/data/mirrors/openbsd/pub/OpenBSD",
             },
         ]
         for mirror_data in default_mirrors:
-            result = await session.execute(
-                select(Mirror).where(Mirror.name == mirror_data["name"])
-            )
+            result = await session.execute(select(Mirror).where(Mirror.name == mirror_data["name"]))
             existing = result.scalar_one_or_none()
             if existing is None:
-                session.add(Mirror(
-                    **mirror_data,
-                    enabled=True,
-                    status=MirrorStatus.ACTIVE,
-                ))
+                session.add(
+                    Mirror(
+                        **mirror_data,
+                        enabled=True,
+                        status=MirrorStatus.ACTIVE,
+                    )
+                )
                 logger.info("Default mirror created", name=mirror_data["name"])
             elif existing.upstream_url != mirror_data["upstream_url"]:
                 existing.upstream_url = mirror_data["upstream_url"]
-                logger.info("Mirror upstream updated", name=mirror_data["name"], upstream=mirror_data["upstream_url"])
+                logger.info(
+                    "Mirror upstream updated",
+                    name=mirror_data["name"],
+                    upstream=mirror_data["upstream_url"],
+                )
 
         # Default settings.
         #
@@ -132,21 +136,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # before adopting it. Three copies of "the default schedule is 0 4 * * *"
         # is how they drift; one is how they cannot.
         for key, spec in SETTING_SPECS.items():
-            result = await session.execute(
-                select(Setting).where(Setting.key == key)
-            )
+            result = await session.execute(select(Setting).where(Setting.key == key))
             if result.scalar_one_or_none() is None:
-                session.add(Setting(
-                    key=key,
-                    value=spec.render(spec.default),
-                    description=spec.description,
-                ))
+                session.add(
+                    Setting(
+                        key=key,
+                        value=spec.render(spec.default),
+                        description=spec.description,
+                    )
+                )
                 logger.info("Default setting created", key=key)
 
         await session.commit()
 
     yield
-    
+
     # Shutdown
     logger.info("Shutting down BSD Mirrors API")
     await close_db()
@@ -184,12 +188,9 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
         path=request.url.path,
         method=request.method,
         error=str(exc),
-        exc_info=True
+        exc_info=True,
     )
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "Internal server error"}
-    )
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
 
 # Include API routers
@@ -206,10 +207,6 @@ async def root() -> dict:
     return {
         "name": "BSD Mirrors",
         "version": settings.VERSION,
-        "mirrors": {
-            "FreeBSD": "/FreeBSD/",
-            "NetBSD": "/NetBSD/",
-            "OpenBSD": "/OpenBSD/"
-        },
-        "api": "/api/docs" if settings.DEBUG else None
+        "mirrors": {"FreeBSD": "/FreeBSD/", "NetBSD": "/NetBSD/", "OpenBSD": "/OpenBSD/"},
+        "api": "/api/docs" if settings.DEBUG else None,
     }

@@ -22,6 +22,7 @@ TOKEN_BLACKLIST_PREFIX = "token_blacklist:"
 
 class TokenData(BaseModel):
     """JWT token payload data."""
+
     username: str
     user_id: int
     role: str
@@ -58,10 +59,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     indistinguishable 401: scripts/deploy.sh keys its "authentication still
     works" gate on exactly that difference.
     """
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"),
-        hashed_password.encode("utf-8")
-    )
+    return bcrypt.checkpw(plain_password.encode("utf-8"), hashed_password.encode("utf-8"))
 
 
 def hash_password(password: str) -> str:
@@ -84,10 +82,7 @@ def hash_password(password: str) -> str:
 _DUMMY_BCRYPT_DIGEST = hash_password(secrets.token_urlsafe(32))
 
 
-async def verify_password_async(
-    plain_password: str,
-    hashed_password: Optional[str]
-) -> bool:
+async def verify_password_async(plain_password: str, hashed_password: Optional[str]) -> bool:
     """Verify a password off the event loop, in constant work.
 
     `hashed_password` is Optional on purpose. Callers that may not have found a
@@ -110,10 +105,7 @@ async def hash_password_async(password: str) -> str:
     return await run_in_threadpool(hash_password, password)
 
 
-def create_access_token(
-    data: dict,
-    expires_delta: Optional[timedelta] = None
-) -> str:
+def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """Create a JWT access token with a unique JTI for revocation support."""
     to_encode = data.copy()
 
@@ -122,27 +114,21 @@ def create_access_token(
     else:
         expire = datetime.now(timezone.utc) + timedelta(hours=settings.JWT_EXPIRY_HOURS)
 
-    to_encode.update({
-        "exp": expire,
-        "jti": str(uuid4()),
-    })
-
-    encoded_jwt = jwt.encode(
-        to_encode,
-        settings.SECRET_KEY,
-        algorithm=settings.JWT_ALGORITHM
+    to_encode.update(
+        {
+            "exp": expire,
+            "jti": str(uuid4()),
+        }
     )
+
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
 
 def decode_access_token(token: str) -> Optional[TokenData]:
     """Decode and validate a JWT access token."""
     try:
-        payload = jwt.decode(
-            token,
-            settings.SECRET_KEY,
-            algorithms=[settings.JWT_ALGORITHM]
-        )
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
         username: str = payload.get("sub")
         user_id: int = payload.get("user_id")
         role: str = payload.get("role")
@@ -152,13 +138,7 @@ def decode_access_token(token: str) -> Optional[TokenData]:
         if username is None or user_id is None:
             return None
 
-        return TokenData(
-            username=username,
-            user_id=user_id,
-            role=role,
-            exp=exp,
-            jti=jti
-        )
+        return TokenData(username=username, user_id=user_id, role=role, exp=exp, jti=jti)
     # PyJWTError is the base of every exception jwt.decode can raise for a bad
     # token -- DecodeError (malformed, wrong number of segments), a signature
     # mismatch, ExpiredSignatureError, and an algorithm that is not in

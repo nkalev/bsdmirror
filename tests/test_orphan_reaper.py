@@ -63,6 +63,7 @@ NOW = datetime(2026, 8, 29, 20, 0, tzinfo=timezone.utc)
 #
 # (name, job_id, status, started_at, active_job_ids, expect_reap, why)
 # ---------------------------------------------------------------------------
+# fmt: off
 DECISIONS = [
     (
         "job_615_at_hour_fifteen_is_not_reaped",
@@ -139,11 +140,13 @@ DECISIONS = [
         "in the reported elapsed time.",
     ),
 ]
+# fmt: on
 
 
 @pytest.mark.parametrize(
     "name,job_id,status,started_at,active,expect_reap,why",
-    DECISIONS, ids=[case[0] for case in DECISIONS],
+    DECISIONS,
+    ids=[case[0] for case in DECISIONS],
 )
 def test_the_decision(name, job_id, status, started_at, active, expect_reap, why):
     verdict = _orphan_verdict(
@@ -205,6 +208,7 @@ def test_the_verdict_carries_a_reason():
 # a mutation cannot be "caught" by some unrelated assertion.
 # ---------------------------------------------------------------------------
 
+
 def _decision_source() -> str:
     """The real text of the decision, straight out of sync_service.py."""
     return "\n\n".join(
@@ -257,6 +261,7 @@ OWNERSHIP_BRANCH = """    if job_id in active_job_ids:
 STATUS_BRANCH = """    if job_status != SyncStatus.RUNNING:
         return OrphanVerdict(False, f"status is {job_status.value}, not running", elapsed)"""
 
+# fmt: off
 MUTATIONS = [
     (
         # The design the brief warned about, written out in full. Reap anything
@@ -344,11 +349,10 @@ MUTATIONS = [
         "a_naive_started_at_is_read_as_utc",
     ),
 ]
+# fmt: on
 
 
-@pytest.mark.parametrize(
-    "name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS]
-)
+@pytest.mark.parametrize("name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS])
 def test_mutation_is_caught(name, old, new, must_fail):
     source = _decision_source()
     assert source.count(old) == 1, (
@@ -365,8 +369,7 @@ def test_mutation_is_caught(name, old, new, must_fail):
         f"The table does not test what it claims to."
     )
     assert must_fail in failed, (
-        f"mutation {name!r} was expected to fail {must_fail!r}, "
-        f"but the failures were {failed}"
+        f"mutation {name!r} was expected to fail {must_fail!r}, " f"but the failures were {failed}"
     )
 
 
@@ -389,18 +392,19 @@ def test_the_decision_never_reads_the_clock():
 # 3. The reaper against a real database
 # ---------------------------------------------------------------------------
 
+
 def set_state(factory, mirror_id, job_id, *, job_status, mirror_status, started_at=None):
     session = factory()
     try:
         session.execute(
-            update(SyncJob).where(SyncJob.id == job_id).values(
+            update(SyncJob)
+            .where(SyncJob.id == job_id)
+            .values(
                 status=job_status,
                 started_at=started_at or (datetime.now(timezone.utc) - JOB_615_ELAPSED),
             )
         )
-        session.execute(
-            update(Mirror).where(Mirror.id == mirror_id).values(status=mirror_status)
-        )
+        session.execute(update(Mirror).where(Mirror.id == mirror_id).values(status=mirror_status))
         session.commit()
     finally:
         session.close()
@@ -409,8 +413,13 @@ def set_state(factory, mirror_id, job_id, *, job_status, mirror_status, started_
 async def test_a_crashed_sync_is_cleared_on_startup(service, factory, mirror):
     """The whole defect, in one test. A process that has just started owns no
     jobs, so every RUNNING row belongs to a process that is gone."""
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
+    )
     service.active_job_ids = set()
 
     reaped = await service.reap_orphaned_jobs(trigger="startup")
@@ -428,8 +437,13 @@ async def test_reaping_does_not_destroy_the_last_known_good_record(service, fact
     """last_sync_completed answers "when was this mirror last known good", and
     a sync that died has no better answer. Same reasoning that keeps
     sync_mirror_job from clearing it on an ordinary failure."""
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
+    )
 
     await service.reap_orphaned_jobs(trigger="startup")
 
@@ -440,8 +454,13 @@ async def test_reaping_does_not_destroy_the_last_known_good_record(service, fact
 
 
 async def test_a_job_this_process_is_running_is_left_alone(service, factory, mirror):
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
+    )
     service.active_job_ids = {mirror["job_id"]}
 
     reaped = await service.reap_orphaned_jobs(trigger="scheduler")
@@ -459,8 +478,13 @@ async def test_a_job_this_process_is_running_is_left_alone(service, factory, mir
 async def test_a_pending_job_is_not_reaped(service, factory, mirror):
     """PENDING is the queue. The mirror's retry lands there, and reaping it
     would break the recovery the reaper exists to enable."""
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.PENDING, mirror_status=MirrorStatus.ACTIVE)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.PENDING,
+        mirror_status=MirrorStatus.ACTIVE,
+    )
 
     assert await service.reap_orphaned_jobs(trigger="startup") == 0
 
@@ -469,8 +493,13 @@ async def test_a_pending_job_is_not_reaped(service, factory, mirror):
 
 
 async def test_reaping_is_idempotent(service, factory, mirror):
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
+    )
 
     assert await service.reap_orphaned_jobs(trigger="startup") == 1
     assert await service.reap_orphaned_jobs(trigger="startup") == 0
@@ -482,8 +511,13 @@ async def test_a_mirror_stuck_in_syncing_with_no_running_job_is_cleared(
 ):
     """Reaping the job cannot produce this state, but a deleted job row or a
     hand-edited table can -- and it blocks trigger_sync just as effectively."""
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.COMPLETED, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.COMPLETED,
+        mirror_status=MirrorStatus.SYNCING,
+    )
 
     with caplog.at_level(logging.WARNING, logger="sync.sync_service"):
         await service.reap_orphaned_jobs(trigger="startup")
@@ -507,8 +541,13 @@ async def test_reaping_a_stale_job_does_not_disturb_a_mirror_that_moved_on(
 
     The job is still closed out. Only the mirror is left alone.
     """
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.ACTIVE)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.ACTIVE,
+    )
 
     assert await service.reap_orphaned_jobs(trigger="startup") == 1
 
@@ -521,14 +560,15 @@ async def test_reaping_a_stale_job_does_not_disturb_a_mirror_that_moved_on(
     assert m.last_sync_error is None, "no error to show: nothing is wrong with it"
 
 
-@pytest.mark.parametrize(
-    "status", [MirrorStatus.ACTIVE, MirrorStatus.ERROR, MirrorStatus.DISABLED]
-)
-async def test_a_mirror_not_claiming_to_sync_is_never_touched(
-    service, factory, mirror, status
-):
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.COMPLETED, mirror_status=status)
+@pytest.mark.parametrize("status", [MirrorStatus.ACTIVE, MirrorStatus.ERROR, MirrorStatus.DISABLED])
+async def test_a_mirror_not_claiming_to_sync_is_never_touched(service, factory, mirror, status):
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.COMPLETED,
+        mirror_status=status,
+    )
 
     await service.reap_orphaned_jobs(trigger="startup")
 
@@ -540,8 +580,13 @@ async def test_reaping_a_long_run_is_logged_at_warning(service, factory, mirror,
     """Elapsed time decides nothing, but a reap of something job-615-shaped is
     worth being loud about. If this service ever gets one wrong, the operator
     should find it in the log rather than in the size of the mirror."""
-    set_state(factory, mirror["mirror_id"], mirror["job_id"],
-              job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+    set_state(
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
+    )
 
     with caplog.at_level(logging.INFO, logger="sync.sync_service"):
         await service.reap_orphaned_jobs(trigger="startup")
@@ -553,8 +598,11 @@ async def test_reaping_a_long_run_is_logged_at_warning(service, factory, mirror,
 
 async def test_reaping_a_short_run_is_logged_at_info(service, factory, mirror, caplog):
     set_state(
-        factory, mirror["mirror_id"], mirror["job_id"],
-        job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING,
+        factory,
+        mirror["mirror_id"],
+        mirror["job_id"],
+        job_status=SyncStatus.RUNNING,
+        mirror_status=MirrorStatus.SYNCING,
         started_at=datetime.now(timezone.utc) - timedelta(minutes=13),
     )
 
@@ -574,6 +622,7 @@ async def test_reaping_a_short_run_is_logged_at_info(service, factory, mirror, c
 # at it. That is the failure this design exists to prevent, reproduced as
 # closely as a test can.
 # ---------------------------------------------------------------------------
+
 
 class BlockingProcess(FakeProcess):
     """A transfer that has started and has not finished. communicate() reports
@@ -618,9 +667,9 @@ def backdate(factory, job_id, elapsed):
     session = factory()
     try:
         session.execute(
-            update(SyncJob).where(SyncJob.id == job_id).values(
-                started_at=datetime.now(timezone.utc) - elapsed
-            )
+            update(SyncJob)
+            .where(SyncJob.id == job_id)
+            .values(started_at=datetime.now(timezone.utc) - elapsed)
         )
         session.commit()
     finally:
@@ -652,9 +701,9 @@ async def test_a_live_job_615_survives_a_reaper_pass_at_hour_fifteen(
         m, j = reload(factory, mirror["mirror_id"], mirror["job_id"])
         assert j.status == SyncStatus.RUNNING
         assert m.status == MirrorStatus.SYNCING
-        assert mirror["job_id"] in service.active_job_ids, (
-            "the claim must be held for the whole run, not just taken at the end"
-        )
+        assert (
+            mirror["job_id"] in service.active_job_ids
+        ), "the claim must be held for the whole run, not just taken at the end"
 
         with caplog.at_level(logging.INFO, logger="sync.sync_service"):
             reaped = await service.reap_orphaned_jobs(trigger="scheduler")
@@ -694,9 +743,9 @@ async def test_repeated_reaper_passes_across_a_long_transfer_never_touch_it(
 
         for hour in range(1, 17):
             backdate(factory, mirror["job_id"], timedelta(hours=hour))
-            assert await service.reap_orphaned_jobs(trigger="scheduler") == 0, (
-                f"reaped at hour {hour}"
-            )
+            assert (
+                await service.reap_orphaned_jobs(trigger="scheduler") == 0
+            ), f"reaped at hour {hour}"
     finally:
         release.set()
         await asyncio.wait_for(transfer, timeout=5)
@@ -720,8 +769,13 @@ async def test_a_job_stranded_by_an_exception_is_reaped_without_a_restart(
     async def explode(job_id, mirror_id, name, upstream, local_path, mirror_type=None):
         # Reproduce the state the real body would have left: RUNNING row,
         # SYNCING mirror, then a failure before the completion block.
-        set_state(factory, mirror_id, job_id,
-                  job_status=SyncStatus.RUNNING, mirror_status=MirrorStatus.SYNCING)
+        set_state(
+            factory,
+            mirror_id,
+            job_id,
+            job_status=SyncStatus.RUNNING,
+            mirror_status=MirrorStatus.SYNCING,
+        )
         raise boom
 
     monkeypatch.setattr(service, "_sync_mirror_job", explode)
@@ -748,6 +802,7 @@ async def test_a_job_stranded_by_an_exception_is_reaped_without_a_restart(
 # is a property of the source, so it is checked against the source.
 # ---------------------------------------------------------------------------
 
+
 def _function_def(name):
     tree = ast.parse(SYNC_SERVICE_PATH.read_text())
     for node in ast.walk(tree):
@@ -766,20 +821,19 @@ def test_the_claim_is_taken_before_anything_can_await():
     await point between the claim and the UPDATE that sets RUNNING.
     """
     body = _function_def("sync_mirror_job").body
-    statements = [s for s in body if not isinstance(s, ast.Expr) or
-                  not isinstance(s.value, ast.Constant)]
+    statements = [
+        s for s in body if not isinstance(s, ast.Expr) or not isinstance(s.value, ast.Constant)
+    ]
 
     first = statements[0]
     assert isinstance(first, ast.Expr) and isinstance(first.value, ast.Call)
     assert ast.unparse(first.value).startswith("self.active_job_ids.add")
 
     rest = statements[1:]
-    assert len(rest) == 1 and isinstance(rest[0], ast.Try), (
-        "everything after the claim must sit in a try, so the release is "
-        "unconditional"
-    )
-    assert not any(isinstance(n, (ast.Await, ast.AsyncWith, ast.AsyncFor))
-                   for n in ast.walk(first))
+    assert len(rest) == 1 and isinstance(
+        rest[0], ast.Try
+    ), "everything after the claim must sit in a try, so the release is unconditional"
+    assert not any(isinstance(n, (ast.Await, ast.AsyncWith, ast.AsyncFor)) for n in ast.walk(first))
 
 
 def test_the_claim_is_released_in_a_finally():
@@ -803,9 +857,12 @@ def test_active_job_ids_has_exactly_one_writer():
 
     writers = set()
     for node in ast.walk(tree):
-        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
-                and node.func.attr in {"add", "discard", "remove", "clear", "pop", "update"}
-                and "active_job_ids" in ast.unparse(node.func.value)):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in {"add", "discard", "remove", "clear", "pop", "update"}
+            and "active_job_ids" in ast.unparse(node.func.value)
+        ):
             writers.add(enclosing.get(node, "<module>"))
 
     assert writers == {"sync_mirror_job"}, writers
@@ -815,9 +872,7 @@ def test_the_reaper_runs_at_startup_before_any_pending_job_is_picked_up():
     """Order matters: a mirror stuck in SYNCING from the crash would otherwise
     stay stuck for the whole first cycle."""
     calls = [
-        ast.unparse(node)
-        for node in ast.walk(_function_def("run"))
-        if isinstance(node, ast.Call)
+        ast.unparse(node) for node in ast.walk(_function_def("run")) if isinstance(node, ast.Call)
     ]
     reap = next(i for i, c in enumerate(calls) if "reap_orphaned_jobs" in c)
     poll = next(i for i, c in enumerate(calls) if "poll_pending_jobs" in c)
@@ -839,7 +894,8 @@ def test_the_reaper_never_consults_elapsed_time_to_decide():
     source = ast.unparse(node)
     assert "verdict.reap" in source
     comparisons = [
-        ast.unparse(n) for n in ast.walk(node)
+        ast.unparse(n)
+        for n in ast.walk(node)
         if isinstance(n, ast.Compare) and "elapsed" in ast.unparse(n)
     ]
     assert all("LONG_RUNNING_REAP_WARN_SECONDS" in c or "None" in c for c in comparisons), (
@@ -852,13 +908,12 @@ def test_the_reaper_never_consults_elapsed_time_to_decide():
 # 6. The API side
 # ---------------------------------------------------------------------------
 
+
 async def test_a_mirror_stuck_in_syncing_refuses_every_retry(client, seed, db_session):
     """What the operator actually hit: admin.py's trigger_sync guard, with no
     way past it but an UPDATE against production."""
     db_session.execute(
-        update(Mirror).where(Mirror.id == seed["mirror_id"]).values(
-            status=MirrorStatus.SYNCING
-        )
+        update(Mirror).where(Mirror.id == seed["mirror_id"]).values(status=MirrorStatus.SYNCING)
     )
     db_session.commit()
 
@@ -870,14 +925,14 @@ async def test_a_mirror_stuck_in_syncing_refuses_every_retry(client, seed, db_se
     assert response.json()["detail"] == "Mirror is already syncing"
 
 
-async def test_the_state_the_reaper_leaves_behind_accepts_a_retry(
-    client, seed, db_session
-):
+async def test_the_state_the_reaper_leaves_behind_accepts_a_retry(client, seed, db_session):
     """ERROR is the point of moving the mirror out of SYNCING: it is honest
     about the tree on disk being a partial transfer, and it lets the operator
     retry from the panel instead of from psql."""
     db_session.execute(
-        update(Mirror).where(Mirror.id == seed["mirror_id"]).values(
+        update(Mirror)
+        .where(Mirror.id == seed["mirror_id"])
+        .values(
             status=MirrorStatus.ERROR,
             last_sync_error="Sync job abandoned: ...",
         )
@@ -891,9 +946,7 @@ async def test_the_state_the_reaper_leaves_behind_accepts_a_retry(
     assert response.status_code == 200, response.text
 
     job_id = response.json()["job_id"]
-    queued = db_session.execute(
-        select(SyncJob).where(SyncJob.id == job_id)
-    ).scalar_one()
-    assert queued.status == SyncStatus.PENDING, (
-        "the retry lands in the queue the reaper is careful not to touch"
-    )
+    queued = db_session.execute(select(SyncJob).where(SyncJob.id == job_id)).scalar_one()
+    assert (
+        queued.status == SyncStatus.PENDING
+    ), "the retry lands in the queue the reaper is careful not to touch"

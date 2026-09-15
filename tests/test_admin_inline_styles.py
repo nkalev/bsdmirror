@@ -113,11 +113,23 @@ def test_the_utilities_added_for_this_change_are_all_referenced():
     if one stops being used, either the markup regressed or the rule should go.
     """
     introduced = {
-        "u-mt-sm", "u-mt-md", "u-push-right", "u-pad-body",
-        "u-full-width", "u-flex-1",
-        "u-text-muted", "u-text-error", "u-text-sm",
-        "u-row-8", "u-row-12", "u-grid-2", "u-grid-2-tight",
-        "code-block", "log-pre", "log-pre-error", "log-pre-output",
+        "u-mt-sm",
+        "u-mt-md",
+        "u-push-right",
+        "u-pad-body",
+        "u-full-width",
+        "u-flex-1",
+        "u-text-muted",
+        "u-text-error",
+        "u-text-sm",
+        "u-row-8",
+        "u-row-12",
+        "u-grid-2",
+        "u-grid-2-tight",
+        "code-block",
+        "log-pre",
+        "log-pre-error",
+        "log-pre-output",
     }
     unused = sorted(introduced - _static_classes_used())
     assert not unused, "defined but never used in admin.js markup: %s" % unused
@@ -133,7 +145,7 @@ def test_the_stylesheet_list_matches_what_the_admin_page_loads():
     linked = re.findall(r'<link[^>]+rel="stylesheet"[^>]+href="([^"]+)"', html)
     linked_names = {pathlib.PurePosixPath(h).name for h in linked}
     listed_names = {p.name for p in STYLESHEETS}
-    assert linked_names == listed_names, (
-        "admin/index.html links %s but this module checks %s"
-        % (sorted(linked_names), sorted(listed_names))
+    assert linked_names == listed_names, "admin/index.html links %s but this module checks %s" % (
+        sorted(linked_names),
+        sorted(listed_names),
     )

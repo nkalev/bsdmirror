@@ -146,18 +146,20 @@ def test_no_inline_event_handlers(html_path):
 def test_copy_buttons_carry_a_data_attribute():
     html = INDEX_HTML.read_text(encoding="utf-8")
     names = re.findall(r'data-copy-rsync="([^"]+)"', html)
-    assert names == ["FreeBSD", "NetBSD", "OpenBSD"], (
-        f"expected the three mirror buttons to be tagged for binding, got {names}"
-    )
+    assert names == [
+        "FreeBSD",
+        "NetBSD",
+        "OpenBSD",
+    ], f"expected the three mirror buttons to be tagged for binding, got {names}"
 
 
 def test_main_js_binds_the_copy_buttons():
     js = MAIN_JS.read_text(encoding="utf-8")
     assert "data-copy-rsync" in js, "main.js does not look for the buttons"
     assert "addEventListener" in js
-    assert "bindCopyRsyncButtons()" in js, (
-        "the binding function is defined but never called from DOMContentLoaded"
-    )
+    assert (
+        "bindCopyRsyncButtons()" in js
+    ), "the binding function is defined but never called from DOMContentLoaded"
 
 
 # ---------------------------------------------------------------------------
@@ -165,8 +167,8 @@ def test_main_js_binds_the_copy_buttons():
 # ---------------------------------------------------------------------------
 @requires_browser
 def test_no_csp_violations_on_load(clicked):
-    assert clicked["cspViolations"] == [], (
-        "the page raised CSP violations:\n  " + "\n  ".join(clicked["cspViolations"])
+    assert clicked["cspViolations"] == [], "the page raised CSP violations:\n  " + "\n  ".join(
+        clicked["cspViolations"]
     )
 
 
@@ -179,15 +181,15 @@ def test_all_three_copy_buttons_are_found(clicked):
 @pytest.mark.parametrize("index,mirror", list(enumerate(["FreeBSD", "NetBSD", "OpenBSD"])))
 def test_copy_button_responds_to_a_real_click(clicked, index, mirror):
     button = clicked["buttons"][index]
-    assert button["onclickAttr"] is None, (
-        f"{mirror} button still has an inline onclick, which the CSP blocks"
-    )
-    assert button["toast"]["shown"], (
-        f"clicking the {mirror} button produced no toast; the handler did not run"
-    )
-    assert f"/{mirror}/" in button["toast"]["text"], (
-        f"{mirror} button copied the wrong URL: {button['toast']['text']!r}"
-    )
+    assert (
+        button["onclickAttr"] is None
+    ), f"{mirror} button still has an inline onclick, which the CSP blocks"
+    assert button["toast"][
+        "shown"
+    ], f"clicking the {mirror} button produced no toast; the handler did not run"
+    assert (
+        f"/{mirror}/" in button["toast"]["text"]
+    ), f"{mirror} button copied the wrong URL: {button['toast']['text']!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +235,6 @@ def test_harness_detects_a_reintroduced_inline_handler(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-
 def _directives(csp: str) -> dict:
     """Split a CSP into {directive: source-list}.
 
@@ -248,6 +249,7 @@ def _directives(csp: str) -> dict:
         name, _, sources = part.partition(" ")
         out[name] = sources.strip()
     return out
+
 
 @pytest.mark.skipif(not NGINX_CONF.exists(), reason="nginx/nginx.conf not present")
 def test_style_src_does_not_allow_unsafe_inline():
@@ -266,8 +268,7 @@ def test_style_src_does_not_allow_unsafe_inline():
     style_src = _directives(nginx_csp()).get("style-src", "")
     assert "'unsafe-inline'" not in style_src, (
         "style-src has regained 'unsafe-inline': %r. Check what reintroduced an "
-        "inline style; the two inline-style guards should have caught it first."
-        % style_src
+        "inline style; the two inline-style guards should have caught it first." % style_src
     )
     assert "'self'" in style_src, "style-src must still permit the site's own stylesheets"
 

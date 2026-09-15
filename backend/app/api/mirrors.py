@@ -61,56 +61,48 @@ def get_url_path(mirror_type: MirrorType) -> str:
     paths = {
         MirrorType.FREEBSD: "/FreeBSD/",
         MirrorType.NETBSD: "/NetBSD/",
-        MirrorType.OPENBSD: "/OpenBSD/"
+        MirrorType.OPENBSD: "/OpenBSD/",
     }
     return paths.get(mirror_type, "/")
 
 
 @router.get("/", response_model=List[MirrorResponse])
-async def list_mirrors(
-    db: AsyncSession = Depends(get_db)
-) -> List[MirrorResponse]:
+async def list_mirrors(db: AsyncSession = Depends(get_db)) -> List[MirrorResponse]:
     """List all configured mirrors and their status."""
-    result = await db.execute(
-        select(Mirror).where(Mirror.enabled.is_(True)).order_by(Mirror.name)
-    )
+    result = await db.execute(select(Mirror).where(Mirror.enabled.is_(True)).order_by(Mirror.name))
     mirrors = result.scalars().all()
-    
+
     response = []
     for mirror in mirrors:
-        response.append(MirrorResponse(
-            id=mirror.id,
-            name=mirror.name,
-            mirror_type=mirror.mirror_type,
-            enabled=mirror.enabled,
-            status=mirror.status,
-            last_sync_completed=mirror.last_sync_completed,
-            total_size_bytes=mirror.total_size_bytes,
-            total_size_human=humanize.naturalsize(mirror.total_size_bytes) if mirror.total_size_bytes else None,
-            file_count=mirror.file_count,
-            url_path=get_url_path(mirror.mirror_type)
-        ))
-    
+        response.append(
+            MirrorResponse(
+                id=mirror.id,
+                name=mirror.name,
+                mirror_type=mirror.mirror_type,
+                enabled=mirror.enabled,
+                status=mirror.status,
+                last_sync_completed=mirror.last_sync_completed,
+                total_size_bytes=mirror.total_size_bytes,
+                total_size_human=humanize.naturalsize(mirror.total_size_bytes)
+                if mirror.total_size_bytes
+                else None,
+                file_count=mirror.file_count,
+                url_path=get_url_path(mirror.mirror_type),
+            )
+        )
+
     return response
 
 
 @router.get("/{mirror_id}", response_model=MirrorDetailResponse)
-async def get_mirror(
-    mirror_id: int,
-    db: AsyncSession = Depends(get_db)
-) -> MirrorDetailResponse:
+async def get_mirror(mirror_id: int, db: AsyncSession = Depends(get_db)) -> MirrorDetailResponse:
     """Get detailed information about a specific mirror."""
-    result = await db.execute(
-        select(Mirror).where(Mirror.id == mirror_id)
-    )
+    result = await db.execute(select(Mirror).where(Mirror.id == mirror_id))
     mirror = result.scalar_one_or_none()
-    
+
     if not mirror:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Mirror not found"
-        )
-    
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mirror not found")
+
     return MirrorDetailResponse(
         id=mirror.id,
         name=mirror.name,
@@ -123,19 +115,19 @@ async def get_mirror(
         last_sync_completed=mirror.last_sync_completed,
         last_sync_error=mirror.last_sync_error,
         total_size_bytes=mirror.total_size_bytes,
-        total_size_human=humanize.naturalsize(mirror.total_size_bytes) if mirror.total_size_bytes else None,
+        total_size_human=humanize.naturalsize(mirror.total_size_bytes)
+        if mirror.total_size_bytes
+        else None,
         file_count=mirror.file_count,
         url_path=get_url_path(mirror.mirror_type),
         created_at=mirror.created_at,
-        updated_at=mirror.updated_at
+        updated_at=mirror.updated_at,
     )
 
 
 @router.get("/{mirror_id}/sync-history")
 async def get_sync_history(
-    mirror_id: int,
-    limit: int = 10,
-    db: AsyncSession = Depends(get_db)
+    mirror_id: int, limit: int = 10, db: AsyncSession = Depends(get_db)
 ) -> List[dict]:
     """Get sync job history for a mirror."""
     result = await db.execute(
@@ -145,7 +137,7 @@ async def get_sync_history(
         .limit(limit)
     )
     jobs = result.scalars().all()
-    
+
     return [
         {
             "id": job.id,
@@ -154,27 +146,27 @@ async def get_sync_history(
             "completed_at": job.completed_at,
             "files_transferred": job.files_transferred,
             "bytes_transferred": job.bytes_transferred,
-            "bytes_transferred_human": humanize.naturalsize(job.bytes_transferred) if job.bytes_transferred else None,
+            "bytes_transferred_human": humanize.naturalsize(job.bytes_transferred)
+            if job.bytes_transferred
+            else None,
             "files_deleted": job.files_deleted,
             "triggered_by": job.triggered_by,
             "error_message": job.error_message,
-            "created_at": job.created_at
+            "created_at": job.created_at,
         }
         for job in jobs
     ]
 
 
 @router.get("/status/summary")
-async def get_mirrors_summary(
-    db: AsyncSession = Depends(get_db)
-) -> dict:
+async def get_mirrors_summary(db: AsyncSession = Depends(get_db)) -> dict:
     """Get summary status of all mirrors."""
     result = await db.execute(select(Mirror))
     mirrors = result.scalars().all()
-    
+
     total_size = sum(m.total_size_bytes or 0 for m in mirrors)
     total_files = sum(m.file_count or 0 for m in mirrors)
-    
+
     return {
         "total_mirrors": len(mirrors),
         "enabled_mirrors": sum(1 for m in mirrors if m.enabled),
@@ -186,8 +178,10 @@ async def get_mirrors_summary(
                 "status": m.status.value,
                 "enabled": m.enabled,
                 "last_sync": m.last_sync_completed.isoformat() if m.last_sync_completed else None,
-                "size_human": humanize.naturalsize(m.total_size_bytes) if m.total_size_bytes else None
+                "size_human": humanize.naturalsize(m.total_size_bytes)
+                if m.total_size_bytes
+                else None,
             }
             for m in mirrors
-        }
+        },
     }

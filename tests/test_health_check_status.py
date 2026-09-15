@@ -58,9 +58,26 @@ SCRIPT = REPO_ROOT / "scripts" / "health_check.sh"
 # PATH by directory, because a directory-based prune to hide `docker` would
 # also hide anything installed alongside it -- jq and coreutils commonly are.
 _SHIM_TOOLS = (
-    "bash", "jq", "awk", "sed", "date", "grep", "tr", "cut", "mkdir", "chmod",
-    "mv", "rm", "dirname", "basename", "cat", "mktemp", "df", "curl",
-    "hostname", "sh",
+    "bash",
+    "jq",
+    "awk",
+    "sed",
+    "date",
+    "grep",
+    "tr",
+    "cut",
+    "mkdir",
+    "chmod",
+    "mv",
+    "rm",
+    "dirname",
+    "basename",
+    "cat",
+    "mktemp",
+    "df",
+    "curl",
+    "hostname",
+    "sh",
 )
 
 
@@ -419,9 +436,9 @@ def test_other_modes_never_write_status(tmp_path, flag):
         env={"HEALTH_STATUS_DIR": str(status_dir)},
         args=[flag, "--state-file", str(state_file), "--quiet"],
     )
-    assert not status_dir.exists(), (
-        f"{flag} must never write status.json (exit {result.returncode}): {result.stderr}"
-    )
+    assert (
+        not status_dir.exists()
+    ), f"{flag} must never write status.json (exit {result.returncode}): {result.stderr}"
 
 
 def test_real_run_writes_status_with_delivered_notification(tmp_path):
