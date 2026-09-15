@@ -2,26 +2,70 @@
  * BSD Mirror - Main JavaScript
  */
 
-// Theme management
+// Theme management.
+//
+// js/theme-init.js runs from <head> and has already applied the saved or
+// system theme before the first paint; ThemeManager adopts it, keeps the
+// toggle's icon and label in step, and saves explicit choices. Until the
+// visitor makes one, the site keeps following the operating system's
+// preference, including a change made while the page is open. Storage can be
+// unavailable or throw; a theme change must never depend on it.
 const ThemeManager = {
+    STORAGE_KEY: 'theme',
+    SYSTEM_DARK: '(prefers-color-scheme: dark)',
+
     init() {
-        const savedTheme = localStorage.getItem('theme') || 'light';
-        this.setTheme(savedTheme);
+        const current = document.documentElement.getAttribute('data-theme');
+        this.apply(current === 'light' || current === 'dark' ? current : this.preferred());
 
         document.getElementById('themeToggle')?.addEventListener('click', () => {
-            const currentTheme = document.documentElement.getAttribute('data-theme');
-            const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-            this.setTheme(newTheme);
+            const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            this.apply(next);
+            this.save(next);
+        });
+
+        const media = typeof window.matchMedia === 'function' ? window.matchMedia(this.SYSTEM_DARK) : null;
+        media?.addEventListener?.('change', (event) => {
+            if (this.saved() === null) {
+                this.apply(event.matches ? 'dark' : 'light');
+            }
         });
     },
 
-    setTheme(theme) {
-        document.documentElement.setAttribute('data-theme', theme);
-        localStorage.setItem('theme', theme);
+    saved() {
+        try {
+            const value = window.localStorage.getItem(this.STORAGE_KEY);
+            return value === 'light' || value === 'dark' ? value : null;
+        } catch {
+            return null;
+        }
+    },
 
+    preferred() {
+        const saved = this.saved();
+        if (saved) {
+            return saved;
+        }
+        const prefersDark = typeof window.matchMedia === 'function' && window.matchMedia(this.SYSTEM_DARK).matches;
+        return prefersDark ? 'dark' : 'light';
+    },
+
+    save(theme) {
+        try {
+            window.localStorage.setItem(this.STORAGE_KEY, theme);
+        } catch {
+            // Storage unavailable: the choice lasts for this page view only.
+        }
+    },
+
+    apply(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        document.getElementById('themeToggle')?.setAttribute(
+            'aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
+        );
         const icon = document.querySelector('.theme-icon');
         if (icon) {
-            icon.textContent = theme === 'dark' ? '☀️' : '🌙';
+            icon.textContent = theme === 'dark' ? '☀' : '☾';
         }
     }
 };
