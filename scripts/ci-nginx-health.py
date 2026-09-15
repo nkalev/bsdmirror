@@ -131,7 +131,9 @@ def main(argv: list[str]) -> int:
     if problems:
         return 1
 
-    print(f"\n{total_servers} server block(s) across {len(confs)} site profile(s) all serve /health")
+    print(
+        f"\n{total_servers} server block(s) across {len(confs)} site profile(s) all serve /health"
+    )
     return 0
 
 

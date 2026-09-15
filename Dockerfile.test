@@ -82,9 +82,17 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # in this change installs original-awk for ubuntu-24.04's bare `pytest` job
 # (.github/workflows/ci.yml), which cannot be edited from here, so that job
 # still exercises only the default awk until someone gives it the package too.
+#
+# git is for tests/test_gitignore_covers_secrets.py, which asks git itself
+# whether each credential-bearing path is ignored (`git check-ignore`) and
+# whether one was ever committed (`git log --all`). Without it those thirteen
+# tests skipped here and only ever ran in CI. The repo is bind-mounted at /repo
+# owned by the host user rather than `runner`, which git's dubious-ownership
+# check refuses, so safe.directory is set system-wide for that one path.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y chromium rsync jq original-awk \
- && rm -rf /var/lib/apt/lists/*
+ && apt-get install --no-install-recommends -y chromium rsync jq original-awk git \
+ && rm -rf /var/lib/apt/lists/* \
+ && git config --system --add safe.directory /repo
 
 # Both requirement sets in ONE pip invocation, deliberately.
 #

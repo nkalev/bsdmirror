@@ -20,6 +20,11 @@
 target-version = "py312"
 line-length = 100
 
+[tool.ruff.format]
+# Alembic revisions are generated once and then frozen: reformatting one only
+# rewrites a migration's history for no behavioural change.
+exclude = ["backend/alembic/versions/*"]
+
 [tool.ruff.lint]
 # Deliberately modest. Every rule here reports zero findings once the dead code
 # in this change is removed, so `ruff check .` is green from the first CI run.

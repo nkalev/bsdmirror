@@ -36,7 +36,9 @@ echo "GATE PASSED"
 UNREADABLE = [
     pytest.param({"psql_output": "", "psql_rc": 1}, id="psql-fails"),
     pytest.param({"psql_output": "", "psql_rc": 0}, id="empty-output"),
-    pytest.param({"psql_output": "psql: error: connection refused", "psql_rc": 0}, id="non-numeric"),
+    pytest.param(
+        {"psql_output": "psql: error: connection refused", "psql_rc": 0}, id="non-numeric"
+    ),
 ]
 
 

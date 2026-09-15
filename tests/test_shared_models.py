@@ -79,6 +79,7 @@ PG = postgresql.dialect()
 # test_ground_truth_coverage below, so the gap stays visible.
 #
 # (name, pg_type, nullable, default)
+# fmt: off
 GROUND_TRUTH = {
     "mirrors": [
         ("id",                  "int4",                       False, "nextval"),
@@ -140,15 +141,16 @@ GROUND_TRUTH = {
         ("created_at",    "timestamptz", False, None),
     ],
 }
+# fmt: on
 
 # Labels AND their order. Order is part of the type in Postgres: it defines the
 # sort order of the enum and cannot be changed by ALTER TYPE without recreating
 # it. SQLAlchemy takes both from the Python class's declaration order.
 GROUND_TRUTH_ENUMS = {
     "mirror_status": ["ACTIVE", "SYNCING", "ERROR", "DISABLED"],
-    "mirror_type":   ["FREEBSD", "NETBSD", "OPENBSD"],
-    "sync_status":   ["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"],
-    "user_role":     ["ADMIN", "OPERATOR", "READONLY"],
+    "mirror_type": ["FREEBSD", "NETBSD", "OPENBSD"],
+    "sync_status": ["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"],
+    "user_role": ["ADMIN", "OPERATOR", "READONLY"],
 }
 
 
@@ -197,15 +199,13 @@ def pg_default(column):
 
 def rendered(table_name):
     table = Base.metadata.tables[table_name]
-    return [
-        (c.name, pg_type_name(c), c.nullable, pg_default(c))
-        for c in table.columns
-    ]
+    return [(c.name, pg_type_name(c), c.nullable, pg_default(c)) for c in table.columns]
 
 
 # ---------------------------------------------------------------------------
 # 1. The models produce exactly the production schema
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("table_name", sorted(GROUND_TRUTH))
 def test_columns_match_production_exactly(table_name):
@@ -230,14 +230,19 @@ def test_columns_match_production_exactly(table_name):
         name, exp_type, exp_nullable, exp_default = exp
         _, act_type, act_nullable, act_default = actual[i]
         if exp_type != act_type:
-            diffs.append("%s.%s type: production=%s models=%s"
-                         % (table_name, name, exp_type, act_type))
+            diffs.append(
+                "%s.%s type: production=%s models=%s" % (table_name, name, exp_type, act_type)
+            )
         if exp_nullable is not None and exp_nullable != act_nullable:
-            diffs.append("%s.%s nullable: production=%s models=%s"
-                         % (table_name, name, exp_nullable, act_nullable))
+            diffs.append(
+                "%s.%s nullable: production=%s models=%s"
+                % (table_name, name, exp_nullable, act_nullable)
+            )
         if exp_default is not None and exp_default != act_default:
-            diffs.append("%s.%s default: production=%s models=%s"
-                         % (table_name, name, exp_default, act_default))
+            diffs.append(
+                "%s.%s default: production=%s models=%s"
+                % (table_name, name, exp_default, act_default)
+            )
     assert diffs == [], "\n".join(diffs)
 
 
@@ -291,6 +296,7 @@ def test_primary_keys_elided_by_the_dump_are_all_serial_not_null():
 # 2. Enums: labels, order, and the round trip through the Postgres dialect
 # ---------------------------------------------------------------------------
 
+
 def enum_types():
     found = {}
     for table in Base.metadata.tables.values():
@@ -304,8 +310,10 @@ def test_enum_labels_and_order_match_production():
     types = enum_types()
     assert sorted(types) == sorted(GROUND_TRUTH_ENUMS)
     for name, expected in sorted(GROUND_TRUTH_ENUMS.items()):
-        assert list(types[name].enums) == expected, (
-            "enum %s: production=%s models=%s" % (name, expected, list(types[name].enums))
+        assert list(types[name].enums) == expected, "enum %s: production=%s models=%s" % (
+            name,
+            expected,
+            list(types[name].enums),
         )
 
 
@@ -326,7 +334,9 @@ def test_enums_are_native_postgres_types_not_varchar():
         col = Base.metadata.tables[table_name].c[column_name]
         assert isinstance(col.type, SAEnum), "%s.%s is not an Enum" % (table_name, column_name)
         assert col.type.native_enum is True, "%s.%s is not a native Postgres enum" % (
-            table_name, column_name)
+            table_name,
+            column_name,
+        )
         assert col.type.name == type_name
         assert col.type.compile(dialect=PG) == type_name
 
@@ -368,9 +378,7 @@ def test_enum_round_trip_through_the_postgres_dialect(member):
     stored = to_db(member)
     assert stored == member.name, "stored form must be the NAME"
     assert stored == stored.upper(), "production labels are uppercase"
-    assert stored != member.value, (
-        "storing the value would make every existing row unreadable"
-    )
+    assert stored != member.value, "storing the value would make every existing row unreadable"
 
     assert from_db(stored) is member, "round trip did not return the same member"
 
@@ -405,6 +413,7 @@ def test_unknown_enum_string_is_not_validated_before_it_reaches_postgres():
 # ---------------------------------------------------------------------------
 # 3. Constraints and indexes the dump does not show but the code depends on
 # ---------------------------------------------------------------------------
+
 
 def test_sync_jobs_foreign_key_cascades_on_mirror_delete():
     """ON DELETE CASCADE, which the sync service's copy of this table omitted.
@@ -444,10 +453,19 @@ def test_uniqueness_constraints():
 # 4. Structural guards: the duplication must not be able to come back
 # ---------------------------------------------------------------------------
 
+
 def python_files():
     """Every .py file in the repo, excluding caches and virtualenvs."""
-    skip = {".git", "__pycache__", ".venv", "venv", ".pytest_cache", ".ruff_cache",
-            "node_modules", "data"}
+    skip = {
+        ".git",
+        "__pycache__",
+        ".venv",
+        "venv",
+        ".pytest_cache",
+        ".ruff_cache",
+        "node_modules",
+        "data",
+    }
     for path in sorted(REPO_ROOT.rglob("*.py")):
         if not skip.isdisjoint(path.parts):
             continue
@@ -505,8 +523,9 @@ def test_create_all_has_exactly_one_caller():
                 for arg in node.args
             )
             if name in ("create_all", "drop_all") or passed_as_value:
-                callers.append("%s::%s" % (path.relative_to(REPO_ROOT),
-                                           enclosing.get(node, "<module>")))
+                callers.append(
+                    "%s::%s" % (path.relative_to(REPO_ROOT), enclosing.get(node, "<module>"))
+                )
 
     assert callers == [], (
         "create_all/drop_all must not be called outside the test suite -- Alembic "
@@ -530,9 +549,7 @@ def test_sync_service_does_not_import_base():
     from_shared = {}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and (node.module or "").startswith("shared"):
-            from_shared.setdefault(node.module, set()).update(
-                alias.name for alias in node.names
-            )
+            from_shared.setdefault(node.module, set()).update(alias.name for alias in node.names)
 
     every_name = set().union(*from_shared.values()) if from_shared else set()
     assert "Base" not in every_name, "sync_service imported Base; it must not create tables"
@@ -546,7 +563,12 @@ def test_sync_service_does_not_import_base():
     # the schema names this service touches, and specifically that Base is not
     # among them.
     assert from_shared.get("shared.models") == {
-        "Mirror", "MirrorStatus", "MirrorType", "Setting", "SyncJob", "SyncStatus"
+        "Mirror",
+        "MirrorStatus",
+        "MirrorType",
+        "Setting",
+        "SyncJob",
+        "SyncStatus",
     }
 
 
@@ -564,8 +586,9 @@ def test_exactly_one_declarative_base_in_the_repo():
                     definitions.append("%s:%d" % (path.relative_to(REPO_ROOT), node.lineno))
             if isinstance(node, ast.ClassDef):
                 for base in node.bases:
-                    bname = base.attr if isinstance(base, ast.Attribute) else getattr(
-                        base, "id", None)
+                    bname = (
+                        base.attr if isinstance(base, ast.Attribute) else getattr(base, "id", None)
+                    )
                     if bname == "DeclarativeBase":
                         definitions.append("%s:%d" % (path.relative_to(REPO_ROOT), node.lineno))
     assert len(definitions) == 1, "expected one declarative base, found: %s" % definitions
@@ -625,14 +648,16 @@ def test_models_do_not_import_from_either_service():
                 names = [a.name for a in node.names]
             for n in names:
                 if n.split(".")[0] in ("app", "sync", "sync_service"):
-                    offenders.append("%s:%d imports %s"
-                                     % (path.relative_to(REPO_ROOT), node.lineno, n))
+                    offenders.append(
+                        "%s:%d imports %s" % (path.relative_to(REPO_ROOT), node.lineno, n)
+                    )
     assert offenders == []
 
 
 # ---------------------------------------------------------------------------
 # 5. The columns the sync service gained by unifying
 # ---------------------------------------------------------------------------
+
 
 def test_columns_the_sync_service_gained_all_have_defaults():
     """mirrors.created_at, mirrors.updated_at, sync_jobs.created_at and
@@ -666,7 +691,8 @@ def test_sync_jobs_insert_needs_only_the_columns_the_sync_service_supplies():
     must therefore be filled by the database or by SQLAlchemy."""
     supplied = {"mirror_id", "status", "triggered_by"}
     unfilled = [
-        c.name for c in Base.metadata.tables["sync_jobs"].columns
+        c.name
+        for c in Base.metadata.tables["sync_jobs"].columns
         if c.name not in supplied
         and not c.nullable
         and c.server_default is None
@@ -682,6 +708,7 @@ def test_sync_jobs_insert_needs_only_the_columns_the_sync_service_supplies():
 # 6. The full DDL, as one comparable artefact
 # ---------------------------------------------------------------------------
 
+
 def test_create_table_ddl_snapshot():
     """The whole CREATE TABLE output, pinned.
 
@@ -695,42 +722,40 @@ def test_create_table_ddl_snapshot():
         " ".join(str(CreateTable(Base.metadata.tables[t]).compile(dialect=PG)).split())
         for t in sorted(Base.metadata.tables)
     )
-    expected = "\n".join([
-        "CREATE TABLE audit_logs ( id SERIAL NOT NULL, user_id INTEGER, "
-        "action VARCHAR(100) NOT NULL, resource_type VARCHAR(50) NOT NULL, "
-        "resource_id VARCHAR(100), details JSON, ip_address VARCHAR(45), "
-        "user_agent TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
-        "PRIMARY KEY (id), FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL )",
-
-        "CREATE TABLE mirrors ( id SERIAL NOT NULL, name VARCHAR(50) NOT NULL, "
-        "mirror_type mirror_type NOT NULL, upstream_url VARCHAR(500) NOT NULL, "
-        "local_path VARCHAR(500) NOT NULL, enabled BOOLEAN NOT NULL, "
-        "status mirror_status NOT NULL, last_sync_started TIMESTAMP WITH TIME ZONE, "
-        "last_sync_completed TIMESTAMP WITH TIME ZONE, last_sync_error TEXT, "
-        "total_size_bytes BIGINT, file_count BIGINT, "
-        "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
-        "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
-        "PRIMARY KEY (id), UNIQUE (name) )",
-
-        "CREATE TABLE settings ( id SERIAL NOT NULL, key VARCHAR(100) NOT NULL, "
-        "value TEXT, description TEXT, "
-        "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, PRIMARY KEY (id) )",
-
-        "CREATE TABLE sync_jobs ( id SERIAL NOT NULL, mirror_id INTEGER NOT NULL, "
-        "status sync_status NOT NULL, started_at TIMESTAMP WITH TIME ZONE, "
-        "completed_at TIMESTAMP WITH TIME ZONE, files_transferred BIGINT, "
-        "bytes_transferred BIGINT, files_deleted BIGINT, rsync_output TEXT, "
-        "error_message TEXT, triggered_by VARCHAR(50), "
-        "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, PRIMARY KEY (id), "
-        "FOREIGN KEY(mirror_id) REFERENCES mirrors (id) ON DELETE CASCADE )",
-
-        "CREATE TABLE users ( id SERIAL NOT NULL, username VARCHAR(50) NOT NULL, "
-        "email VARCHAR(255), password_hash VARCHAR(255) NOT NULL, "
-        "role user_role NOT NULL, is_active BOOLEAN NOT NULL, "
-        "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
-        "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
-        "last_login TIMESTAMP WITH TIME ZONE, PRIMARY KEY (id), UNIQUE (email) )",
-    ])
+    expected = "\n".join(
+        [
+            "CREATE TABLE audit_logs ( id SERIAL NOT NULL, user_id INTEGER, "
+            "action VARCHAR(100) NOT NULL, resource_type VARCHAR(50) NOT NULL, "
+            "resource_id VARCHAR(100), details JSON, ip_address VARCHAR(45), "
+            "user_agent TEXT, created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
+            "PRIMARY KEY (id), FOREIGN KEY(user_id) REFERENCES users (id) ON DELETE SET NULL )",
+            "CREATE TABLE mirrors ( id SERIAL NOT NULL, name VARCHAR(50) NOT NULL, "
+            "mirror_type mirror_type NOT NULL, upstream_url VARCHAR(500) NOT NULL, "
+            "local_path VARCHAR(500) NOT NULL, enabled BOOLEAN NOT NULL, "
+            "status mirror_status NOT NULL, last_sync_started TIMESTAMP WITH TIME ZONE, "
+            "last_sync_completed TIMESTAMP WITH TIME ZONE, last_sync_error TEXT, "
+            "total_size_bytes BIGINT, file_count BIGINT, "
+            "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
+            "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
+            "PRIMARY KEY (id), UNIQUE (name) )",
+            "CREATE TABLE settings ( id SERIAL NOT NULL, key VARCHAR(100) NOT NULL, "
+            "value TEXT, description TEXT, "
+            "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, PRIMARY KEY (id) )",
+            "CREATE TABLE sync_jobs ( id SERIAL NOT NULL, mirror_id INTEGER NOT NULL, "
+            "status sync_status NOT NULL, started_at TIMESTAMP WITH TIME ZONE, "
+            "completed_at TIMESTAMP WITH TIME ZONE, files_transferred BIGINT, "
+            "bytes_transferred BIGINT, files_deleted BIGINT, rsync_output TEXT, "
+            "error_message TEXT, triggered_by VARCHAR(50), "
+            "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, PRIMARY KEY (id), "
+            "FOREIGN KEY(mirror_id) REFERENCES mirrors (id) ON DELETE CASCADE )",
+            "CREATE TABLE users ( id SERIAL NOT NULL, username VARCHAR(50) NOT NULL, "
+            "email VARCHAR(255), password_hash VARCHAR(255) NOT NULL, "
+            "role user_role NOT NULL, is_active BOOLEAN NOT NULL, "
+            "created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
+            "updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL, "
+            "last_login TIMESTAMP WITH TIME ZONE, PRIMARY KEY (id), UNIQUE (email) )",
+        ]
+    )
     assert ddl == expected
 
 
@@ -769,13 +794,19 @@ def test_models_are_importable_without_the_backend_on_the_path():
     # the sync container, where the `app` package does not exist.
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     result = subprocess.run(
-        [sys.executable, "-c",
-         "import sys;"
-         "assert not [p for p in sys.path if p.endswith('backend')], sys.path;"
-         "import shared.models as m;"
-         "assert 'app' not in sys.modules, sorted(k for k in sys.modules if k.startswith('app'));"
-         "print(sorted(m.Base.metadata.tables))"],
-        capture_output=True, text=True, cwd=str(REPO_ROOT), env=env,
+        [
+            sys.executable,
+            "-c",
+            "import sys;"
+            "assert not [p for p in sys.path if p.endswith('backend')], sys.path;"
+            "import shared.models as m;"
+            "assert 'app' not in sys.modules, sorted(k for k in sys.modules if k.startswith('app'));"
+            "print(sorted(m.Base.metadata.tables))",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(REPO_ROOT),
+        env=env,
     )
     assert result.returncode == 0, result.stderr
     assert "audit_logs" in result.stdout
@@ -798,7 +829,12 @@ def test_the_model_classes_are_unchanged_from_the_definitions_that_built_product
     assert MirrorStatus.ACTIVE.name == "ACTIVE"
     assert [m.name for m in MirrorType] == ["FREEBSD", "NETBSD", "OPENBSD"]
     assert [m.name for m in SyncStatus] == [
-        "PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED"]
+        "PENDING",
+        "RUNNING",
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+    ]
     assert [m.name for m in UserRole] == ["ADMIN", "OPERATOR", "READONLY"]
 
     # str mixin: load-bearing, see test_lowercase_value_is_coerced_to_the_name

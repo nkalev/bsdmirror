@@ -23,7 +23,9 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 SCRIPT = REPO_ROOT / "scripts" / "backup.sh"
 
 # The function stands in for `docker exec bsdmirrors-postgres pg_dump ...`.
-WITH_FAKE_DOCKER = 'docker() { printf "%s\\n" "-- fake dump"; }; export -f docker; exec bash "$SCRIPT"'
+WITH_FAKE_DOCKER = (
+    'docker() { printf "%s\\n" "-- fake dump"; }; export -f docker; exec bash "$SCRIPT"'
+)
 
 
 def run_backup(tmp_path, backup_dir, install_dir):
@@ -61,7 +63,9 @@ def test_the_default_backup_dir_is_outside_the_default_checkout():
     assert not backup.group(1).startswith(install.group(1).rstrip("/") + "/")
 
 
-@pytest.mark.parametrize("inside", ["", "backups", "nested/deeper"], ids=["checkout", "child", "grandchild"])
+@pytest.mark.parametrize(
+    "inside", ["", "backups", "nested/deeper"], ids=["checkout", "child", "grandchild"]
+)
 def test_a_backup_dir_inside_the_checkout_is_refused(tmp_path, inside):
     install = make_install(tmp_path)
     target = install / inside if inside else install

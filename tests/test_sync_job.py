@@ -196,6 +196,7 @@ from tests.conftest import (  # noqa: E402
 # Defect 1: exit 24 is a warning, not a failure
 # ---------------------------------------------------------------------------
 
+
 async def test_exit_24_is_success_at_the_run_rsync_boundary(service, rsync, tmp_path):
     """`some files vanished before they could be transferred` is rsync telling
     you the source moved under it, not that the copy is broken."""
@@ -245,6 +246,7 @@ async def test_exit_24_records_a_completed_job_with_full_stats(service, rsync, f
 # ---------------------------------------------------------------------------
 # Exit 23: tolerated only when every error line is the upstream temp-file race
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize(
     "path",
@@ -389,9 +391,7 @@ def test_a_permission_error_on_real_content_is_not_tolerated():
 def test_a_single_unrecognised_line_defeats_the_whole_run(line, why):
     """Six perfectly benign lines plus one unreadable one must fail. The
     classifier is an AND across every line, not a majority vote."""
-    output = JOB_617_EXIT_23.replace(
-        "file has vanished:", line + "\nfile has vanished:", 1
-    )
+    output = JOB_617_EXIT_23.replace("file has vanished:", line + "\nfile has vanished:", 1)
 
     verdict = _classify_partial_transfer(output, 23)
 
@@ -457,9 +457,7 @@ async def test_job_617_end_to_end_is_recorded_completed_with_full_stats(
     assert "Permission denied (13)" in j.rsync_output
 
 
-async def test_exit_23_on_real_content_still_fails_end_to_end(
-    service, rsync, factory, mirror
-):
+async def test_exit_23_on_real_content_still_fails_end_to_end(service, rsync, factory, mirror):
     """And the mirror keeps its previous good numbers rather than being
     republished with whatever the partial run measured."""
     rsync(23, REAL_PERMISSION_ERROR_EXIT_23)
@@ -530,9 +528,7 @@ async def test_every_other_nonzero_exit_code_still_fails(service, rsync, code, t
     in by an off-by-one or a `>=` comparison."""
     rsync(code, PARTIAL_THEN_EXIT_30)
 
-    success, _, _ = await service.run_rsync(
-        "rsync://upstream/x/", str(tmp_path / "x"), "X"
-    )
+    success, _, _ = await service.run_rsync("rsync://upstream/x/", str(tmp_path / "x"), "X")
 
     assert success is False
 
@@ -619,8 +615,9 @@ async def test_freebsd_protect_filters_use_double_star_for_the_arch_layout(
 # Defect 2: a failure must not erase last_sync_completed
 # ---------------------------------------------------------------------------
 
+
 async def test_failure_leaves_last_sync_completed_untouched(service, rsync, factory, mirror):
-    """"When was this mirror last good?" is the question a failed sync makes
+    """ "When was this mirror last good?" is the question a failed sync makes
     urgent, and the old code answered it by writing NULL.
 
     Observed live: OpenBSD showed last_sync_completed = NULL with 43 GB of
@@ -672,6 +669,7 @@ def _naive(value: datetime) -> datetime:
 # Defect 3: which runs may write mirror stats
 # ---------------------------------------------------------------------------
 
+
 async def test_failed_run_does_not_overwrite_stats_with_partial_numbers(
     service, rsync, factory, mirror
 ):
@@ -706,9 +704,7 @@ async def test_a_legitimate_zero_is_stored_rather_than_treated_as_a_parse_failur
     assert m.file_count == 0
 
 
-async def test_unparseable_stats_leave_the_previous_totals_alone(
-    service, rsync, factory, mirror
-):
+async def test_unparseable_stats_leave_the_previous_totals_alone(service, rsync, factory, mirror):
     """A successful run whose stats block did not parse (-h output, say) must
     not blank the columns -- absent key, not zero."""
     rsync(0, "Number of files: 5.58K (reg: 4.32K, dir: 1.26K)\nTotal file size: 897.65G bytes\n")
@@ -738,6 +734,7 @@ async def test_mirror_file_count_stores_regular_files_not_file_list_entries(
 # Defect 5: files_deleted, and the older transferred-count spelling
 # ---------------------------------------------------------------------------
 
+
 async def test_files_deleted_reaches_the_column(service, rsync, factory, mirror):
     """SyncJob.files_deleted has always been a real column and --delete has
     always been passed, but nothing parsed the line, so it was NULL on every
@@ -766,6 +763,7 @@ async def test_old_rsync_transferred_count_reaches_the_column(service, rsync, fa
 # ---------------------------------------------------------------------------
 # Job bookkeeping that the fixes must not have disturbed
 # ---------------------------------------------------------------------------
+
 
 async def test_job_is_marked_running_before_rsync_starts(service, monkeypatch, factory, mirror):
     """sync_mirror_job's first commit sets RUNNING/SYNCING. Read it from inside
@@ -856,9 +854,9 @@ def test_vanished_line_with_module_clause_is_recognised(line):
     and failed job 619 -- a run whose every error line was benign."""
     match = _VANISHED_RE.match(line)
     assert match is not None, "verbatim rsync output must parse"
-    assert match.group("path").endswith(".tgz.S5EDPJ") or match.group(
-        "path"
-    ).endswith(".tgz.Bk5dNR")
+    assert match.group("path").endswith(".tgz.S5EDPJ") or match.group("path").endswith(
+        ".tgz.Bk5dNR"
+    )
     assert '"' not in match.group("path"), "the capture must not run past the quote"
     assert "(in OpenBSD)" not in match.group("path"), "module clause is not part of the path"
 
@@ -885,13 +883,17 @@ def test_vanished_line_with_trailing_junk_is_still_rejected():
     """The anchor has to stay in some form. A diagnostic carrying unexplained
     trailing text is not something we understand, and unrecognised must keep
     meaning unrecognised."""
-    assert _VANISHED_RE.match(
-        'file has vanished: "/a/.x.AAAAAA" (in OpenBSD) and then the disk caught fire'
-    ) is None
+    assert (
+        _VANISHED_RE.match(
+            'file has vanished: "/a/.x.AAAAAA" (in OpenBSD) and then the disk caught fire'
+        )
+        is None
+    )
     assert _VANISHED_RE.match('file has vanished: "/a/.x.AAAAAA" unexpected trailer') is None
 
 
-JOB_619_EXIT_23 = """\
+JOB_619_EXIT_23 = (
+    """\
 receiving incremental file list
 rsync: [sender] send_files failed to open "/patches/.2.2.tar.gz.Yf874d" (in OpenBSD): Permission denied (13)
 rsync: [sender] send_files failed to open "/snapshots/amd64/.install80.img.cG99qU" (in OpenBSD): Permission denied (13)
@@ -912,7 +914,9 @@ Total transferred file size: 78,381,056 bytes
 sent 402,112 bytes  received 78,772,224 bytes  1,204,112.44 bytes/sec
 total size is 2,628,302,118,514  speedup is 33,201.14
 rsync error: some files/attrs were not transferred (code 23) at main.c(1338) [sender=3.2.7]
-""" % JOB_619_VANISHED_VERBATIM
+"""
+    % JOB_619_VANISHED_VERBATIM
+)
 
 
 def test_job_619_is_fully_attributable():
@@ -984,7 +988,7 @@ def test_send_files_path_capture_cannot_run_across_two_quoted_spans():
     vanished-line anchor: the capture has to end where the quoted span ends.
     """
     line = (
-        'rsync: [sender] send_files failed to open '
+        "rsync: [sender] send_files failed to open "
         '"/snapshots/amd64/base80.tgz" and "/x/.decoy.AAAAAA": Permission denied (13)'
     )
     output = (

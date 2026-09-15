@@ -296,6 +296,7 @@ def auth_header(user: User, expires_delta: Optional[timedelta] = None) -> dict:
 # Same constraints as above: no aiosqlite, no Postgres, no network, no rsync.
 # ===========================================================================
 
+
 class FakeProcess:
     """The slice of asyncio.subprocess.Process that run_rsync touches."""
 
@@ -425,8 +426,12 @@ def mirror(factory, tmp_path):
     job = SyncJob(mirror_id=row.id, status=SyncStatus.PENDING, triggered_by="manual")
     session.add(job)
     session.commit()
-    result = {"mirror_id": row.id, "job_id": job.id, "local_path": row.local_path,
-              "upstream": row.upstream_url}
+    result = {
+        "mirror_id": row.id,
+        "job_id": job.id,
+        "local_path": row.local_path,
+        "upstream": row.upstream_url,
+    }
     session.close()
     return result
 

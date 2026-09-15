@@ -92,6 +92,7 @@ def bcrypt_spy(monkeypatch) -> _BcryptSpy:
 # Login
 # ---------------------------------------------------------------------------
 
+
 async def test_login_success_returns_bearer_token(client, seed):
     resp = await client.post(
         LOGIN_URL,
@@ -225,9 +226,11 @@ async def test_failed_login_is_audited_with_attempted_username(client, seed, db_
     oracle. `user_id` stays None on purpose -- see the comment at the call site.
     """
     await client.post(LOGIN_URL, data={"username": "no-such-person", "password": "x"})
-    logs = db_session.execute(
-        select(AuditLog).where(AuditLog.action == "login_failed")
-    ).scalars().all()
+    logs = (
+        db_session.execute(select(AuditLog).where(AuditLog.action == "login_failed"))
+        .scalars()
+        .all()
+    )
     assert len(logs) == 1
     assert logs[0].user_id is None
     assert logs[0].details == {"username": "no-such-person", "reason": "unknown_user"}
@@ -250,9 +253,11 @@ async def test_failed_login_audit_records_why(
 
     await client.post(LOGIN_URL, data={"username": username, "password": password})
 
-    log = db_session.execute(
-        select(AuditLog).where(AuditLog.action == "login_failed")
-    ).scalars().one()
+    log = (
+        db_session.execute(select(AuditLog).where(AuditLog.action == "login_failed"))
+        .scalars()
+        .one()
+    )
     assert log.details["reason"] == expected_reason
 
 
@@ -287,9 +292,7 @@ async def test_login_disabled_user_is_indistinguishable_from_wrong_password(
     )
 
     assert disabled.status_code == wrong_password.status_code == 401
-    assert disabled.json() == wrong_password.json() == {
-        "detail": "Incorrect username or password"
-    }
+    assert disabled.json() == wrong_password.json() == {"detail": "Incorrect username or password"}
     assert (
         disabled.headers.get("www-authenticate")
         == wrong_password.headers.get("www-authenticate")
@@ -313,11 +316,11 @@ async def test_all_login_failures_share_one_response(client, seed, db_session):
     db_session.commit()
 
     attempts = [
-        ("no-such-person", "whatever"),                     # unknown username
-        ("alice-admin", "definitely-not-the-password"),     # known user, bad password
-        ("rita-readonly", READONLY_PASSWORD),               # valid creds, disabled
-        ("rita-readonly", "definitely-not-the-password"),   # bad password, disabled
-        ("ALICE-ADMIN", ADMIN_PASSWORD),                    # case-mismatched username
+        ("no-such-person", "whatever"),  # unknown username
+        ("alice-admin", "definitely-not-the-password"),  # known user, bad password
+        ("rita-readonly", READONLY_PASSWORD),  # valid creds, disabled
+        ("rita-readonly", "definitely-not-the-password"),  # bad password, disabled
+        ("ALICE-ADMIN", ADMIN_PASSWORD),  # case-mismatched username
     ]
     responses = [
         await client.post(LOGIN_URL, data={"username": u, "password": p}) for u, p in attempts
@@ -357,6 +360,7 @@ async def test_login_requires_both_form_fields(client, seed, payload):
 # ---------------------------------------------------------------------------
 # /auth/me
 # ---------------------------------------------------------------------------
+
 
 async def test_me_returns_the_authenticated_user(client, seed):
     user = seed["users"]["operator"]
@@ -438,6 +442,7 @@ async def test_me_rejects_token_for_user_deleted_after_issue(client, seed, db_se
 # Logout and the blacklist
 # ---------------------------------------------------------------------------
 
+
 async def test_logout_blacklists_the_jti(client, seed, fake_redis):
     token = token_for(seed["users"]["admin"])
     jti = _decode_raw(token)["jti"]
@@ -495,6 +500,7 @@ async def test_logout_of_another_users_token_does_not_affect_them(client, seed, 
 # Unit-level: security.py
 # ---------------------------------------------------------------------------
 
+
 async def test_login_runs_bcrypt_off_the_event_loop(client, seed, bcrypt_spy):
     """bcrypt must not execute on the event loop thread.
 
@@ -544,9 +550,9 @@ async def test_create_user_runs_bcrypt_off_the_event_loop(client, seed, monkeypa
     )
 
     assert resp.status_code == 201, resp.text
-    assert threads == [t for t in threads if t != loop_thread] and threads, (
-        "bcrypt.hashpw ran on the event loop thread"
-    )
+    assert (
+        threads == [t for t in threads if t != loop_thread] and threads
+    ), "bcrypt.hashpw ran on the event loop thread"
 
 
 async def test_event_loop_keeps_running_during_a_login():
@@ -819,8 +825,6 @@ async def test_is_token_blacklisted_reflects_writes(fake_redis):
 async def test_seeded_user_password_hashes_are_real_bcrypt(seed, db_session):
     """Guards the cached_hash fixture helper: the suite must not accidentally
     start storing plaintext."""
-    user = db_session.execute(
-        select(User).where(User.username == "alice-admin")
-    ).scalar_one()
+    user = db_session.execute(select(User).where(User.username == "alice-admin")).scalar_one()
     assert user.password_hash.startswith("$2")
     assert verify_password(ADMIN_PASSWORD, user.password_hash)

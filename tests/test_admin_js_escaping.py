@@ -151,8 +151,7 @@ HARNESS_CHECKS = [
     "renderProtectedPaths shows an inventory error but still renders the pattern list "
     "when the archive-inventory fetch fails",
     "renderProtectedPaths shows a per-mirror unavailable state without a 500",
-    "renderProtectedPaths escapes hostile names in current/unclassified/errors "
-    "end-to-end",
+    "renderProtectedPaths escapes hostile names in current/unclassified/errors end-to-end",
     "renderHealthChecksCard escapes bad, skipped, warning and ok entries end-to-end",
     "renderHealthChecksCard renders unknown when given no data",
     "renderDashboard renders the health-checks card end-to-end via its own fetch",
@@ -163,9 +162,9 @@ HARNESS_CHECKS = [
 @requires_node
 @pytest.mark.parametrize("check_name", HARNESS_CHECKS)
 def test_escaping_behaviour(harness_results, check_name):
-    assert check_name in harness_results, (
-        f"harness did not run {check_name!r}; it reported {sorted(harness_results)}"
-    )
+    assert (
+        check_name in harness_results
+    ), f"harness did not run {check_name!r}; it reported {sorted(harness_results)}"
     ok, detail = harness_results[check_name]
     assert ok, detail
 
@@ -186,6 +185,7 @@ def test_harness_check_list_is_complete(harness_results):
 # (name, old, new, must_fail) -- must_fail names one check that has to go red,
 # so a mutation cannot be "caught" by some unrelated assertion.
 # ---------------------------------------------------------------------------
+# fmt: off
 MUTATIONS = [
     (
         "drop_double_quote_from_escape_set",
@@ -271,12 +271,11 @@ MUTATIONS = [
         "setHtml rejects a plain string",
     ),
 ]
+# fmt: on
 
 
 @requires_node
-@pytest.mark.parametrize(
-    "name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS]
-)
+@pytest.mark.parametrize("name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS])
 def test_mutation_is_caught(tmp_path, name, old, new, must_fail):
     source = ADMIN_JS.read_text(encoding="utf-8")
     assert source.count(old) == 1, (
@@ -294,8 +293,7 @@ def test_mutation_is_caught(tmp_path, name, old, new, must_fail):
         f"The suite does not test what it claims to."
     )
     assert must_fail in failed, (
-        f"mutation {name!r} was expected to fail {must_fail!r}, "
-        f"but the failures were {failed}"
+        f"mutation {name!r} was expected to fail {must_fail!r}, " f"but the failures were {failed}"
     )
 
 
@@ -309,8 +307,16 @@ ATTR_ASSIGN = re.compile(r"""([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*["']""")
 # URL contains no HTML metacharacter, so href="${x}" is exploitable however
 # well x is escaped; style="" is a CSS context; on* is a script context.
 UNSAFE_ATTRS = {
-    "href", "src", "action", "formaction", "srcdoc", "data",
-    "xlink:href", "style", "background", "poster",
+    "href",
+    "src",
+    "action",
+    "formaction",
+    "srcdoc",
+    "data",
+    "xlink:href",
+    "style",
+    "background",
+    "poster",
 }
 
 # Assembled rather than written literally so this file does not itself trip a
@@ -352,8 +358,8 @@ def strip_js_comments(source):
     out = list(source)
     i, n = 0, len(source)
     state = "code"
-    stack = []          # nesting of template literals and their ${} holes
-    prev = ""           # last significant code character
+    stack = []  # nesting of template literals and their ${} holes
+    prev = ""  # last significant code character
 
     while i < n:
         c = source[i]
@@ -469,7 +475,7 @@ def interpolations(source):
                 if depth == 0:
                     break
             j += 1
-        expr = source[i + 2:j]
+        expr = source[i + 2 : j]
 
         # Nearest real tag opener before us, vs the nearest tag close. A bare
         # '<' in JS (`diffMins < 60`) is not a tag opener, hence [a-zA-Z/].
@@ -500,9 +506,9 @@ def test_only_set_html_writes_innerhtml():
     # ...and it must live inside setHtml, not somewhere that merely mentions it.
     body_start = source.index("function setHtml(")
     body_end = source.index("\n}", body_start)
-    assert body_start < source.index(".innerHTML =") < body_end, (
-        "the innerHTML write is outside setHtml()"
-    )
+    assert (
+        body_start < source.index(".innerHTML =") < body_end
+    ), "the innerHTML write is outside setHtml()"
 
 
 def test_no_other_html_sinks():
@@ -518,17 +524,14 @@ def test_no_template_literal_join_remains():
     -- so a stray .join('') is a rendering bug, and it is exactly the shape
     someone reaches for when an array does not render.
     """
-    assert "`).join('')" not in admin_js_source(), (
-        "a template-literal .map().join('') survived"
-    )
+    assert "`).join('')" not in admin_js_source(), "a template-literal .map().join('') survived"
 
 
 def test_no_double_escaping_call_sites():
     """escapeHtml() inside an html`` literal would escape twice."""
-    assert "${escapeHtml(" not in admin_js_source(), (
-        "explicit escapeHtml() inside an interpolation double-escapes; "
-        "html`` already escapes"
-    )
+    assert (
+        "${escapeHtml(" not in admin_js_source()
+    ), "explicit escapeHtml() inside an interpolation double-escapes; html`` already escapes"
 
 
 def test_every_interpolation_lands_in_a_context_the_escaper_covers():
@@ -580,9 +583,9 @@ def test_interpolation_scan_covers_the_attribute_sites():
     """Guard the scanner: the known attribute interpolations must be classified."""
     contexts = [c for _, _, c in interpolations(admin_js_source())]
     attrs = sorted({c.split(":", 1)[1] for c in contexts if c.startswith("attr:")})
-    assert "value" in attrs and "class" in attrs and "data-id" in attrs, (
-        f"scanner failed to classify the known attribute sites; saw {attrs}"
-    )
+    assert (
+        "value" in attrs and "class" in attrs and "data-id" in attrs
+    ), f"scanner failed to classify the known attribute sites; saw {attrs}"
 
 
 def test_no_inline_event_handlers_in_markup():
@@ -597,8 +600,7 @@ def test_no_interpolation_into_script_or_style_elements():
     source = admin_js_source()
     for tag in ("script", "style"):
         assert f"<{tag}" not in source, (
-            f"a <{tag}> element in a template literal is a context escapeHtml() "
-            f"does not cover"
+            f"a <{tag}> element in a template literal is a context escapeHtml() " f"does not cover"
         )
 
 
@@ -621,9 +623,7 @@ def defined_tokens():
 def test_css_custom_properties_read_from_js_are_defined(js_path):
     defined = defined_tokens()
     source = js_path.read_text(encoding="utf-8")
-    undefined = sorted(
-        {name for name in CSS_VAR_READ.findall(source) if name not in defined}
-    )
+    undefined = sorted({name for name in CSS_VAR_READ.findall(source) if name not in defined})
     assert not undefined, (
         f"{js_path.name} reads CSS custom propert(ies) that tokens.css does not "
         f"define: {undefined}. An undefined var() resolves to the inherited "
@@ -639,22 +639,22 @@ def test_css_custom_properties_read_from_js_are_defined(js_path):
 # Comment bodies become spaces rather than vanishing, so expectations spell the
 # width out rather than hand-counting it.
 LEXER_CASES = [
-    ("line comment goes",
-     "a; // <script> onfocus=x\nb;",
-     "a; " + " " * len("// <script> onfocus=x") + "\nb;"),
-    ("block comment goes",
-     "a;/* <script> */b;",
-     "a;" + " " * len("/* <script> */") + "b;"),
-    ("block comment keeps newlines",
-     "a;/* x\ny */b;",
-     "a;" + " " * len("/* x") + "\n" + " " * len("y */") + "b;"),
+    (
+        "line comment goes",
+        "a; // <script> onfocus=x\nb;",
+        "a; " + " " * len("// <script> onfocus=x") + "\nb;",
+    ),
+    ("block comment goes", "a;/* <script> */b;", "a;" + " " * len("/* <script> */") + "b;"),
+    (
+        "block comment keeps newlines",
+        "a;/* x\ny */b;",
+        "a;" + " " * len("/* x") + "\n" + " " * len("y */") + "b;",
+    ),
     ("double slash in a string survives", "x('http://a');", "x('http://a');"),
     ("double slash in a template literal survives", "x(`u rsync://a/b`);", "x(`u rsync://a/b`);"),
     ("double slash in a regex survives", r"m(/^a:\/\//);", r"m(/^a:\/\//);"),
     ("star slash in a string survives", "x('/* not a comment');", "x('/* not a comment');"),
-    ("division is not a regex",
-     "a = b / c; // z\n",
-     "a = b / c; " + " " * len("// z") + "\n"),
+    ("division is not a regex", "a = b / c; // z\n", "a = b / c; " + " " * len("// z") + "\n"),
     ("nested template hole survives", "x(`a${b(`c//d`)}e`);", "x(`a${b(`c//d`)}e`);"),
     ("comment inside a template hole goes", "x(`a${/* z */b}c`);", "x(`a${       b}c`);"),
     ("escaped backtick does not end the literal", "x(`a\\`//b`);", "x(`a\\`//b`);"),
@@ -713,8 +713,8 @@ NEGATIVE_CONTROLS = [
     ),
     (
         "unquoted_attribute_value",
-        '<td><code>${log.ip_address || \'--\'}</code></td>',
-        '<td><code data-ip=${log.ip_address}>x</code></td>',
+        "<td><code>${log.ip_address || '--'}</code></td>",
+        "<td><code data-ip=${log.ip_address}>x</code></td>",
         "test_bare_in_tag_interpolations_are_static_literals",
     ),
     (

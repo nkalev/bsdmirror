@@ -95,7 +95,21 @@
 
     /* Feedback hues */
     --c-green-500: #22c55e;
+    /* Darker than --c-green-500 on purpose: green-500 only reaches 2.28:1
+       against the light theme's --bg-card (needs 3:1 for a UI indicator,
+       WCAG 2.1 SC 1.4.11) -- see --status-healthy's light-theme override
+       below, in LIGHT THEME. Matches Tailwind's green-700, chosen the same
+       way --c-red-400 and --c-sky-400 below already were: a known-legible
+       shade rather than an arbitrary one. */
+    --c-green-700: #15803D;
     --c-amber-500: #F59E0B;
+    /* Same reasoning as --c-green-700 above: amber-500 only reaches 2.15:1
+       against the light theme's --bg-card (needs 3:1) -- see
+       --status-syncing's light-theme override below. Exact midpoint of
+       Tailwind's amber-600/amber-700, the same technique --c-slate-350 above
+       uses for --text-muted's dark-theme value: neither named step alone
+       lands where this needs to. */
+    --c-amber-650: #C66508;
     --c-sky-500: #0ea5e9;
     /* Lighter than --c-sky-500 on purpose, same reasoning as --c-red-400
        above: sky-500 only reaches 4.16:1 against --status-info-bg below
@@ -138,11 +152,18 @@
     --header-height: 72px;
     --sidebar-width: 260px;
 
-    /* Mirror / sync status.
-       main.js reads --status-healthy and --status-error directly
-       (main.js:79, :95, :100) - do not rename without updating it. */
-    --status-healthy: var(--c-green-500);
-    --status-syncing: var(--c-amber-500);
+    /* Mirror / sync status. --status-healthy and --status-syncing used to
+       live here too, but are no longer the same on every theme -- see
+       LIGHT THEME and DARK THEME below, where each now gets its own value.
+       --status-error and --status-info stay here: unchanged on every theme
+       and surface. main.js reads --status-error directly
+       (MirrorStatus.updateOverallStatus's degraded-state
+       pulse.style.background assignment) - do not rename without updating
+       it. It also reads --status-healthy (the healthy-state pulse) and
+       --accent-primary (the syncing-state pulse, not --status-syncing -- see
+       the comment on --status-syncing-tint below for why); both keep
+       resolving correctly through the cascade without a note here, since
+       neither name changes below, only --status-healthy's value. */
     --status-error: var(--c-red-500);
     --status-info: var(--c-sky-500);
 
@@ -239,6 +260,53 @@
     --terminal-bg: var(--c-navy-800);
     --terminal-text: var(--c-amber-400);
     --terminal-prompt: var(--c-green-500);
+
+    /* Mirror / sync status, darker here than the c-green-500/c-amber-500
+       DARK THEME still uses below: green-500 is only 2.28:1 against
+       --bg-card in this theme (needs 3:1 for a UI indicator, WCAG 2.1
+       SC 1.4.11 -- .status-dot.healthy on a mirror card, and the 20px dot in
+       .status-indicator.healthy::before against --status-healthy-tint
+       below). green-700 clears both: 5.02:1 against --bg-card, 4.41:1
+       against --status-healthy-tint (the stricter of the two, since the tint
+       is slightly darker than --bg-card itself). Re-declared back to
+       green-500 in DARK THEME below, which already clears 3:1 there
+       (7.49:1) and is shared with the admin surface's text-on-tint badges
+       (test_contrast.py's ADMIN_CHECKS) -- this fix must not move those. */
+    --status-healthy: var(--c-green-700);
+    /* Same shape as --status-healthy just above: amber-500 is only 2.15:1
+       against --bg-card in this theme (.status-dot.syncing on a mirror card;
+       needs 3:1). amber-650 reaches 3.99:1. Re-declared back to amber-500 in
+       DARK THEME below (7.94:1 there already), for the same reason as
+       --status-healthy. */
+    --status-syncing: var(--c-amber-650);
+
+    /* Solid, precomputed equivalents of the 15% status-colour tint behind
+       the 20px dot in each of .status-indicator's three states (the "Mirror
+       Status" card) -- same rationale as --status-healthy-bg & co. in
+       INVARIANTS above: an rgba() tint's contrast depends on whatever is
+       behind it, and .status-card's --bg-card reliably is, so a solid colour
+       with nothing left to composite at paint time is both simpler to verify
+       and correct once measured. Recompute by hand if --bg-card or the
+       status colour/alpha changes:
+         --status-healthy-tint: --c-green-500 (#22C55E) -- the ORIGINAL
+           healthy shade, not --status-healthy above -- at 15% over --bg-card
+           (#FFFFFF). The halo stays the brighter green; only the solid dot
+           painted on top of it needed darkening.
+         --status-error-tint: --status-error (#EF4444) at 15% over --bg-card
+           (#FFFFFF). Unchanged shade, unchanged alpha -- already 3.10:1
+           against --status-error's own dot, which needs no fix.
+         --status-syncing-tint: --accent-primary (#E85D04) at 10%, not 15%,
+           over --bg-card (#FFFFFF). .status-indicator.syncing::before's dot
+           is --accent-primary, not --status-syncing (main.js's syncing-state
+           pulse reads --accent-primary too -- see
+           MirrorStatus.updateOverallStatus), so darkening --status-syncing
+           above does nothing for it, and --accent-primary is out of scope
+           for this fix: it also backs buttons, nav, and the logo gradient.
+           At the original 15% this dot is 2.93:1 against its own tint (needs
+           3:1); dropping the tint to 10% clears it at 3.11:1. */
+    --status-healthy-tint: #DEF6E7;
+    --status-error-tint: #FDE3E3;
+    --status-syncing-tint: #FDEFE6;
 }
 
 /* ===========================================================================
@@ -274,6 +342,22 @@
 
     --terminal-bg: var(--c-navy-900);
     --terminal-text: var(--c-orange-500);
+
+    /* Re-declared at their INVARIANTS-default value, unlike LIGHT THEME's
+       darker override above: dark theme already clears 3:1 for both against
+       --bg-card here (7.49:1 / 7.94:1), and this token is shared with the
+       admin surface's text-on-tint badges (test_contrast.py's ADMIN_CHECKS),
+       which must not move. */
+    --status-healthy: var(--c-green-500);
+    --status-syncing: var(--c-amber-500);
+
+    /* Same tint precompute as LIGHT THEME above, against this theme's
+       --bg-card (#1A1A2E) instead. Already >=3:1 at the original 15% alpha
+       for all three (5.80:1 / 3.90:1 / 5.90:1), so nothing here changes
+       alpha or colour -- only its form, from a live rgba() to a token. */
+    --status-healthy-tint: #1B3435;
+    --status-error-tint: #3A2031;
+    --status-syncing-tint: #392428;
 }
 
 /* ===========================================================================

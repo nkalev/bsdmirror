@@ -147,9 +147,9 @@ HARNESS_CHECKS = [
 @requires_node
 @pytest.mark.parametrize("check_name", HARNESS_CHECKS)
 def test_footer_version_behaviour(harness_results, check_name):
-    assert check_name in harness_results, (
-        f"harness did not run {check_name!r}; it reported {sorted(harness_results)}"
-    )
+    assert (
+        check_name in harness_results
+    ), f"harness did not run {check_name!r}; it reported {sorted(harness_results)}"
     ok, detail = harness_results[check_name]
     assert ok, detail
 
@@ -206,9 +206,7 @@ MUTATIONS = [
 
 
 @requires_node
-@pytest.mark.parametrize(
-    "name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS]
-)
+@pytest.mark.parametrize("name,old,new,must_fail", MUTATIONS, ids=[m[0] for m in MUTATIONS])
 def test_mutation_is_caught(tmp_path, name, old, new, must_fail):
     source = MAIN_JS.read_text(encoding="utf-8")
     assert source.count(old) == 1, (
@@ -226,8 +224,7 @@ def test_mutation_is_caught(tmp_path, name, old, new, must_fail):
         f"The suite does not test what it claims to."
     )
     assert must_fail in failed, (
-        f"mutation {name!r} was expected to fail {must_fail!r}, "
-        f"but the failures were {failed}"
+        f"mutation {name!r} was expected to fail {must_fail!r}, " f"but the failures were {failed}"
     )
 
 
@@ -243,6 +240,6 @@ def test_config_no_longer_hardcodes_a_version_string():
 def test_index_html_no_longer_hardcodes_a_version_string():
     source = INDEX_HTML.read_text(encoding="utf-8")
     assert "v1.0.1" not in source
-    assert 'class="footer-version"' in source, (
-        "the element itself should still be there for main.js to populate"
-    )
+    assert (
+        'class="footer-version"' in source
+    ), "the element itself should still be there for main.js to populate"

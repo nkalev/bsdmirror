@@ -68,9 +68,9 @@ BLOCKING_CALLS = {
 
 # Kept out of the literal above so this file does not itself trip a
 # "code calls the shell" scanner: the value is a name to match, not a call.
-BLOCKING_CALLS[".".join(("os", "system"))] = (
-    "blocks the event loop; use asyncio.create_subprocess_exec"
-)
+BLOCKING_CALLS[
+    ".".join(("os", "system"))
+] = "blocks the event loop; use asyncio.create_subprocess_exec"
 
 
 def _python_files() -> list:
@@ -123,9 +123,7 @@ def _blocking_hits(tree: ast.AST) -> list:
     ]
 
 
-@pytest.mark.parametrize(
-    "path", _python_files(), ids=lambda p: str(p.relative_to(REPO_ROOT))
-)
+@pytest.mark.parametrize("path", _python_files(), ids=lambda p: str(p.relative_to(REPO_ROOT)))
 def test_no_blocking_call_inside_an_async_function(path):
     tree = ast.parse(path.read_text(), filename=str(path))
     rel = path.relative_to(REPO_ROOT)
@@ -178,8 +176,5 @@ def test_passing_a_blocking_function_as_an_argument_is_allowed():
 def test_a_sync_helper_may_still_call_the_blocking_primitive():
     """The primitives are not banned outright -- only banned from coroutines.
     conftest's cached_hash and any future CLI/management code are legitimate."""
-    fine = ast.parse(
-        "def cached_hash(password):\n"
-        "    return hash_password(password)\n"
-    )
+    fine = ast.parse("def cached_hash(password):\n    return hash_password(password)\n")
     assert _blocking_hits(fine) == []

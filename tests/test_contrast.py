@@ -67,7 +67,7 @@ HARNESS = REPO_ROOT / "tests" / "js" / "contrast_harness.mjs"
 def _hex_to_rgb(value):
     value = value.lstrip("#")
     assert len(value) == 6, f"expected a 6-digit hex colour, got {value!r}"
-    return tuple(int(value[i:i + 2], 16) for i in (0, 2, 4))
+    return tuple(int(value[i : i + 2], 16) for i in (0, 2, 4))
 
 
 def _srgb_channel_to_linear(c):
@@ -222,9 +222,9 @@ def build_themes(tokens_css_text):
             assert admin_body is None, 'more than one [data-surface="admin"] block'
             admin_body = body
 
-    assert len(root_bodies) == 3, (
-        f"expected 3 :root blocks (primitives, invariants, light theme), found {len(root_bodies)}"
-    )
+    assert (
+        len(root_bodies) == 3
+    ), f"expected 3 :root blocks (primitives, invariants, light theme), found {len(root_bodies)}"
     assert dark_body is not None, 'no [data-theme="dark"] block found'
     assert admin_body is not None, 'no [data-surface="admin"] block found'
 
@@ -335,6 +335,38 @@ PUBLIC_PAIRS = [
     (".footer-content a", ".footer-content a", "color", ("parent", ".footer"), 4.5),
     (".about-text a", ".about-text a", "color", ("parent", "body"), 4.5),
     (".method-card p", ".method-card p", "color", ("parent", ".method-card"), 4.5),
+    # Mirror-status dots: WCAG 2.1 SC 1.4.11 (a UI indicator needs 3:1 against
+    # what is next to it), not the 4.5:1 text bar every pair above checks --
+    # and the foreground property is `background` (the dot's own fill), not
+    # `color`; there is no text inside a dot. .status-dot.* sits directly on
+    # its mirror card (.mirror-status, its immediate parent, declares no
+    # background of its own); .status-indicator.*::before sits on the
+    # translucent-tint-turned-token its own .status-indicator.* parent
+    # declares.
+    (".status-dot.healthy", ".status-dot.healthy", "background", ("parent", ".mirror-card"), 3.0),
+    (".status-dot.syncing", ".status-dot.syncing", "background", ("parent", ".mirror-card"), 3.0),
+    (".status-dot.error", ".status-dot.error", "background", ("parent", ".mirror-card"), 3.0),
+    (
+        ".status-indicator.healthy::before",
+        ".status-indicator.healthy::before",
+        "background",
+        ("parent", ".status-indicator.healthy"),
+        3.0,
+    ),
+    (
+        ".status-indicator.degraded::before",
+        ".status-indicator.degraded::before",
+        "background",
+        ("parent", ".status-indicator.degraded"),
+        3.0,
+    ),
+    (
+        ".status-indicator.syncing::before",
+        ".status-indicator.syncing::before",
+        "background",
+        ("parent", ".status-indicator.syncing"),
+        3.0,
+    ),
 ]
 
 
@@ -370,9 +402,9 @@ def compute_gradient_text_checks(tokens_css_text, themes):
     results = []
     for label, theme in themes.items():
         stops = re.findall(r"var\((--[\w-]+)\)", theme["--accent-gradient"])
-        assert len(stops) == 2, (
-            f"expected --accent-gradient to have exactly 2 var() stops, found {stops}"
-        )
+        assert (
+            len(stops) == 2
+        ), f"expected --accent-gradient to have exactly 2 var() stops, found {stops}"
         bg_hex = resolved_hex(theme, "--bg-primary")
         for stop in stops:
             ratio = contrast_ratio(resolved_hex(theme, stop), bg_hex)
@@ -391,9 +423,9 @@ GRADIENT_CHECKS = compute_gradient_text_checks(TOKENS_TEXT, {"light": LIGHT, "da
     ids=[c[0] for c in PUBLIC_CHECKS],
 )
 def test_public_site_contrast(check_id, ratio, min_ratio, fg_hex, bg_hex):
-    assert ratio >= min_ratio, (
-        f"{check_id}: {fg_hex} on {bg_hex} is {ratio:.2f}:1, needs >= {min_ratio}:1"
-    )
+    assert (
+        ratio >= min_ratio
+    ), f"{check_id}: {fg_hex} on {bg_hex} is {ratio:.2f}:1, needs >= {min_ratio}:1"
 
 
 @pytest.mark.parametrize(
@@ -425,6 +457,7 @@ def test_footer_version_declares_no_opacity():
 # (data-theme="dark" data-surface="admin" is static, never toggled), so
 # these are checked once, against ADMIN.
 # ===========================================================================
+# fmt: off
 ADMIN_PAIRS = [
     (".nav-item.active", ".nav-item.active", "color", ("own",), 4.5),
     (".user-avatar", ".user-avatar", "color", ("own",), 4.5),
@@ -464,6 +497,7 @@ ADMIN_PAIRS = [
     # releaseRows). Its own solid background, not the ambient card/table one.
     (".code-chip-list code", ".code-chip-list code", "color", ("own",), 4.5),
 ]
+# fmt: on
 
 
 def compute_admin_checks(admin_css_text, admin_theme):
@@ -494,9 +528,9 @@ ADMIN_CHECKS = compute_admin_checks(ADMIN_CSS_TEXT, ADMIN)
     "check_id,ratio,min_ratio,fg_hex,bg_hex", ADMIN_CHECKS, ids=[c[0] for c in ADMIN_CHECKS]
 )
 def test_admin_panel_contrast(check_id, ratio, min_ratio, fg_hex, bg_hex):
-    assert ratio >= min_ratio, (
-        f"{check_id}: {fg_hex} on {bg_hex} is {ratio:.2f}:1, needs >= {min_ratio}:1"
-    )
+    assert (
+        ratio >= min_ratio
+    ), f"{check_id}: {fg_hex} on {bg_hex} is {ratio:.2f}:1, needs >= {min_ratio}:1"
 
 
 # ---------------------------------------------------------------------------
@@ -581,6 +615,24 @@ TOKEN_MUTATIONS = [
         "--status-error-text: var(--c-red-500);",
         None,  # breaks an ADMIN_CHECKS id, checked below
     ),
+    (
+        "status_healthy_light_reverts_to_the_old_failing_shade",
+        "--status-healthy: var(--c-green-700);",
+        "--status-healthy: var(--c-green-500);",
+        None,  # breaks two PUBLIC_CHECKS ids at once, checked below
+    ),
+    (
+        "status_syncing_light_reverts_to_the_old_failing_shade",
+        "--status-syncing: var(--c-amber-650);",
+        "--status-syncing: var(--c-amber-500);",
+        ".status-dot.syncing [light]",
+    ),
+    (
+        "status_syncing_tint_light_reverts_to_the_old_failing_alpha",
+        "--status-syncing-tint: #FDEFE6;",
+        "--status-syncing-tint: #FCE7D9;",
+        ".status-indicator.syncing::before [light]",
+    ),
 ]
 
 
@@ -597,7 +649,9 @@ def test_tokens_css_mutation_is_caught(name, old, new, must_fail):
 
     public_results = compute_public_checks(STYLE_CSS_TEXT, {"light": light, "dark": dark})
     admin_results = compute_admin_checks(ADMIN_CSS_TEXT, admin)
-    failed_ids = {cid for cid, ratio, min_ratio, *_ in public_results + admin_results if ratio < min_ratio}
+    failed_ids = {
+        cid for cid, ratio, min_ratio, *_ in public_results + admin_results if ratio < min_ratio
+    }
 
     assert failed_ids, f"mutation {name!r} changed a live token and nothing failed"
     if must_fail is not None:
@@ -631,6 +685,24 @@ def test_status_error_text_mutation_breaks_the_error_badge():
     results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
     assert results[".status-badge.error"] < 4.5
     assert results[".log-pre-error"] < 4.5
+
+
+def test_status_healthy_mutation_breaks_both_light_consumers():
+    """--status-healthy backs both .status-dot.healthy (a plain dot on
+    --bg-card) and .status-indicator.healthy::before (a dot on
+    --status-healthy-tint, a slightly darker backdrop than --bg-card) --
+    darkening it for one and not the other was never on the table, so one
+    mutation must break both."""
+    mutated_text = TOKENS_TEXT.replace(
+        "--status-healthy: var(--c-green-700);", "--status-healthy: var(--c-green-500);"
+    )
+    light, dark, _ = build_themes(mutated_text)
+    results = {
+        cid: ratio
+        for cid, ratio, *_ in compute_public_checks(STYLE_CSS_TEXT, {"light": light, "dark": dark})
+    }
+    assert results[".status-dot.healthy [light]"] < 3.0
+    assert results[".status-indicator.healthy::before [light]"] < 3.0
 
 
 CSS_MUTATIONS = [
@@ -795,9 +867,7 @@ def measured():
     return run_contrast_harness(REPO_ROOT / "frontend" / "public", ADMIN_JS)
 
 
-_RGB_RE = re.compile(
-    r"rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)"
-)
+_RGB_RE = re.compile(r"rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)")
 
 
 def _rgb_string_to_hex(value):
@@ -825,6 +895,7 @@ def _measured_ratio(measurement, page_bg_hex):
 
 
 # (measured_section, key, theme_label_for_page_bg, min_ratio)
+# fmt: off
 DYNAMIC_PUBLIC_CHECKS = [
     ("body", "light", 4.5), ("body", "dark", 4.5),
     (".nav-link", "light", 4.5), (".nav-link", "dark", 4.5),
@@ -840,7 +911,17 @@ DYNAMIC_PUBLIC_CHECKS = [
     (".about-text a", "light", 4.5), (".about-text a", "dark", 4.5),
     (".footer-version", "light", 4.5), (".footer-version", "dark", 4.5),
     (".method-card p", "light", 4.5), (".method-card p", "dark", 4.5),
+    # UI indicators (WCAG 2.1 SC 1.4.11): 3:1, not 4.5:1. Only three of the
+    # six dots test_public_site_contrast checks statically are reachable
+    # here at all -- see contrast_harness.mjs's docstring for why
+    # .status-dot.error and the "degraded"/"healthy" .status-indicator
+    # states are static-only.
+    (".status-dot.healthy", "light", 3.0), (".status-dot.healthy", "dark", 3.0),
+    (".status-dot.syncing", "light", 3.0), (".status-dot.syncing", "dark", 3.0),
+    (".status-indicator.syncing::before", "light", 3.0),
+    (".status-indicator.syncing::before", "dark", 3.0),
 ]
+# fmt: on
 
 
 @requires_browser
@@ -859,12 +940,14 @@ def test_public_site_contrast_in_a_real_browser(measured, probe_id, theme_label,
     )
 
 
+# fmt: off
 DYNAMIC_ADMIN_CHECKS = [
     ".login-subtitle", ".btn-primary", ".nav-item.active", ".user-avatar",
     ".user-role", ".nav-section-title", ".status-badge.disabled",
     ".status-badge.active", "th", ".u-text-muted", ".status-badge.error",
     ".status-badge.syncing", ".form-input::placeholder",
 ]
+# fmt: on
 
 
 @requires_browser
@@ -873,9 +956,9 @@ def test_admin_panel_contrast_in_a_real_browser(measured, probe_id):
     page_bg = resolved_hex(ADMIN, "--bg-primary")
     measurement = measured["admin"][probe_id]
     ratio = _measured_ratio(measurement, page_bg)
-    assert ratio >= 4.5, (
-        f"{probe_id}: real browser measured {measurement}, contrast {ratio:.2f}:1, needs >= 4.5:1"
-    )
+    assert (
+        ratio >= 4.5
+    ), f"{probe_id}: real browser measured {measurement}, contrast {ratio:.2f}:1, needs >= 4.5:1"
 
 
 @requires_browser
@@ -928,7 +1011,9 @@ def test_harness_detects_a_reintroduced_low_contrast_fill(tmp_path):
     source = admin_css_copy.read_text(encoding="utf-8")
     old = "background: var(--accent-primary);\n    color: var(--text-on-accent);\n}"
     new = "background: var(--accent-primary);\n    color: white;\n}"
-    assert source.count(old) == 1, "admin.css .btn-primary rule no longer matches; update the control"
+    assert (
+        source.count(old) == 1
+    ), "admin.css .btn-primary rule no longer matches; update the control"
     admin_css_copy.write_text(source.replace(old, new), encoding="utf-8")
 
     result = run_contrast_harness(docroot, ADMIN_JS)

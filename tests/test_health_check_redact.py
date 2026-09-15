@@ -205,10 +205,9 @@ def test_redact_does_not_pass_secrets_via_dash_v():
         "string', and REDACT_LIST is newline-separated the moment two "
         "secrets are registered"
     )
-    assert 'ENVIRON["REDACT_SECRETS"]' in body, (
-        "redact() must read the secret list back out of ENVIRON inside the "
-        "awk program"
-    )
+    assert (
+        'ENVIRON["REDACT_SECRETS"]' in body
+    ), "redact() must read the secret list back out of ENVIRON inside the awk program"
     # REDACT_LIST appears exactly twice: the early emptiness guard, and the
     # prefix assignment that hands it to that one awk process's own
     # environment (`NAME=value awk ...`) -- not as a `-v` assignment (checked

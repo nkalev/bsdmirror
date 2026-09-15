@@ -31,6 +31,26 @@
  * genuine Input.dispatchMouseEvent mousemove, not a CSS class toggle, so the
  * browser's own hit-testing decides whether the pseudo-class applies.
  *
+ * The mirror-status dots (.status-dot.*, .status-indicator.*::before) are a
+ * UI-indicator pairing (WCAG 2.1 SC 1.4.11, 3:1), not text -- measureDot()
+ * reads backgroundColor on both sides instead of color/backgroundColor, and
+ * measurePseudoBackground() reaches the ::before dot's own fill the same way
+ * measurePlaceholder() below already reaches ::placeholder's text colour:
+ * getComputedStyle(el, pseudo), the only way to read a pseudo-element's
+ * computed style at all. Both classes only exist once MirrorStatus has
+ * fetched and applied real per-mirror statuses (the static markup ships a
+ * bare, unclassed dot and a hardcoded "healthy" overall indicator) -- the
+ * /api/ stub below seeds one mirror syncing and none erroring, which is
+ * enough to reach .status-dot.healthy/.syncing and the "syncing" overall
+ * indicator, but not .status-dot.error or the "degraded"/"healthy" indicator
+ * states (main.js's status-priority order means any erroring mirror forces
+ * "degraded", which would cost the syncing indicator instead); those three
+ * stay static-only. test_contrast.py's own module docstring already states
+ * what the dynamic half is for at all -- confirming the cascade agrees with
+ * the parser, not re-proving arithmetic it already proved exactly -- and a
+ * representative dot/indicator pair serves that purpose as well as all six
+ * would.
+ *
  * No npm packages: node's built-in http/vm/WebSocket only, and whatever
  * Chrome is already installed. getComputedStyle always resolves to
  * rgb()/rgba() regardless of how the source declared the colour; the
@@ -125,7 +145,22 @@ function serve(fixtureHtml) {
             if (!file.startsWith(DOCROOT) || !existsSync(file)) {
                 if (rel.startsWith('/api/')) {
                     res.writeHead(200, { 'Content-Type': 'application/json' });
-                    return res.end('{"mirrors":{},"totals":{}}');
+                    // Real per-mirror statuses, not {} -- .status-dot only ever
+                    // gets a .healthy/.syncing/.error modifier class from
+                    // MirrorStatus.updateMirrorCards, driven by this response
+                    // (the static markup ships a bare, unclassed dot). One
+                    // mirror syncing and none erroring also drives the overall
+                    // .status-indicator to its "syncing" state (main.js checks
+                    // anyError before anySyncing), which is what
+                    // .status-indicator.syncing::before needs to exist at all.
+                    return res.end(JSON.stringify({
+                        mirrors: {
+                            freebsd: { status: 'active' },
+                            netbsd: { status: 'syncing' },
+                            openbsd: { status: 'active' }
+                        },
+                        totals: {}
+                    }));
                 }
                 res.writeHead(404);
                 return res.end('not found');
@@ -226,9 +261,26 @@ async function launchChrome() {
     await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: 1400, height: 4200, deviceScaleFactor: 1, mobile: false
     }, sessionId);
+    // The public site follows prefers-color-scheme until a visitor picks a
+    // theme (js/theme-init.js), so main()'s first pass is only the light theme
+    // if this Chrome says light. Pin it rather than inherit the host's default.
+    await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: 'light' }]
+    }, sessionId);
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId);
     return { chrome, cdp, sessionId };
+}
+
+/** Polls `expression` in the page until it is truthy. For state a page only
+ * reaches after its load event: navigate() waits for load, not for the
+ * fetches a DOMContentLoaded handler starts. */
+async function waitFor(evaluate, expression, what, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!(await evaluate(expression))) {
+        if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+        await sleep(50);
+    }
 }
 
 async function navigate(cdp, sessionId, url) {
@@ -298,6 +350,55 @@ async function measure(cdp, sessionId, evaluate, { selector, bgSelector, hover }
     })()`);
 }
 
+/** Like measure(), but for an element whose own identity is a fill colour,
+ * not text -- .status-dot.healthy/.syncing/.error have no content, so the
+ * pairing that matters is backgroundColor-vs-backgroundColor, not
+ * colour-vs-backgroundColor. Reads backgroundColor on both sides and still
+ * returns it under the `color` key, so the {color, backgroundColor} shape
+ * test_contrast.py's _measured_ratio() already expects needs no change to
+ * handle it. No hover: none of these probes are hover states. */
+async function measureDot(evaluate, { selector, bgSelector }) {
+    return evaluate(`(() => {
+        const fg = document.querySelector(${JSON.stringify(selector)});
+        const bg = document.querySelector(${JSON.stringify(bgSelector)});
+        if (!fg || !bg) return { error: 'element(s) not found: ' +
+            (!fg ? ${JSON.stringify(selector)} : ${JSON.stringify(bgSelector)}) };
+        return {
+            color: getComputedStyle(fg).backgroundColor,
+            backgroundColor: getComputedStyle(bg).backgroundColor
+        };
+    })()`);
+}
+
+/** Like measurePlaceholder below, for a ::before dot painted by a status-*
+ * token (.status-indicator.syncing::before) rather than a placeholder's
+ * text colour: getComputedStyle(el, pseudo) is the only way to reach a
+ * pseudo-element's computed style at all (it has no node querySelector can
+ * return). The comparison background is the host element's own
+ * background -- .status-indicator.syncing's translucent tint sits directly
+ * under its own ::before dot, not a separate ancestor -- so `el` supplies
+ * both sides. */
+async function measurePseudoBackground(evaluate, selector, pseudo) {
+    return evaluate(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return { error: 'element not found: ' + ${JSON.stringify(selector)} };
+        const style = getComputedStyle(el, ${JSON.stringify(pseudo)});
+        const color = style && style.backgroundColor;
+        if (!color) return { error: 'getComputedStyle(el, ' + ${JSON.stringify(pseudo)} +
+            ') returned no backgroundColor in this Chrome build' };
+        return { color, backgroundColor: getComputedStyle(el).backgroundColor };
+    })()`);
+}
+
+/** Dispatches a PUBLIC_PROBES entry to whichever of measure()/measureDot()/
+ * measurePseudoBackground() its shape calls for, so both probe loops in
+ * main() can stay a plain `for` over one list instead of three. */
+async function measureProbe(cdp, sessionId, evaluate, probe) {
+    if (probe.pseudo) return measurePseudoBackground(evaluate, probe.selector, probe.pseudo);
+    if (probe.dot) return measureDot(evaluate, probe);
+    return measure(cdp, sessionId, evaluate, probe);
+}
+
 // ---------------------------------------------------------------------------
 // Probe lists -- mirrors the selectors test_contrast.py reasons about
 // statically. Keep the two in step; a mismatch is not caught automatically.
@@ -316,7 +417,16 @@ const PUBLIC_PROBES = [
     { id: '.footer-content a', selector: '.footer-content p a', bgSelector: '.footer' },
     { id: '.about-text a', selector: '.about-text a', bgSelector: 'body' },
     { id: '.footer-version', selector: '.footer-version', bgSelector: '.footer' },
-    { id: '.method-card p', selector: '.method-card p', bgSelector: '.method-card' }
+    { id: '.method-card p', selector: '.method-card p', bgSelector: '.method-card' },
+    // Status dots (WCAG 2.1 SC 1.4.11, 3:1, not the 4.5:1 text pairs above):
+    // backgroundColor-vs-backgroundColor via measureDot(), not measure().
+    // Only .healthy and .syncing are reachable this way -- see the /api/
+    // stub above and this file's docstring update for why .error and the
+    // healthy/degraded indicator states are static-only.
+    { id: '.status-dot.healthy', selector: '.status-dot.healthy', bgSelector: '.mirror-card', dot: true },
+    { id: '.status-dot.syncing', selector: '.status-dot.syncing', bgSelector: '.mirror-card', dot: true },
+    // ::before pseudo-element, via measurePseudoBackground(), not measure().
+    { id: '.status-indicator.syncing::before', selector: '.status-indicator.syncing', pseudo: '::before' }
 ];
 
 const ADMIN_PROBES = [
@@ -395,8 +505,20 @@ async function main() {
     const out = { public: { light: {}, dark: {} }, admin: {} };
 
     await navigate(cdp, sessionId, `${origin}/index.html`);
+    const initialTheme = await evaluate('document.documentElement.getAttribute("data-theme")');
+    if (initialTheme !== 'light') {
+        throw new Error(`index.html did not open in the light theme (got ${initialTheme})`);
+    }
+    // The dot probes measure classes MirrorStatus applies once the /api/ stub
+    // has answered, which can be after the load event navigate() waited for.
+    const statusSelectors = PUBLIC_PROBES.filter((probe) => probe.dot || probe.pseudo).map((probe) => probe.selector);
+    await waitFor(
+        evaluate,
+        `${JSON.stringify(statusSelectors)}.every((selector) => document.querySelector(selector) !== null)`,
+        `the stubbed mirror statuses (${statusSelectors.join(', ')})`
+    );
     for (const probe of PUBLIC_PROBES) {
-        out.public.light[probe.id] = await measure(cdp, sessionId, evaluate, probe);
+        out.public.light[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
     }
 
     // A genuine click on the real toggle button, not setAttribute from here.
@@ -419,7 +541,7 @@ async function main() {
     if (theme !== 'dark') throw new Error(`clicking #themeToggle did not set data-theme=dark (got ${theme})`);
 
     for (const probe of PUBLIC_PROBES) {
-        out.public.dark[probe.id] = await measure(cdp, sessionId, evaluate, probe);
+        out.public.dark[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
     }
 
     await navigate(cdp, sessionId, `${origin}/__admin_fixture__.html`);
