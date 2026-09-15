@@ -261,9 +261,26 @@ async function launchChrome() {
     await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: 1400, height: 4200, deviceScaleFactor: 1, mobile: false
     }, sessionId);
+    // The public site follows prefers-color-scheme until a visitor picks a
+    // theme (js/theme-init.js), so main()'s first pass is only the light theme
+    // if this Chrome says light. Pin it rather than inherit the host's default.
+    await cdp.send('Emulation.setEmulatedMedia', {
+        features: [{ name: 'prefers-color-scheme', value: 'light' }]
+    }, sessionId);
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId);
     return { chrome, cdp, sessionId };
+}
+
+/** Polls `expression` in the page until it is truthy. For state a page only
+ * reaches after its load event: navigate() waits for load, not for the
+ * fetches a DOMContentLoaded handler starts. */
+async function waitFor(evaluate, expression, what, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!(await evaluate(expression))) {
+        if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
+        await sleep(50);
+    }
 }
 
 async function navigate(cdp, sessionId, url) {
@@ -488,6 +505,18 @@ async function main() {
     const out = { public: { light: {}, dark: {} }, admin: {} };
 
     await navigate(cdp, sessionId, `${origin}/index.html`);
+    const initialTheme = await evaluate('document.documentElement.getAttribute("data-theme")');
+    if (initialTheme !== 'light') {
+        throw new Error(`index.html did not open in the light theme (got ${initialTheme})`);
+    }
+    // The dot probes measure classes MirrorStatus applies once the /api/ stub
+    // has answered, which can be after the load event navigate() waited for.
+    const statusSelectors = PUBLIC_PROBES.filter((probe) => probe.dot || probe.pseudo).map((probe) => probe.selector);
+    await waitFor(
+        evaluate,
+        `${JSON.stringify(statusSelectors)}.every((selector) => document.querySelector(selector) !== null)`,
+        `the stubbed mirror statuses (${statusSelectors.join(', ')})`
+    );
     for (const probe of PUBLIC_PROBES) {
         out.public.light[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
     }
