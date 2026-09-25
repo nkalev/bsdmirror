@@ -107,6 +107,8 @@ def test_netbsd_seed_protects_the_superseded_rc_but_not_the_final_release():
     """NetBSD-11.0 (final) is the newest and is excluded. NetBSD-11.0_RC7 is
     not "current" by the same reasoning -- it was superseded the moment 11.0
     shipped -- so it is protected like every other already-superseded entry.
+    So is NetBSD-10.2, a point release on the 10.x line that shipped after
+    11.0 did.
     """
     patterns = PROTECTED_PATHS[MirrorType.NETBSD]
     for version in (
@@ -116,6 +118,7 @@ def test_netbsd_seed_protects_the_superseded_rc_but_not_the_final_release():
         "NetBSD-9.5",
         "NetBSD-10.0",
         "NetBSD-10.1",
+        "NetBSD-10.2",
         "NetBSD-11.0_RC7",
     ):
         assert f"/{version}/***" in patterns

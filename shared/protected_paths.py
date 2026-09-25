@@ -204,6 +204,9 @@ PROTECTED_PATHS: Dict[MirrorType, Tuple[str, ...]] = {
         "/NetBSD-9.5/***",
         "/NetBSD-10.0/***",
         "/NetBSD-10.1/***",
+        # 2026-09-25: a 10.x point release that reached the mirror on
+        # 2026-09-22, after 11.0; the 10.x line is superseded here like 10.0/10.1.
+        "/NetBSD-10.2/***",
         "/NetBSD-11.0_RC7/***",
         # /NetBSD-11.0/*** deliberately absent -- current release.
     ),

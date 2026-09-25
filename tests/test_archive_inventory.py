@@ -137,6 +137,7 @@ def _build_netbsd_root(tmp_path: Path) -> Path:
         "iso",
         "NetBSD-10.0",
         "NetBSD-10.1",
+        "NetBSD-10.2",
         "NetBSD-11.0",
         "NetBSD-11.0_RC7",
         "NetBSD-7.2",
@@ -299,6 +300,7 @@ def test_netbsd_classification_matches_the_production_facts(tmp_path):
         "NetBSD-9.5",
         "NetBSD-10.0",
         "NetBSD-10.1",
+        "NetBSD-10.2",
         "NetBSD-11.0_RC7",
         "NetBSD-11.0",
     }
@@ -310,6 +312,7 @@ def test_netbsd_classification_matches_the_production_facts(tmp_path):
         "NetBSD-9.5",
         "NetBSD-10.0",
         "NetBSD-10.1",
+        "NetBSD-10.2",
     ):
         assert by_version[version]["protection"] == "full"
         assert by_version[version]["kind"] == "release"
