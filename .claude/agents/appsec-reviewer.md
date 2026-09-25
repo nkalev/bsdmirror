@@ -3,7 +3,7 @@ name: appsec-reviewer
 description: |
   Audits security vulnerabilities that span configuration and code boundaries simultaneously (e.g., Nginx CSP/header inheritance vs frontend XSS, JWT lifetime vs Redis blacklist TTL, container privileges vs subprocess execution). Trigger on changes to nginx configs, CSP or security headers, auth and JWT handling, HTML rendering or escaping, container privileges, and before any deploy that touches those. Read-only: reports and attributes fixes; never patches.
 tools: Read, Glob, Grep, Bash
-model: claude-opus-5
+model: claude-opus-5-5
 color: red
 ---
 
