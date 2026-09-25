@@ -1691,23 +1691,29 @@ nginx_csp_from_checkout() {
 # defines. A single probe of `/` would have passed with /admin still bare.
 #
 # Paths chosen to cover every block in sites/production/production.conf that
-# defines an add_header of its own, plus one that defines none:
+# defines an add_header of its own, plus ones that define none:
 #   /                    server-level set, static location, no add_header
 #   /admin/              adds X-Robots-Tag  -> must not lose the other five
-#   /css/style.css       adds Cache-Control -> nested location, same trap
-#   /img/favicon.svg     same location, and the one where CSP actually matters
+#   /admin/js/admin.js   the admin's CSS and JS block: the same
+#                        include-then-add, under general_limit
+#   /css/style.css       the CSS and JS nested location, which adds no header
+#                        of its own and inherits the server set
+#   /img/favicon.svg     the fonts-and-images nested location: adds
+#                        Cache-Control, same trap, and the one where CSP
+#                        actually matters
 #   /api/health          proxied to backend, no add_header at that level
 #   /health              nginx's own endpoint, an `include`d location in both
 #                        the :80 and :443 servers. Headers only here; the bytes
 #                        are asserted by verify_health_endpoint() above, which
 #                        exists because this function reported "200, 5/5" on a
 #                        /health that was serving the homepage.
-#   /404.html            error page: proves `always` is doing its job on 4xx
-#   /nope-404            a real 404 through try_files, same reason
+#   /404.html            the error page itself, asked for directly (a 200)
+#   /css/nope-deploy-probe-404.css
+#                        a real 404: a missing stylesheet gets the error page,
+#                        not the SPA shell, so this proves `always` on a 4xx
 #   /FreeBSD/            autoindex, the highest-traffic path on the site
 verify_security_headers() {
-    local opts scheme
-    opts=$(curl_base)
+    local scheme
     case "$BASE_URL" in https://*) scheme=https ;; *) scheme=http ;; esac
 
     # HSTS is set only in the 443 server, and deliberately absent from dev.conf
@@ -1717,52 +1723,79 @@ verify_security_headers() {
     local -a want=(x-frame-options x-content-type-options referrer-policy content-security-policy)
     [ "$scheme" = "https" ] && want+=(strict-transport-security)
 
-    local -a paths=(/ /admin/ /css/style.css /img/favicon.svg /api/health /health /404.html /nope-deploy-probe-404 /FreeBSD/)
-    local path hdrs missing h code fails=0
+    # A missing stylesheet is a 404 only where the production profile gives
+    # stylesheets a location of their own; dev.conf and bootstrap.conf answer
+    # it with the SPA shell.
+    local probe404=/css/nope-deploy-probe-404.css site
+    site=$(env_get NGINX_SITE dev)
 
-    printf '  %-28s %-5s %s\n' "PATH" "CODE" "HEADERS"
-    for path in "${paths[@]}"; do
-        set +e
-        # shellcheck disable=SC2086
-        hdrs=$(curl $opts -o /dev/null -D - "$BASE_URL$path" 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-        set -e
-        code=$(printf '%s\n' "$hdrs" | awk '/^http\//{c=$2} END{print c}')
-        if [ -z "$code" ]; then
+    local -a paths=(/ /admin/ /admin/js/admin.js /css/style.css /img/favicon.svg /api/health /health /404.html "$probe404" /FreeBSD/)
+    local path hdrs missing h code fails=0 dir i
+    # The PATH column is 32 wide: /css/nope-deploy-probe-404.css is 30.
+    # One header dump per path, kept for the CSP comparison below, so each
+    # path costs one request against the rate limit rather than two.
+    dir=$(mktemp -d)
+
+    printf '  %-32s %-5s %s\n' "PATH" "CODE" "HEADERS"
+    for i in "${!paths[@]}"; do
+        path="${paths[$i]}"
+        code=$(fetch_with_retry /dev/null "$BASE_URL$path" -D "$dir/$i")
+        if [ "$code" = "000" ]; then
             bad "$path -- no response from $BASE_URL"
             fails=$((fails + 1))
             continue
         fi
+        # A 5xx is the error page answering, still rate limited after the
+        # retries or with a backend down. Its headers come from
+        # `location = /50x.html`, not from the block this path is meant to probe.
+        case "$code" in
+            5??)
+                bad "$path -- HTTP $code: the error page answered, so its own block went unprobed"
+                fails=$((fails + 1))
+                continue
+                ;;
+        esac
+        # The probe that proves `always` on a 4xx has to get one. Under its old
+        # name it got the SPA shell and a 200 for years, and nothing noticed.
+        if [ "$path" = "$probe404" ] && [ "$site" = "production" ] && [ "$code" != "404" ]; then
+            bad "$path -- HTTP $code, expected 404: a missing stylesheet must not get a page"
+            fails=$((fails + 1))
+            continue
+        fi
+        hdrs=$(tr -d '\r' <"$dir/$i" | tr '[:upper:]' '[:lower:]')
         missing=""
         for h in "${want[@]}"; do
             printf '%s\n' "$hdrs" | grep -q "^$h:" || missing="$missing $h"
         done
         if [ -n "$missing" ]; then
-            printf '  %-28s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
+            printf '  %-32s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
             fails=$((fails + 1))
         else
-            printf '  %-28s %-5s %s%d/%d ok%s\n' "$path" "$code" "$C_GRN" "${#want[@]}" "${#want[@]}" "$C_OFF"
+            printf '  %-32s %-5s %s%d/%d ok%s\n' "$path" "$code" "$C_GRN" "${#want[@]}" "${#want[@]}" "$C_OFF"
         fi
     done
 
     if [ "$fails" -ne 0 ]; then
+        rm -rf "$dir"
         # One vfail, then plain bad() for the advice. vfail increments
         # VERIFY_FAILURES, and three calls for one problem would report
         # "3 checks failed" for a single cause.
-        vfail "$fails of ${#paths[@]} probed paths are missing security headers"
+        vfail "$fails of ${#paths[@]} probed paths failed the header check"
         bad "if this deploy changed nginx/, the change did not take effect --"
         bad "run 'scripts/nginx-apply.sh check' before believing anything else"
         return 0
     fi
     ok "all ${#paths[@]} probed paths carry the full ${#want[@]}-header set"
 
-    # The CSP is defined once, by the map in nginx/nginx.conf. Four blocks emit
-    # it. If two of them disagree, one of them is stale.
+    # The CSP is defined once, by the map in nginx/nginx.conf, and every block
+    # that includes a security-header snippet emits it. If two of them
+    # disagree, one of them is stale. Read from the header dumps above rather
+    # than requesting every path a second time.
     local served_values policies served_csp checkout_csp
-    served_values=$(for path in "${paths[@]}"; do
-        # shellcheck disable=SC2086
-        curl $opts -o /dev/null -D - "$BASE_URL$path" 2>/dev/null \
-            | tr -d '\r' | grep -i '^content-security-policy:' | cut -d' ' -f2-
+    served_values=$(for i in "${!paths[@]}"; do
+        tr -d '\r' <"$dir/$i" | grep -i '^content-security-policy:' | cut -d' ' -f2-
     done | sort -u)
+    rm -rf "$dir"
     policies=$(printf '%s\n' "$served_values" | sed '/^$/d' | wc -l | tr -d ' ')
     if [ "$policies" != "1" ]; then
         vfail "$policies different Content-Security-Policy values are being served"
