@@ -2,11 +2,11 @@
 serving frontend/public/ at the checkout's bytes, because nothing else in
 verify_all() reads a single byte of what nginx serves from that bind mount.
 
-The branch under test here is the deletion case. Every location under
-frontend/public/ inherits `try_files $uri $uri/ /index.html`, so nginx
-answers a path deleted by this deploy with HTTP 200 and the SPA shell -- by
-design, not staleness. The function therefore never gates on status code for
-a deleted file; it compares live bytes to the pre-deletion content (read via
+The branch under test here is the deletion case. A deleted page falls back to
+the SPA shell through `try_files $uri $uri/ /index.html` and answers HTTP 200
+-- by design, not staleness -- while a deleted stylesheet, script, font or
+image answers 404. The function therefore never gates on status code for a
+deleted file; it compares live bytes to the pre-deletion content (read via
 `git show $PREV_SHA:$rel`) and only fails when those two match, i.e. when
 something is still serving the deleted file's own old bytes.
 
@@ -19,75 +19,16 @@ $VERIFY_FAILURES and the printed [FAIL]/[ OK ] lines, never the function's
 own return status as a stand-in for pass/fail.
 
 deploy.sh only runs main() when executed, so this sources it and calls the
-function directly, the same way tests/test_deploy_sync_gate.py does. curl and
-git are replaced with table-driven bash stubs so the probe touches neither
-the network nor real repository history.
+function directly, through the curl, git and sleep stubs in
+tests/deploy_probe.py. The probe touches neither the network nor real
+repository history.
 """
-
-import base64
-import os
-import pathlib
-import re
-import subprocess
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
-
-PREV_SHA = "prevsha1"
-TARGET_SHA = "targetsha2"
-BASE_URL = "http://example.invalid"
-
-# curl() and git() below are driven by two tables, one row per URL (or git-show
-# argument) that the probe cares about: "key|value|base64(body)". base64 keeps
-# arbitrary body bytes (including "|" or a newline) out of the row delimiter.
-PROBE = r"""
-source "$DEPLOY_SH"
-
-curl() {
-    local want_code=0 a url u code b
-    for a in "$@"; do [ "$a" = "-w" ] && want_code=1; done
-    url="${@: -1}"
-    while IFS='|' read -r u code b; do
-        [ "$u" = "$url" ] || continue
-        if [ "$want_code" = 1 ]; then
-            printf '%s' "$code"
-        else
-            printf '%s' "$b" | base64 -d
-        fi
-        return 0
-    done <<< "$FAKE_HTTP_TABLE"
-    # Unknown URL: behave like a connection that produced no response.
-    [ "$want_code" = 1 ] && printf '%s' "000"
-    return 0
-}
-
-git() {
-    if [ "$1" = "show" ]; then
-        local arg="$2" u rc b
-        while IFS='|' read -r u rc b; do
-            [ "$u" = "$arg" ] || continue
-            [ "$rc" = "0" ] && printf '%s' "$b" | base64 -d
-            return "$rc"
-        done <<< "$FAKE_GIT_TABLE"
-        return 128
-    fi
-    return 1
-}
-
-cd "$WORKDIR"
-FRONTEND_TOUCHED="$FAKE_FRONTEND_TOUCHED"
-FRONTEND_CHANGED_FILES="$FAKE_CHANGED_FILES"
-BASE_URL="$FAKE_BASE_URL"
-PREV_SHA="$FAKE_PREV_SHA"
-TARGET_SHA="$FAKE_TARGET_SHA"
-
-verify_frontend_assets
-rc=$?
-printf 'RC=%s\n' "$rc"
-printf 'VERIFY_FAILURES=%s\n' "$VERIFY_FAILURES"
-"""
+from tests.deploy_probe import PREV_SHA, TARGET_SHA, url_for, write_file
+from tests.deploy_probe import marker as _marker
+from tests.deploy_probe import run_probe as _run_probe
 
 
 @pytest.fixture
@@ -97,70 +38,8 @@ def workdir(tmp_path):
     return d
 
 
-def _b64(body: str) -> str:
-    return base64.b64encode(body.encode()).decode()
-
-
-def _table(rows) -> str:
-    return "\n".join(f"{key}|{value}|{_b64(body)}" for key, value, body in rows)
-
-
-def url_for(rel: str) -> str:
-    prefix = "frontend/public/"
-    suffix = rel[len(prefix) :] if rel.startswith(prefix) else rel
-    return f"{BASE_URL}/{suffix}"
-
-
-def write_file(workdir, rel: str, content: str) -> None:
-    path = workdir / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-
-
-def run_probe(
-    workdir,
-    *,
-    frontend_touched=1,
-    changed_files,
-    http_table,
-    git_table,
-    prev_sha=PREV_SHA,
-    target_sha=TARGET_SHA,
-    base_url=BASE_URL,
-):
-    probe = workdir.parent / "probe.sh"
-    probe.write_text(PROBE)
-    result = subprocess.run(
-        ["bash", str(probe)],
-        env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(workdir.parent),
-            "NO_COLOR": "1",
-            "DEPLOY_SH": str(DEPLOY_SH),
-            "WORKDIR": str(workdir),
-            "FAKE_FRONTEND_TOUCHED": str(frontend_touched),
-            "FAKE_CHANGED_FILES": changed_files,
-            "FAKE_BASE_URL": base_url,
-            "FAKE_PREV_SHA": prev_sha,
-            "FAKE_TARGET_SHA": target_sha,
-            "FAKE_HTTP_TABLE": _table(http_table),
-            "FAKE_GIT_TABLE": _table(git_table),
-        },
-        # Not a terminal, so nothing can read stdin and colour codes stay off.
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    result.output = result.stdout + result.stderr
-    return result
-
-
-def _marker(output: str, name: str) -> int:
-    match = re.search(rf"^{name}=(-?\d+)$", output, re.MULTILINE)
-    assert match, f"{name} marker missing from probe output:\n{output}"
-    return int(match.group(1))
+def run_probe(workdir, **kwargs):
+    return _run_probe(workdir, "verify_frontend_assets", **kwargs)
 
 
 def test_no_frontend_changes_is_a_no_op(workdir):
