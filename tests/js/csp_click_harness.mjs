@@ -25,6 +25,19 @@ const DOCROOT = path.resolve(process.argv[2]);
 const CHROME = process.argv[3]
     || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+// How long Chrome gets to write DevToolsActivePort. It was a fixed 10 s until a
+// cold start on a GitHub-hosted runner outlasted it and failed every
+// real-browser test at setup (2026-09-25). CHROME_START_TIMEOUT_MS overrides
+// it; tests/test_chrome_harness_start.py uses that to reach the failure fast.
+const DEFAULT_CHROME_START_TIMEOUT_MS = 30_000;
+const CHROME_START_TIMEOUT_MS = Number(process.env.CHROME_START_TIMEOUT_MS) > 0
+    ? Number(process.env.CHROME_START_TIMEOUT_MS)
+    : DEFAULT_CHROME_START_TIMEOUT_MS;
+
+// The Chrome this run started, so a run that fails can stop it rather than
+// leave it running into whatever runs next.
+let chromeProcess = null;
+
 // Copied verbatim from the `map $host $csp_policy` block in nginx/nginx.conf.
 // If that string changes, this test is testing the wrong policy.
 const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; "
@@ -119,6 +132,7 @@ async function main() {
         '--no-first-run', '--no-default-browser-check',
         '--disable-gpu', '--disable-extensions', '--mute-audio'
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
+    chromeProcess = chrome;
 
 // Chrome's stderr is piped, so SOMETHING has to read it.
 //
@@ -144,7 +158,8 @@ async function main() {
 
     // Chrome writes the port it actually chose here.
     let wsUrl = null;
-    for (let i = 0; i < 100 && !wsUrl; i++) {
+    const deadline = Date.now() + CHROME_START_TIMEOUT_MS;
+    while (!wsUrl && Date.now() < deadline) {
         await sleep(100);
         try {
             const portFile = path.join(userDataDir, 'DevToolsActivePort');
@@ -155,7 +170,7 @@ async function main() {
     }
     if (!wsUrl) {
         throw new Error(
-            'Chrome did not expose a DevTools endpoint within 10s.\n' +
+            `Chrome did not expose a DevTools endpoint within ${CHROME_START_TIMEOUT_MS / 1000}s.\n` +
             '--- chrome stderr (tail) ---\n' + (chromeStderr || '(nothing on stderr)')
         );
     }
@@ -263,5 +278,6 @@ async function main() {
 
 main().catch((err) => {
     process.stderr.write(String(err && err.stack ? err.stack : err) + '\n');
+    chromeProcess?.kill();
     process.exit(1);
 });
