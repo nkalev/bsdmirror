@@ -1157,6 +1157,51 @@ curl_base() {
     printf '%s\n' "${args[@]}"
 }
 
+# One GET, repeated while nginx's limit_req answers 503.
+#
+# Every probe below goes through the public URL, so it counts against the same
+# per-IP limits as a visitor. nginx.conf defines the zones and their rates
+# (general_limit 30 r/s, api_limit 10 r/s); sites/production/production.conf
+# sets each location's burst (30 for pages and static files, 10 for /admin/,
+# 20 for /api/, 50 for the mirror trees). A deploy that changes a few dozen
+# frontend files can use up a burst on its own, and a 503 there would report
+# a good deploy as failed. Same back-off idea as verify_login_roundtrip() uses
+# for /api/auth/token.
+#
+# The body and the status come from ONE request (-o plus -w), and a retry
+# repeats the whole request. The old two-request form hashed one response and
+# read the status from another, so a 503 on the first reported the 50x page as
+# stale content. Any status other than 503 returns at once.
+#
+# Usage: code=$(fetch_with_retry BODY_FILE URL [CURL_ARGS...])
+# Prints the final status: 000 when nothing answered.
+FETCH_ATTEMPTS=4
+FETCH_RETRY_PAUSE=2
+
+fetch_with_retry() {
+    local out="$1" url="$2" opts code attempt=1
+    shift 2
+    opts=$(curl_base)
+    while :; do
+        # curl leaves an -o file untouched when nothing answers, and callers
+        # reuse one file for many fetches: empty it first.
+        : >"$out"
+        set +e
+        # shellcheck disable=SC2086
+        code=$(curl $opts -o "$out" -w '%{http_code}' "$@" "$url" 2>/dev/null)
+        set -e
+        [ -n "$code" ] || code=000
+        if [ "$code" = "503" ] && [ "$attempt" -lt "$FETCH_ATTEMPTS" ]; then
+            warn "$url -> 503 (rate limited), retrying in ${FETCH_RETRY_PAUSE}s"
+            sleep "$FETCH_RETRY_PAUSE"
+            attempt=$((attempt + 1))
+            continue
+        fi
+        printf '%s' "$code"
+        return 0
+    done
+}
+
 verify_container_health() {
     local cid health status timeout="$1" waited=0
     cid=$(docker compose ps -q backend 2>/dev/null || true)
@@ -1545,8 +1590,9 @@ verify_frontend_assets() {
     fi
 
     step "Proving nginx is serving this checkout's frontend/public/"
-    local opts rel url want got code fails=0 checked=0
-    opts=$(curl_base)
+    local rel url want got code body fails=0 checked=0
+    # Each file's body lands here, and its status comes from the same request.
+    body=$(mktemp)
 
     while IFS= read -r rel; do
         [ -n "$rel" ] || continue
@@ -1554,13 +1600,12 @@ verify_frontend_assets() {
         checked=$((checked + 1))
 
         if [ ! -f "$rel" ]; then
-            # Deleted by this deploy. NOT checked as "must not be 200": every
-            # location here inherits `try_files $uri $uri/ /index.html` (or
-            # .../admin/index.html under the alias), confirmed against a live
-            # container, so nginx answers a deleted path with 200 and the SPA
-            # shell by design. That is not a stale mount; it is try_files
-            # working as configured, and asserting non-200 here would fail
-            # every legitimate deletion.
+            # Deleted by this deploy. NOT checked as "must not be 200": a
+            # deleted page falls back to the SPA shell through `try_files $uri
+            # $uri/ /index.html` (or .../admin/index.html under the alias) and
+            # answers 200 by design, while a deleted stylesheet, script, font or
+            # image answers 404. Neither is a stale mount, and asserting either
+            # status here would fail legitimate deletions.
             #
             # The actual failure this must catch is narrower: something still
             # serving the FILE'S OWN pre-deletion bytes -- a stale mount, a
@@ -1569,12 +1614,8 @@ verify_frontend_assets() {
             # reasoning about status codes at all.
             local old
             old=$(git show "$PREV_SHA:$rel" 2>/dev/null | sha256sum | cut -d' ' -f1) || old=""
-            set +e
-            # shellcheck disable=SC2086
-            got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
-            # shellcheck disable=SC2086
-            code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
-            set -e
+            code=$(fetch_with_retry "$body" "$url")
+            got=$(sha256sum <"$body" | cut -d' ' -f1)
             if [ -n "$old" ] && [ "$got" = "$old" ]; then
                 bad "$url -- deleted in $TARGET_SHA but still serving its old bytes (HTTP $code)"
                 fails=$((fails + 1))
@@ -1585,12 +1626,8 @@ verify_frontend_assets() {
         fi
 
         want=$(sha256sum "$rel" | cut -d' ' -f1)
-        set +e
-        # shellcheck disable=SC2086
-        got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
-        # shellcheck disable=SC2086
-        code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
-        set -e
+        code=$(fetch_with_retry "$body" "$url")
+        got=$(sha256sum <"$body" | cut -d' ' -f1)
 
         if [ "$code" != "200" ]; then
             bad "$url -- HTTP $code fetching a file that exists in the checkout"
@@ -1606,6 +1643,7 @@ verify_frontend_assets() {
     done <<EOF
 $FRONTEND_CHANGED_FILES
 EOF
+    rm -f "$body"
 
     if [ "$fails" -ne 0 ]; then
         vfail "$fails of $checked changed frontend/public/ file(s) do not match this checkout"

@@ -203,3 +203,112 @@ def test_tally_counts_failures_across_multiple_changed_files(workdir):
     assert _marker(result.output, "VERIFY_FAILURES") == 1
     assert "2 of 2" not in result.output
     assert "1 of 2 changed frontend/public/ file(s) do not match this checkout" in result.output
+
+
+RATE_LIMITED = "<html>503 Service Temporarily Unavailable</html>\n"
+
+
+def test_each_file_is_fetched_with_one_request(workdir):
+    # The status and the bytes come from the same response. The old form
+    # hashed one request and read the status from a second one.
+    rel = "frontend/public/app.js"
+    content = "console.log('new');\n"
+    write_file(workdir, rel, content)
+
+    result = run_probe(
+        workdir, changed_files=rel, http_table=[(url_for(rel), "200", content)], git_table=[]
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)]
+
+
+def test_a_rate_limited_file_is_fetched_again_after_a_pause(workdir):
+    rel = "frontend/public/app.js"
+    content = "console.log('new');\n"
+    write_file(workdir, rel, content)
+
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[(url_for(rel), "503", RATE_LIMITED), (url_for(rel), "200", content)],
+        git_table=[],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)] * 2
+    assert result.sleeps == ["2"]
+    assert "503 (rate limited), retrying in 2s" in result.output
+    assert "SERVING STALE CONTENT" not in result.output
+
+
+def test_a_file_still_rate_limited_after_three_retries_fails_with_503(workdir):
+    rel = "frontend/public/app.js"
+    write_file(workdir, rel, "console.log('new');\n")
+
+    result = run_probe(
+        workdir, changed_files=rel, http_table=[(url_for(rel), "503", RATE_LIMITED)], git_table=[]
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert "HTTP 503 fetching a file that exists in the checkout" in result.output
+    assert result.calls == [url_for(rel)] * 4
+    assert result.sleeps == ["2"] * 3
+
+
+@pytest.mark.parametrize("code", ["404", "500", "502", "000"])
+def test_only_503_is_retried(workdir, code):
+    rel = "frontend/public/app.js"
+    write_file(workdir, rel, "console.log('new');\n")
+    # 000 is curl's status when nothing answered: a URL with no row.
+    rows = [] if code == "000" else [(url_for(rel), code, "error\n")]
+
+    result = run_probe(workdir, changed_files=rel, http_table=rows, git_table=[])
+    assert _marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert f"HTTP {code} fetching a file that exists in the checkout" in result.output
+    assert result.calls == [url_for(rel)]
+    assert result.sleeps == []
+
+
+def test_a_deleted_file_is_fetched_with_one_request(workdir):
+    rel = "frontend/public/old-page.html"
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[(url_for(rel), "200", "<html>SPA shell</html>\n")],
+        git_table=[(f"{PREV_SHA}:{rel}", "0", "<html>old page</html>\n")],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)]
+
+
+def test_a_rate_limited_deleted_file_is_fetched_again(workdir):
+    rel = "frontend/public/old-page.html"
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[
+            (url_for(rel), "503", RATE_LIMITED),
+            (url_for(rel), "200", "<html>SPA shell</html>\n"),
+        ],
+        git_table=[(f"{PREV_SHA}:{rel}", "0", "<html>old page</html>\n")],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)] * 2
+    assert result.sleeps == ["2"]
+    assert "deleted, no longer serving the old bytes (HTTP 200)" in result.output
+
+
+def test_no_response_is_not_read_as_the_previous_files_bytes(workdir):
+    # One body file serves every fetch, and curl leaves it as it was when
+    # nothing answers. Unless it is emptied first, a deleted file that gets no
+    # response would be hashed as the previous file's bytes.
+    kept, deleted = "frontend/public/a.html", "frontend/public/b.html"
+    same = "<html>same bytes</html>\n"
+    write_file(workdir, kept, same)
+
+    result = run_probe(
+        workdir,
+        changed_files=f"{kept}\n{deleted}",
+        http_table=[(url_for(kept), "200", same)],
+        git_table=[(f"{PREV_SHA}:{deleted}", "0", same)],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert "deleted, no longer serving the old bytes (HTTP 000)" in result.output
