@@ -2,11 +2,11 @@
 serving frontend/public/ at the checkout's bytes, because nothing else in
 verify_all() reads a single byte of what nginx serves from that bind mount.
 
-The branch under test here is the deletion case. Every location under
-frontend/public/ inherits `try_files $uri $uri/ /index.html`, so nginx
-answers a path deleted by this deploy with HTTP 200 and the SPA shell -- by
-design, not staleness. The function therefore never gates on status code for
-a deleted file; it compares live bytes to the pre-deletion content (read via
+The branch under test here is the deletion case. A deleted page falls back to
+the SPA shell through `try_files $uri $uri/ /index.html` and answers HTTP 200
+-- by design, not staleness -- while a deleted stylesheet, script, font or
+image answers 404. The function therefore never gates on status code for a
+deleted file; it compares live bytes to the pre-deletion content (read via
 `git show $PREV_SHA:$rel`) and only fails when those two match, i.e. when
 something is still serving the deleted file's own old bytes.
 
@@ -19,75 +19,16 @@ $VERIFY_FAILURES and the printed [FAIL]/[ OK ] lines, never the function's
 own return status as a stand-in for pass/fail.
 
 deploy.sh only runs main() when executed, so this sources it and calls the
-function directly, the same way tests/test_deploy_sync_gate.py does. curl and
-git are replaced with table-driven bash stubs so the probe touches neither
-the network nor real repository history.
+function directly, through the curl, git and sleep stubs in
+tests/deploy_probe.py. The probe touches neither the network nor real
+repository history.
 """
-
-import base64
-import os
-import pathlib
-import re
-import subprocess
 
 import pytest
 
-REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
-DEPLOY_SH = REPO_ROOT / "scripts" / "deploy.sh"
-
-PREV_SHA = "prevsha1"
-TARGET_SHA = "targetsha2"
-BASE_URL = "http://example.invalid"
-
-# curl() and git() below are driven by two tables, one row per URL (or git-show
-# argument) that the probe cares about: "key|value|base64(body)". base64 keeps
-# arbitrary body bytes (including "|" or a newline) out of the row delimiter.
-PROBE = r"""
-source "$DEPLOY_SH"
-
-curl() {
-    local want_code=0 a url u code b
-    for a in "$@"; do [ "$a" = "-w" ] && want_code=1; done
-    url="${@: -1}"
-    while IFS='|' read -r u code b; do
-        [ "$u" = "$url" ] || continue
-        if [ "$want_code" = 1 ]; then
-            printf '%s' "$code"
-        else
-            printf '%s' "$b" | base64 -d
-        fi
-        return 0
-    done <<< "$FAKE_HTTP_TABLE"
-    # Unknown URL: behave like a connection that produced no response.
-    [ "$want_code" = 1 ] && printf '%s' "000"
-    return 0
-}
-
-git() {
-    if [ "$1" = "show" ]; then
-        local arg="$2" u rc b
-        while IFS='|' read -r u rc b; do
-            [ "$u" = "$arg" ] || continue
-            [ "$rc" = "0" ] && printf '%s' "$b" | base64 -d
-            return "$rc"
-        done <<< "$FAKE_GIT_TABLE"
-        return 128
-    fi
-    return 1
-}
-
-cd "$WORKDIR"
-FRONTEND_TOUCHED="$FAKE_FRONTEND_TOUCHED"
-FRONTEND_CHANGED_FILES="$FAKE_CHANGED_FILES"
-BASE_URL="$FAKE_BASE_URL"
-PREV_SHA="$FAKE_PREV_SHA"
-TARGET_SHA="$FAKE_TARGET_SHA"
-
-verify_frontend_assets
-rc=$?
-printf 'RC=%s\n' "$rc"
-printf 'VERIFY_FAILURES=%s\n' "$VERIFY_FAILURES"
-"""
+from tests.deploy_probe import PREV_SHA, TARGET_SHA, url_for, write_file
+from tests.deploy_probe import marker as _marker
+from tests.deploy_probe import run_probe as _run_probe
 
 
 @pytest.fixture
@@ -97,70 +38,8 @@ def workdir(tmp_path):
     return d
 
 
-def _b64(body: str) -> str:
-    return base64.b64encode(body.encode()).decode()
-
-
-def _table(rows) -> str:
-    return "\n".join(f"{key}|{value}|{_b64(body)}" for key, value, body in rows)
-
-
-def url_for(rel: str) -> str:
-    prefix = "frontend/public/"
-    suffix = rel[len(prefix) :] if rel.startswith(prefix) else rel
-    return f"{BASE_URL}/{suffix}"
-
-
-def write_file(workdir, rel: str, content: str) -> None:
-    path = workdir / rel
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content)
-
-
-def run_probe(
-    workdir,
-    *,
-    frontend_touched=1,
-    changed_files,
-    http_table,
-    git_table,
-    prev_sha=PREV_SHA,
-    target_sha=TARGET_SHA,
-    base_url=BASE_URL,
-):
-    probe = workdir.parent / "probe.sh"
-    probe.write_text(PROBE)
-    result = subprocess.run(
-        ["bash", str(probe)],
-        env={
-            "PATH": os.environ["PATH"],
-            "HOME": str(workdir.parent),
-            "NO_COLOR": "1",
-            "DEPLOY_SH": str(DEPLOY_SH),
-            "WORKDIR": str(workdir),
-            "FAKE_FRONTEND_TOUCHED": str(frontend_touched),
-            "FAKE_CHANGED_FILES": changed_files,
-            "FAKE_BASE_URL": base_url,
-            "FAKE_PREV_SHA": prev_sha,
-            "FAKE_TARGET_SHA": target_sha,
-            "FAKE_HTTP_TABLE": _table(http_table),
-            "FAKE_GIT_TABLE": _table(git_table),
-        },
-        # Not a terminal, so nothing can read stdin and colour codes stay off.
-        stdin=subprocess.DEVNULL,
-        capture_output=True,
-        text=True,
-        timeout=30,
-        check=False,
-    )
-    result.output = result.stdout + result.stderr
-    return result
-
-
-def _marker(output: str, name: str) -> int:
-    match = re.search(rf"^{name}=(-?\d+)$", output, re.MULTILINE)
-    assert match, f"{name} marker missing from probe output:\n{output}"
-    return int(match.group(1))
+def run_probe(workdir, **kwargs):
+    return _run_probe(workdir, "verify_frontend_assets", **kwargs)
 
 
 def test_no_frontend_changes_is_a_no_op(workdir):
@@ -324,3 +203,112 @@ def test_tally_counts_failures_across_multiple_changed_files(workdir):
     assert _marker(result.output, "VERIFY_FAILURES") == 1
     assert "2 of 2" not in result.output
     assert "1 of 2 changed frontend/public/ file(s) do not match this checkout" in result.output
+
+
+RATE_LIMITED = "<html>503 Service Temporarily Unavailable</html>\n"
+
+
+def test_each_file_is_fetched_with_one_request(workdir):
+    # The status and the bytes come from the same response. The old form
+    # hashed one request and read the status from a second one.
+    rel = "frontend/public/app.js"
+    content = "console.log('new');\n"
+    write_file(workdir, rel, content)
+
+    result = run_probe(
+        workdir, changed_files=rel, http_table=[(url_for(rel), "200", content)], git_table=[]
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)]
+
+
+def test_a_rate_limited_file_is_fetched_again_after_a_pause(workdir):
+    rel = "frontend/public/app.js"
+    content = "console.log('new');\n"
+    write_file(workdir, rel, content)
+
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[(url_for(rel), "503", RATE_LIMITED), (url_for(rel), "200", content)],
+        git_table=[],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)] * 2
+    assert result.sleeps == ["2"]
+    assert "503 (rate limited), retrying in 2s" in result.output
+    assert "SERVING STALE CONTENT" not in result.output
+
+
+def test_a_file_still_rate_limited_after_three_retries_fails_with_503(workdir):
+    rel = "frontend/public/app.js"
+    write_file(workdir, rel, "console.log('new');\n")
+
+    result = run_probe(
+        workdir, changed_files=rel, http_table=[(url_for(rel), "503", RATE_LIMITED)], git_table=[]
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert "HTTP 503 fetching a file that exists in the checkout" in result.output
+    assert result.calls == [url_for(rel)] * 4
+    assert result.sleeps == ["2"] * 3
+
+
+@pytest.mark.parametrize("code", ["404", "500", "502", "000"])
+def test_only_503_is_retried(workdir, code):
+    rel = "frontend/public/app.js"
+    write_file(workdir, rel, "console.log('new');\n")
+    # 000 is curl's status when nothing answered: a URL with no row.
+    rows = [] if code == "000" else [(url_for(rel), code, "error\n")]
+
+    result = run_probe(workdir, changed_files=rel, http_table=rows, git_table=[])
+    assert _marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert f"HTTP {code} fetching a file that exists in the checkout" in result.output
+    assert result.calls == [url_for(rel)]
+    assert result.sleeps == []
+
+
+def test_a_deleted_file_is_fetched_with_one_request(workdir):
+    rel = "frontend/public/old-page.html"
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[(url_for(rel), "200", "<html>SPA shell</html>\n")],
+        git_table=[(f"{PREV_SHA}:{rel}", "0", "<html>old page</html>\n")],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)]
+
+
+def test_a_rate_limited_deleted_file_is_fetched_again(workdir):
+    rel = "frontend/public/old-page.html"
+    result = run_probe(
+        workdir,
+        changed_files=rel,
+        http_table=[
+            (url_for(rel), "503", RATE_LIMITED),
+            (url_for(rel), "200", "<html>SPA shell</html>\n"),
+        ],
+        git_table=[(f"{PREV_SHA}:{rel}", "0", "<html>old page</html>\n")],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert result.calls == [url_for(rel)] * 2
+    assert result.sleeps == ["2"]
+    assert "deleted, no longer serving the old bytes (HTTP 200)" in result.output
+
+
+def test_no_response_is_not_read_as_the_previous_files_bytes(workdir):
+    # One body file serves every fetch, and curl leaves it as it was when
+    # nothing answers. Unless it is emptied first, a deleted file that gets no
+    # response would be hashed as the previous file's bytes.
+    kept, deleted = "frontend/public/a.html", "frontend/public/b.html"
+    same = "<html>same bytes</html>\n"
+    write_file(workdir, kept, same)
+
+    result = run_probe(
+        workdir,
+        changed_files=f"{kept}\n{deleted}",
+        http_table=[(url_for(kept), "200", same)],
+        git_table=[(f"{PREV_SHA}:{deleted}", "0", same)],
+    )
+    assert _marker(result.output, "VERIFY_FAILURES") == 0, result.output
+    assert "deleted, no longer serving the old bytes (HTTP 000)" in result.output

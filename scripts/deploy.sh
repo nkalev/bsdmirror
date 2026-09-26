@@ -1157,6 +1157,51 @@ curl_base() {
     printf '%s\n' "${args[@]}"
 }
 
+# One GET, repeated while nginx's limit_req answers 503.
+#
+# Every probe below goes through the public URL, so it counts against the same
+# per-IP limits as a visitor. nginx.conf defines the zones and their rates
+# (general_limit 30 r/s, api_limit 10 r/s); sites/production/production.conf
+# sets each location's burst (30 for pages and static files, 10 for /admin/,
+# 20 for /api/, 50 for the mirror trees). A deploy that changes a few dozen
+# frontend files can use up a burst on its own, and a 503 there would report
+# a good deploy as failed. Same back-off idea as verify_login_roundtrip() uses
+# for /api/auth/token.
+#
+# The body and the status come from ONE request (-o plus -w), and a retry
+# repeats the whole request. The old two-request form hashed one response and
+# read the status from another, so a 503 on the first reported the 50x page as
+# stale content. Any status other than 503 returns at once.
+#
+# Usage: code=$(fetch_with_retry BODY_FILE URL [CURL_ARGS...])
+# Prints the final status: 000 when nothing answered.
+FETCH_ATTEMPTS=4
+FETCH_RETRY_PAUSE=2
+
+fetch_with_retry() {
+    local out="$1" url="$2" opts code attempt=1
+    shift 2
+    opts=$(curl_base)
+    while :; do
+        # curl leaves an -o file untouched when nothing answers, and callers
+        # reuse one file for many fetches: empty it first.
+        : >"$out"
+        set +e
+        # shellcheck disable=SC2086
+        code=$(curl $opts -o "$out" -w '%{http_code}' "$@" "$url" 2>/dev/null)
+        set -e
+        [ -n "$code" ] || code=000
+        if [ "$code" = "503" ] && [ "$attempt" -lt "$FETCH_ATTEMPTS" ]; then
+            warn "$url -> 503 (rate limited), retrying in ${FETCH_RETRY_PAUSE}s"
+            sleep "$FETCH_RETRY_PAUSE"
+            attempt=$((attempt + 1))
+            continue
+        fi
+        printf '%s' "$code"
+        return 0
+    done
+}
+
 verify_container_health() {
     local cid health status timeout="$1" waited=0
     cid=$(docker compose ps -q backend 2>/dev/null || true)
@@ -1400,8 +1445,9 @@ verify_login_roundtrip() {
         set -e
         code="$body"
         # nginx applies `limit_req zone=auth_limit ... rate=3r/s` to this exact
-        # location (nginx/sites/default.conf:65). Back off rather than reporting
-        # a rate limit as an auth failure.
+        # location (`location = /api/auth/token` in
+        # nginx/sites/production/production.conf). Back off rather than
+        # reporting a rate limit as an auth failure.
         if [ "$code" = "429" ] || [ "$code" = "503" ]; then
             [ "$attempt" -ge 4 ] && { vfail "POST /api/auth/token kept returning $code (nginx rate limit)"; return 0; }
             warn "POST /api/auth/token -> $code (rate limited), retrying in 5s"
@@ -1545,8 +1591,9 @@ verify_frontend_assets() {
     fi
 
     step "Proving nginx is serving this checkout's frontend/public/"
-    local opts rel url want got code fails=0 checked=0
-    opts=$(curl_base)
+    local rel url want got code body fails=0 checked=0
+    # Each file's body lands here, and its status comes from the same request.
+    body=$(mktemp)
 
     while IFS= read -r rel; do
         [ -n "$rel" ] || continue
@@ -1554,13 +1601,12 @@ verify_frontend_assets() {
         checked=$((checked + 1))
 
         if [ ! -f "$rel" ]; then
-            # Deleted by this deploy. NOT checked as "must not be 200": every
-            # location here inherits `try_files $uri $uri/ /index.html` (or
-            # .../admin/index.html under the alias), confirmed against a live
-            # container, so nginx answers a deleted path with 200 and the SPA
-            # shell by design. That is not a stale mount; it is try_files
-            # working as configured, and asserting non-200 here would fail
-            # every legitimate deletion.
+            # Deleted by this deploy. NOT checked as "must not be 200": a
+            # deleted page falls back to the SPA shell through `try_files $uri
+            # $uri/ /index.html` (or .../admin/index.html under the alias) and
+            # answers 200 by design, while a deleted stylesheet, script, font or
+            # image answers 404. Neither is a stale mount, and asserting either
+            # status here would fail legitimate deletions.
             #
             # The actual failure this must catch is narrower: something still
             # serving the FILE'S OWN pre-deletion bytes -- a stale mount, a
@@ -1569,12 +1615,8 @@ verify_frontend_assets() {
             # reasoning about status codes at all.
             local old
             old=$(git show "$PREV_SHA:$rel" 2>/dev/null | sha256sum | cut -d' ' -f1) || old=""
-            set +e
-            # shellcheck disable=SC2086
-            got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
-            # shellcheck disable=SC2086
-            code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
-            set -e
+            code=$(fetch_with_retry "$body" "$url")
+            got=$(sha256sum <"$body" | cut -d' ' -f1)
             if [ -n "$old" ] && [ "$got" = "$old" ]; then
                 bad "$url -- deleted in $TARGET_SHA but still serving its old bytes (HTTP $code)"
                 fails=$((fails + 1))
@@ -1585,12 +1627,8 @@ verify_frontend_assets() {
         fi
 
         want=$(sha256sum "$rel" | cut -d' ' -f1)
-        set +e
-        # shellcheck disable=SC2086
-        got=$(curl $opts "$url" 2>/dev/null | sha256sum | cut -d' ' -f1)
-        # shellcheck disable=SC2086
-        code=$(curl $opts -o /dev/null -w '%{http_code}' "$url" 2>/dev/null)
-        set -e
+        code=$(fetch_with_retry "$body" "$url")
+        got=$(sha256sum <"$body" | cut -d' ' -f1)
 
         if [ "$code" != "200" ]; then
             bad "$url -- HTTP $code fetching a file that exists in the checkout"
@@ -1606,6 +1644,7 @@ verify_frontend_assets() {
     done <<EOF
 $FRONTEND_CHANGED_FILES
 EOF
+    rm -f "$body"
 
     if [ "$fails" -ne 0 ]; then
         vfail "$fails of $checked changed frontend/public/ file(s) do not match this checkout"
@@ -1621,7 +1660,7 @@ EOF
 # Mirrors tests/test_public_page_csp.py:nginx_csp(). Both read the exact same
 # thing: the single `map $host $csp_policy { default "..."; }` value in
 # nginx/nginx.conf, which is deliberately the one place that string is written
-# down even though four blocks in nginx/ emit it (see the comment above that
+# down even though several blocks in nginx/ emit it (see the comment above that
 # map). Keep this in lockstep with the Python extractor rather than evolving
 # it separately -- two copies of "how to read the policy out of nginx.conf"
 # that quietly drift apart is exactly the class of bug this repo keeps having.
@@ -1653,23 +1692,29 @@ nginx_csp_from_checkout() {
 # defines. A single probe of `/` would have passed with /admin still bare.
 #
 # Paths chosen to cover every block in sites/production/production.conf that
-# defines an add_header of its own, plus one that defines none:
+# defines an add_header of its own, plus ones that define none:
 #   /                    server-level set, static location, no add_header
 #   /admin/              adds X-Robots-Tag  -> must not lose the other five
-#   /css/style.css       adds Cache-Control -> nested location, same trap
-#   /img/favicon.svg     same location, and the one where CSP actually matters
+#   /admin/js/admin.js   the admin's CSS and JS block: the same
+#                        include-then-add, under general_limit
+#   /css/style.css       the CSS and JS nested location, which adds no header
+#                        of its own and inherits the server set
+#   /img/favicon.svg     the fonts-and-images nested location: adds
+#                        Cache-Control, same trap, and the one where CSP
+#                        actually matters
 #   /api/health          proxied to backend, no add_header at that level
 #   /health              nginx's own endpoint, an `include`d location in both
 #                        the :80 and :443 servers. Headers only here; the bytes
 #                        are asserted by verify_health_endpoint() above, which
 #                        exists because this function reported "200, 5/5" on a
 #                        /health that was serving the homepage.
-#   /404.html            error page: proves `always` is doing its job on 4xx
-#   /nope-404            a real 404 through try_files, same reason
+#   /404.html            the error page itself, asked for directly (a 200)
+#   /css/nope-deploy-probe-404.css
+#                        a real 404: a missing stylesheet gets the error page,
+#                        not the SPA shell, so this proves `always` on a 4xx
 #   /FreeBSD/            autoindex, the highest-traffic path on the site
 verify_security_headers() {
-    local opts scheme
-    opts=$(curl_base)
+    local scheme
     case "$BASE_URL" in https://*) scheme=https ;; *) scheme=http ;; esac
 
     # HSTS is set only in the 443 server, and deliberately absent from dev.conf
@@ -1679,52 +1724,79 @@ verify_security_headers() {
     local -a want=(x-frame-options x-content-type-options referrer-policy content-security-policy)
     [ "$scheme" = "https" ] && want+=(strict-transport-security)
 
-    local -a paths=(/ /admin/ /css/style.css /img/favicon.svg /api/health /health /404.html /nope-deploy-probe-404 /FreeBSD/)
-    local path hdrs missing h code fails=0
+    # A missing stylesheet is a 404 only where the production profile gives
+    # stylesheets a location of their own; dev.conf and bootstrap.conf answer
+    # it with the SPA shell.
+    local probe404=/css/nope-deploy-probe-404.css site
+    site=$(env_get NGINX_SITE dev)
 
-    printf '  %-28s %-5s %s\n' "PATH" "CODE" "HEADERS"
-    for path in "${paths[@]}"; do
-        set +e
-        # shellcheck disable=SC2086
-        hdrs=$(curl $opts -o /dev/null -D - "$BASE_URL$path" 2>/dev/null | tr -d '\r' | tr '[:upper:]' '[:lower:]')
-        set -e
-        code=$(printf '%s\n' "$hdrs" | awk '/^http\//{c=$2} END{print c}')
-        if [ -z "$code" ]; then
+    local -a paths=(/ /admin/ /admin/js/admin.js /css/style.css /img/favicon.svg /api/health /health /404.html "$probe404" /FreeBSD/)
+    local path hdrs missing h code fails=0 dir i
+    # The PATH column is 32 wide: /css/nope-deploy-probe-404.css is 30.
+    # One header dump per path, kept for the CSP comparison below, so each
+    # path costs one request against the rate limit rather than two.
+    dir=$(mktemp -d)
+
+    printf '  %-32s %-5s %s\n' "PATH" "CODE" "HEADERS"
+    for i in "${!paths[@]}"; do
+        path="${paths[$i]}"
+        code=$(fetch_with_retry /dev/null "$BASE_URL$path" -D "$dir/$i")
+        if [ "$code" = "000" ]; then
             bad "$path -- no response from $BASE_URL"
             fails=$((fails + 1))
             continue
         fi
+        # A 5xx is the error page answering, still rate limited after the
+        # retries or with a backend down. Its headers come from
+        # `location = /50x.html`, not from the block this path is meant to probe.
+        case "$code" in
+            5??)
+                bad "$path -- HTTP $code: the error page answered, so its own block went unprobed"
+                fails=$((fails + 1))
+                continue
+                ;;
+        esac
+        # The probe that proves `always` on a 4xx has to get one. Under its old
+        # name it got the SPA shell and a 200 for years, and nothing noticed.
+        if [ "$path" = "$probe404" ] && [ "$site" = "production" ] && [ "$code" != "404" ]; then
+            bad "$path -- HTTP $code, expected 404: a missing stylesheet must not get a page"
+            fails=$((fails + 1))
+            continue
+        fi
+        hdrs=$(tr -d '\r' <"$dir/$i" | tr '[:upper:]' '[:lower:]')
         missing=""
         for h in "${want[@]}"; do
             printf '%s\n' "$hdrs" | grep -q "^$h:" || missing="$missing $h"
         done
         if [ -n "$missing" ]; then
-            printf '  %-28s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
+            printf '  %-32s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
             fails=$((fails + 1))
         else
-            printf '  %-28s %-5s %s%d/%d ok%s\n' "$path" "$code" "$C_GRN" "${#want[@]}" "${#want[@]}" "$C_OFF"
+            printf '  %-32s %-5s %s%d/%d ok%s\n' "$path" "$code" "$C_GRN" "${#want[@]}" "${#want[@]}" "$C_OFF"
         fi
     done
 
     if [ "$fails" -ne 0 ]; then
+        rm -rf "$dir"
         # One vfail, then plain bad() for the advice. vfail increments
         # VERIFY_FAILURES, and three calls for one problem would report
         # "3 checks failed" for a single cause.
-        vfail "$fails of ${#paths[@]} probed paths are missing security headers"
+        vfail "$fails of ${#paths[@]} probed paths failed the header check"
         bad "if this deploy changed nginx/, the change did not take effect --"
         bad "run 'scripts/nginx-apply.sh check' before believing anything else"
         return 0
     fi
     ok "all ${#paths[@]} probed paths carry the full ${#want[@]}-header set"
 
-    # The CSP is defined once, by the map in nginx/nginx.conf. Four blocks emit
-    # it. If two of them disagree, one of them is stale.
+    # The CSP is defined once, by the map in nginx/nginx.conf, and every block
+    # that includes a security-header snippet emits it. If two of them
+    # disagree, one of them is stale. Read from the header dumps above rather
+    # than requesting every path a second time.
     local served_values policies served_csp checkout_csp
-    served_values=$(for path in "${paths[@]}"; do
-        # shellcheck disable=SC2086
-        curl $opts -o /dev/null -D - "$BASE_URL$path" 2>/dev/null \
-            | tr -d '\r' | grep -i '^content-security-policy:' | cut -d' ' -f2-
+    served_values=$(for i in "${!paths[@]}"; do
+        tr -d '\r' <"$dir/$i" | grep -i '^content-security-policy:' | cut -d' ' -f2-
     done | sort -u)
+    rm -rf "$dir"
     policies=$(printf '%s\n' "$served_values" | sed '/^$/d' | wc -l | tr -d ' ')
     if [ "$policies" != "1" ]; then
         vfail "$policies different Content-Security-Policy values are being served"
@@ -1758,6 +1830,123 @@ verify_security_headers() {
         bad "a graceful reload can succeed and change nothing -- see deploy_nginx() above --"
         bad "run 'scripts/nginx-apply.sh check' before believing this deploy touched nginx at all"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# Cache headers, probed on the live site
+# ---------------------------------------------------------------------------
+#
+# docs/design/2026-09-25-reflection-redesign.md, section 8. Pages, CSS and JS
+# keep unversioned names and change together, so they must revalidate on every
+# load: `expires epoch`, which nginx sends as Cache-Control: no-cache. Fonts and
+# images stay cached for a week as immutable. tests/test_nginx_cache_policy.py
+# proves that of the checkout; this proves it of what the live site sends.
+#
+# Then the console's page, stylesheets and script are loaded twice in a row,
+# with no retry, and must get no 503. That shows they are served, and that a
+# plain reload of them fits the limits. It cannot show which zone limits which
+# path, and a browser's reload also makes the console's API calls, in
+# parallel; tests/test_nginx_cache_policy.py pins the zones.
+#
+# deploy.sh runs one deploy behind itself, so the deploy that changes the
+# policy for a path probed here runs the previous copy of these lists. Loosen
+# a path's expectation a deploy ahead of the nginx change that alters it, or
+# of the change that renames a probed file.
+
+# Prints every value of header $2, matched case-insensitively, from the curl
+# -D dump in $1, one per line.
+header_values() {
+    tr -d '\r' <"$1" | awk -v want="$2" '
+        BEGIN { want = tolower(want) }
+        {
+            i = index($0, ":")
+            if (i > 1 && tolower(substr($0, 1, i - 1)) == want) {
+                value = substr($0, i + 1)
+                sub(/^[ \t]+/, "", value)
+                print value
+            }
+        }'
+}
+
+verify_cache_headers() {
+    # Compared against the checkout, like the checks above. A rollback to a
+    # commit from before the policy, and the dev and bootstrap profiles, have
+    # no `expires epoch` to find and nothing to check.
+    local site
+    site=$(env_get NGINX_SITE dev)
+    # docker compose strips quotes and inline comments from .env; env_get does
+    # not. A value it cannot resolve would otherwise read as "no policy" and
+    # pass unchecked.
+    if [ ! -d "nginx/sites/$site" ]; then
+        vfail "NGINX_SITE='$site' in .env names no directory under nginx/sites/; cache headers not checked"
+        return 0
+    fi
+    if ! grep -qsE '^[[:space:]]*expires[[:space:]]+epoch[[:space:]]*;' nginx/sites/"$site"/*.conf; then
+        if [ "$site" = "production" ]; then
+            # Expected right after a rollback to a commit from before the
+            # policy. Any other time it means this check stopped finding it.
+            warn "the production profile in this checkout sets no revalidation policy; cache headers not checked"
+        else
+            ok "the $site profile in this checkout sets no revalidation policy; no cache headers to check"
+        fi
+        return 0
+    fi
+
+    local -a revalidated=(/ /css/style.css /admin/ /admin/css/admin.css /admin/js/admin.js)
+    local immutable=/fonts/jetbrains-mono-latin.woff2
+    # What a browser requests to show the console once its fonts and images
+    # are cached; they are immutable, so a reload does not ask for them again.
+    local -a console=(/admin/ /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
+    local path code values opts round dump fails=0
+    dump=$(mktemp)
+
+    for path in "${revalidated[@]}"; do
+        code=$(fetch_with_retry /dev/null "$BASE_URL$path" -D "$dump")
+        values=$(header_values "$dump" cache-control | paste -sd, -)
+        if [ "$code" != "200" ]; then
+            bad "$path -- HTTP $code"
+            fails=$((fails + 1))
+        elif [ "$values" != "no-cache" ]; then
+            bad "$path -- Cache-Control '${values:-<none>}', want 'no-cache'"
+            fails=$((fails + 1))
+        else
+            ok "$path  Cache-Control: no-cache"
+        fi
+    done
+
+    code=$(fetch_with_retry /dev/null "$BASE_URL$immutable" -D "$dump")
+    values=$(header_values "$dump" cache-control | paste -sd, -)
+    rm -f "$dump"
+    if [ "$code" = "200" ] && [[ "$values" == *immutable* ]] && [[ "$values" != *no-cache* ]]; then
+        ok "$immutable  Cache-Control: $values"
+    else
+        bad "$immutable -- HTTP $code, Cache-Control '${values:-<none>}', want immutable"
+        fails=$((fails + 1))
+    fi
+
+    # Let the probes above drain out of the limiter first, so both loads start
+    # from a full burst, as a visitor's would.
+    sleep "$FETCH_RETRY_PAUSE"
+    opts=$(curl_base)
+    for round in 1 2; do
+        for path in "${console[@]}"; do
+            set +e
+            # shellcheck disable=SC2086
+            code=$(curl $opts -o /dev/null -w '%{http_code}' "$BASE_URL$path" 2>/dev/null)
+            set -e
+            if [ "$code" != "200" ]; then
+                bad "$path (load $round of 2) -- HTTP $code"
+                fails=$((fails + 1))
+            fi
+        done
+    done
+
+    if [ "$fails" -ne 0 ]; then
+        vfail "$fails cache-header check(s) failed on the live site"
+        bad "if this deploy changed nginx/, run 'scripts/nginx-apply.sh check' before believing anything else"
+        return 0
+    fi
+    ok "pages, CSS and JS revalidate, fonts stay immutable, and the console loads twice with no 503"
 }
 
 # The check that would have caught the whole class of problem this change
@@ -1797,6 +1986,8 @@ verify_all() {
     verify_frontend_assets
     step "Verifying security headers on the live site"
     verify_security_headers
+    step "Verifying cache headers on the live site"
+    verify_cache_headers
 
     if [ "$VERIFY_FAILURES" -ne 0 ]; then
         banner "$C_RED" "DEPLOY COMPLETED BUT VERIFICATION FAILED ($VERIFY_FAILURES check(s))" \
