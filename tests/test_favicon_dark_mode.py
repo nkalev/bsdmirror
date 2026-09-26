@@ -43,7 +43,7 @@ pytestmark = [
         reason=f"needs node and Chrome (node={bool(NODE)}, chrome={bool(CHROME)})",
     ),
     pytest.mark.skipif(
-        ET.parse(FAVICON).getroot().find("{http://www.w3.org/2000/svg}style") is None,
+        ET.parse(FAVICON).getroot().find(".//{http://www.w3.org/2000/svg}style") is None,
         reason="favicon.svg ships as the light tile only (the design's fallback)",
     ),
 ]
