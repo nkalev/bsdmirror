@@ -4322,10 +4322,13 @@ PAGES = [
     PUBLIC / "50x.html",
 ]
 FAVICON_LINKS = [
+    # sizes="32x32", not "any" or absent: with either, Chrome shows the ICO, not the SVG.
     {"rel": "icon", "href": "/favicon.ico", "sizes": "32x32"},
     {"rel": "icon", "type": "image/svg+xml", "href": "/img/favicon.svg"},
     {"rel": "apple-touch-icon", "href": "/img/apple-touch-icon.png"},
 ]
+# rel is a case-insensitive list of tokens, so "shortcut icon" and "ICON" are icon links too.
+ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed"}
 
 
 class LinkCollector(HTMLParser):
@@ -4338,15 +4341,23 @@ class LinkCollector(HTMLParser):
             self.links.append(dict(attrs))
 
 
+def test_pages_lists_every_html_page():
+    assert sorted(PUBLIC.rglob("*.html")) == sorted(PAGES), "PAGES must list every HTML page"
+
+
 @pytest.mark.parametrize("page", PAGES, ids=rel)
 def test_every_page_links_the_favicon_set(page):
     collector = LinkCollector()
     collector.feed(page.read_text(encoding="utf-8"))
-    icons = [link for link in collector.links if link.get("rel") in ("icon", "apple-touch-icon")]
+    icons = [
+        link for link in collector.links if ICON_RELS & set((link.get("rel") or "").lower().split())
+    ]
     assert icons == FAVICON_LINKS
     for link in icons:
         assert (PUBLIC / link["href"].lstrip("/")).is_file(), f"{link['href']} does not exist"
 ```
+
+`test_pages_lists_every_html_page` passes from the start. It guards the list itself: a fifth page fails it instead of shipping without the favicon set. Matching `rel` as tokens catches the legacy `rel="shortcut icon"`, which Chromium would show instead of the SVG.
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
 

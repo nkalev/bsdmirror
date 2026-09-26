@@ -12,6 +12,7 @@ import re
 import struct
 import xml.etree.ElementTree as ET
 import zlib
+from html.parser import HTMLParser
 
 import pytest
 
@@ -346,3 +347,45 @@ def test_the_touch_icon_is_an_opaque_180_pixel_square():
     if channels == 4:
         alpha = min(row[i] for row in rows for i in range(3, len(row), 4))
         assert alpha == 255, "iOS paints transparent pixels black"
+
+
+PAGES = [
+    PUBLIC / "index.html",
+    PUBLIC / "admin" / "index.html",
+    PUBLIC / "404.html",
+    PUBLIC / "50x.html",
+]
+FAVICON_LINKS = [
+    # sizes="32x32", not "any" or absent: with either, Chrome shows the ICO, not the SVG.
+    {"rel": "icon", "href": "/favicon.ico", "sizes": "32x32"},
+    {"rel": "icon", "type": "image/svg+xml", "href": "/img/favicon.svg"},
+    {"rel": "apple-touch-icon", "href": "/img/apple-touch-icon.png"},
+]
+# rel is a case-insensitive list of tokens, so "shortcut icon" and "ICON" are icon links too.
+ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed"}
+
+
+class LinkCollector(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.links = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "link":
+            self.links.append(dict(attrs))
+
+
+def test_pages_lists_every_html_page():
+    assert sorted(PUBLIC.rglob("*.html")) == sorted(PAGES), "PAGES must list every HTML page"
+
+
+@pytest.mark.parametrize("page", PAGES, ids=rel)
+def test_every_page_links_the_favicon_set(page):
+    collector = LinkCollector()
+    collector.feed(page.read_text(encoding="utf-8"))
+    icons = [
+        link for link in collector.links if ICON_RELS & set((link.get("rel") or "").lower().split())
+    ]
+    assert icons == FAVICON_LINKS
+    for link in icons:
+        assert (PUBLIC / link["href"].lstrip("/")).is_file(), f"{link['href']} does not exist"
