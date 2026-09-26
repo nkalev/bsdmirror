@@ -2427,9 +2427,12 @@ FONTS_CSS = PUBLIC / "css" / "fonts.css"
 FONTS_README = FONTS / "README.md"
 
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+MARKUP_COMMENT = re.compile(r"<!--.*?-->", re.S)
 CSS_URL = re.compile(r"""url\(\s*(['"]?)(.*?)\1\s*\)""")
 FONT_URL = re.compile(r"""url\(\s*['"]?/fonts/([^'")]+\.woff2)['"]?\s*\)""")
 FONT_FACE = re.compile(r"@font-face\s*\{(.*?)\}", re.S)
+FAMILY = re.compile(r"""font-family:\s*(['"])([^'"]+)\1""")
+WEIGHT = re.compile(r"font-weight:\s*([^;]+);")
 CHECKSUM = re.compile(r"^([0-9a-f]{64})  (\S+\.woff2)$", re.M)
 WOFF2_FILES = sorted(path.name for path in FONTS.glob("*.woff2"))
 
@@ -2446,18 +2449,31 @@ def without_comments(path):
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".css", ".js"):
         return CSS_COMMENT.sub("", text)
-    if path.suffix == ".html":
-        return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    if path.suffix in (".html", ".svg"):
+        return MARKUP_COMMENT.sub("", text)
     return text
 
 
+def font_face_blocks():
+    return FONT_FACE.findall(CSS_COMMENT.sub("", FONTS_CSS.read_text(encoding="utf-8")))
+
+
+def parse_face(body):
+    """(family, weight, file) of one @font-face body, with None for a field
+    that does not parse."""
+    family, weight, url = FAMILY.search(body), WEIGHT.search(body), FONT_URL.search(body)
+    return (
+        family.group(2) if family else None,
+        weight.group(1).strip() if weight else None,
+        url.group(1) if url else None,
+    )
+
+
 def font_faces():
-    """(family, weight, file) for every @font-face in fonts.css."""
-    css = CSS_COMMENT.sub("", FONTS_CSS.read_text(encoding="utf-8"))
-    for body in FONT_FACE.findall(css):
-        family = re.search(r"font-family:\s*'([^']+)'", body).group(1)
-        weight = re.search(r"font-weight:\s*([^;]+);", body).group(1).strip()
-        yield family, weight, FONT_URL.search(body).group(1)
+    """(family, weight, file) for every @font-face in fonts.css that parses.
+    The parametrized tests below are built from this at collection time, so it
+    must not raise on an odd block: test_every_font_face_parses names those."""
+    return [face for face in map(parse_face, font_face_blocks()) if None not in face]
 
 
 def readme_checksums():
@@ -2465,7 +2481,7 @@ def readme_checksums():
     return {name: digest for digest, name in CHECKSUM.findall(text)}
 
 
-@pytest.mark.parametrize("path", public_files(".css", ".html", ".js"), ids=rel)
+@pytest.mark.parametrize("path", public_files(".css", ".html", ".js", ".svg"), ids=rel)
 def test_nothing_loads_fonts_from_google(path):
     text = without_comments(path)
     for host in ("fonts.googleapis.com", "fonts.gstatic.com"):
@@ -2490,6 +2506,25 @@ def test_every_css_url_is_a_file_on_this_origin():
     assert not problems, "\n".join(problems)
 
 
+def test_every_font_face_parses():
+    blocks = font_face_blocks()
+    assert blocks, "no @font-face in fonts.css; the pattern is broken"
+    bad = [body.strip() for body in blocks if None in parse_face(body)]
+    assert not bad, "@font-face with no family, weight or /fonts/ url():\n" + "\n---\n".join(bad)
+
+
+def test_the_fonts_directory_holds_only_fonts_licences_and_the_readme():
+    others = sorted(
+        path.name
+        for path in FONTS.iterdir()
+        if not path.name.startswith(".")
+        and path.suffix != ".woff2"
+        and not (path.name.startswith("LICENSE-") and path.suffix == ".txt")
+        and path.name != "README.md"
+    )
+    assert others == [], f"fonts/ holds files that are none of those: {others}"
+
+
 def test_fonts_css_the_readme_and_the_directory_list_the_same_files():
     assert {file for _, _, file in font_faces()} == set(WOFF2_FILES)
     assert set(readme_checksums()) == set(WOFF2_FILES)
@@ -2505,9 +2540,9 @@ def test_each_font_is_woff2(name):
 @pytest.mark.parametrize("name", WOFF2_FILES)
 def test_each_font_matches_the_checksum_in_the_readme(name):
     digest = hashlib.sha256((FONTS / name).read_bytes()).hexdigest()
-    assert readme_checksums()[name] == digest, (
-        f"{name} changed in place. nginx caches fonts for a week as immutable: ship a "
-        "changed font under a new name and list its checksum in fonts/README.md"
+    assert readme_checksums().get(name) == digest, (
+        f"{name} does not match its checksum in fonts/README.md. nginx caches fonts for a "
+        "week as immutable: a changed font ships under a new name, with its checksum listed"
     )
 
 
@@ -2535,9 +2570,10 @@ def test_no_license_is_left_for_a_family_that_is_gone():
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `43 passed`, `rc=0`:
-- 12 stylesheets, pages and scripts free of Google hosts;
+Expected: `49 passed`, `rc=0`:
+- 16 stylesheets, pages, scripts and SVGs free of Google hosts;
 - the `url()` check;
+- every `@font-face` parses, and `fonts/` holds nothing but fonts, licences and the README;
 - the three-way list;
 - 13 WOFF2 signatures and 13 checksums;
 - 2 licences, each with no Reserved Font Name;
@@ -2851,7 +2887,7 @@ def test_the_new_families_ship_latin_and_latin_ext_only(family, weights, stem):
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `rc=1`. Both cases fail, with `fonts.css has no @font-face for Unbounded` and the same for Instrument Sans. The other 43 pass. Also run the lint pair on `tests/test_fonts.py` now, so a formatting slip in the appended test stays with its owner: both `rc=0`.
+Expected: `rc=1`. Both cases fail, with `fonts.css has no @font-face for Unbounded` and the same for Instrument Sans. The other 49 pass. Also run the lint pair on `tests/test_fonts.py` now, so a formatting slip in the appended test stays with its owner: both `rc=0`.
 
 - [ ] **Step 3 (web-designer): add the files.**
 
@@ -3000,12 +3036,13 @@ replace a file in place: if a font ever needs to change, give it a new filename
       "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Unbounded:wght@600;700&display=swap"
 
 Download each `url()` from the responses and rename it to
-`<family>-<subset>.woff2`. In the CSS, rewrite the `url()`s to `/fonts/` and
-re-indent the blocks to four spaces, like the rest of `fonts.css`. From the
-second response keep only the blocks under `/* latin */` and
-`/* latin-ext */`. Nothing else in the returned CSS should be altered.
-Re-verify the checksums below change as expected, and re-run the rendering
-comparison.
+`<family>-<subset>.woff2`. A file whose bytes differ from one already shipped
+takes a new name instead, such as a version suffix (see the caching caveat
+above). In the CSS, rewrite the `url()`s to `/fonts/` and re-indent the blocks
+to four spaces, like the rest of `fonts.css`. From the second response keep
+only the blocks under `/* latin */` and `/* latin-ext */`. Nothing else in the
+returned CSS should be altered. List every new file's checksum below, and
+re-run the rendering comparison.
 
 ## Checksums (SHA-256)
 
@@ -3018,7 +3055,7 @@ comparison.
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `55 passed`, `rc=0`. The font checks now cover 17 files and four families: 12 files free of Google hosts, the `url()` check, the three-way list, 17 signatures, 17 checksums, 4 licences, the leftover-licence check and the 2 new-family tests.
+Expected: `61 passed`, `rc=0`. The font checks now cover 17 files and four families: 16 files free of Google hosts, the `url()` check, the parse and directory checks, the three-way list, 17 signatures, 17 checksums, 4 licences, the leftover-licence check and the 2 new-family tests.
 
 Then run the lint pair on `tests/test_fonts.py`, and the whole suite, which includes the CSP and contrast harnesses that load `fonts.css`. Expected: every `rc=0`.
 
