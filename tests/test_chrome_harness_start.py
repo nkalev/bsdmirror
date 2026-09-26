@@ -1,7 +1,8 @@
-"""Both Chrome harnesses give Chrome time to start, and stop it when a run fails.
+"""Every Chrome harness gives Chrome time to start, and stops it when a run fails.
 
-tests/js/contrast_harness.mjs and tests/js/csp_click_harness.mjs each start
-headless Chrome and wait for it to write DevToolsActivePort before driving it.
+tests/js/contrast_harness.mjs, csp_click_harness.mjs and favicon_harness.mjs
+each start headless Chrome and wait for it to write DevToolsActivePort before
+driving it.
 On 2026-09-25 a pull-request CI run failed every real-browser contrast test at
 setup with "Chrome did not expose a DevTools endpoint within 10s". The first
 Chrome start on that GitHub-hosted runner outlasted the fixed 10 s while the
@@ -44,6 +45,10 @@ requires_node = pytest.mark.skipif(
 HARNESSES = {
     "contrast": (JS_DIR / "contrast_harness.mjs", [PUBLIC, ADMIN_JS]),
     "csp": (JS_DIR / "csp_click_harness.mjs", [PUBLIC]),
+    "favicon": (
+        JS_DIR / "favicon_harness.mjs",
+        [PUBLIC / "img" / "favicon.svg", "default-src 'self'"],
+    ),
 }
 
 

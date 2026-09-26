@@ -57,5 +57,8 @@ the week.
 
 - **`favicon.svg`:** the small mark on a rounded tile. It is light by default,
   and one `@media (prefers-color-scheme: dark)` rule in its `<style>` turns it
-  into the dark tile. The light colours are presentation attributes, which the
-  CSP's `style-src 'self'` never blocks.
+  into the dark tile.
+  - The light colours are presentation attributes, which the CSP's
+    `style-src 'self'` never blocks.
+  - `tests/test_favicon_dark_mode.py` checks, in Chromium, that the dark rule
+    survives the production CSP header.

@@ -3830,6 +3830,7 @@ these tests skip.
 
 import json
 import subprocess
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -3850,7 +3851,7 @@ pytestmark = [
         reason=f"needs node and Chrome (node={bool(NODE)}, chrome={bool(CHROME)})",
     ),
     pytest.mark.skipif(
-        "prefers-color-scheme: dark" not in FAVICON.read_text(encoding="utf-8"),
+        ET.parse(FAVICON).getroot().find("{http://www.w3.org/2000/svg}style") is None,
         reason="favicon.svg ships as the light tile only (the design's fallback)",
     ),
 ]
@@ -3892,8 +3893,9 @@ def pixels():
 
 def test_the_copy_without_csp_renders_dark(pixels):
     assert reads_dark(pixels["withoutCsp"]), (
-        f"with no CSP at all the tile read {pixels['withoutCsp']}, not dark. The harness "
-        "is not putting the image in a dark colour scheme, or the copy did not draw."
+        f"with no CSP at all the tile read {pixels['withoutCsp']}, not dark. favicon.svg's "
+        "dark rule no longer darkens the tile, the harness is not putting the image in a "
+        "dark colour scheme, or the copy did not draw."
     )
 
 
@@ -3956,7 +3958,7 @@ The favicon has carried its dark rule since Task 12, so these tests pass the fir
 
 - **`12 passed`, `rc=0`:** the three dark-mode tests and the nine start/stop tests, the favicon harness's three among them. The dark rule works under the production CSP in Chromium; keep `favicon.svg` as it is. The dry run saw exactly this: both dark copies read `[21, 24, 30, 255]`, and the unstyled copy read light.
 - **Only `test_the_dark_rule_applies_under_the_production_csp` fails, and it says the tile read light:** Chromium blocks the rule, so take the design's fallback. *Controller:* record it for the PR description and the user. The web-designer deletes the `<style>` element from `favicon.svg`. Re-run: the dark-mode tests then skip, and Task 12's dark-rule test skips too.
-- **A control fails, the CSP test says the copy read neither tile, all three error at setup because the harness exited non-zero, or any other test fails, such as a start/stop case:** the harness or its fixture is broken, not the favicon. Debug it with superpowers:systematic-debugging before going on, and do not take the fallback on a broken measurement.
+- **A control fails, the CSP test says the copy read neither tile, all three error at setup because the harness exited non-zero, or any other test fails, such as a start/stop case:** the harness or its fixture is broken, not the favicon's CSP handling. One exception: if only the no-CSP control reads light, check `favicon.svg`'s dark rule first; Task 12's dark-rule test would fail with it. Debug it with superpowers:systematic-debugging before going on, and do not take the fallback on a broken measurement.
 
 - [ ] **Step 5 (web-designer): the README's `favicon.svg` item.** In `frontend/public/img/README.md`, replace the whole `favicon.svg` item, from ``- **`favicon.svg`:**`` to the end of the file, according to Step 4's outcome.
 
