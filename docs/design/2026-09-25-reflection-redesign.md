@@ -24,7 +24,7 @@ The site and the admin console get a new visual identity:
 | Question | Decision |
 |---|---|
 | Direction | Reflection |
-| Delivery | Three PRs: foundation, then the public site with the error pages, then the admin console (section 11) |
+| Delivery | Three PRs: foundation, then the public site with the error pages, then the admin console; the foundation ships as two pull requests, 1a and 1b (section 11) |
 | FreeBSD, NetBSD and OpenBSD logos on the mirror cards | Kept, restyled to fit |
 | Admin theme | Light and dark, following the same saved choice as the public site |
 | Hero headline | "Every BSD, mirrored." |
@@ -188,15 +188,15 @@ The small geometry leaves 3 grid units between each bowl and the axis, so the pa
   - Presentation attributes only, no `style=` attributes.
   - A harness check (section 10) tests in Chromium whether the dark rule applies when the file is served with the production CSP header. If it does not, the file ships as the light tile only, which reads on both tab themes because of its edge.
 - **`favicon.ico`** at the site root, holding 16, 32 and 48px PNGs.
-- **`img/apple-touch-icon.png`**, 180px, light tile.
+- **`img/apple-touch-icon.png`**, 180px: the light tile, full-bleed and opaque. iOS rounds the corners itself and paints transparent pixels black, so the tile's own corners and edge are left out.
 - **Generation:**
   - The PNG and ICO files are rendered from the SVG by a one-off `docker run` of the test image. The configured test service can't do this: it mounts the repo read-only and has no network.
-  - The command first builds and tags the image from this checkout with `docker build -f Dockerfile.test -t bsdmirror-test .`, because `docker compose build` names the image after the checkout's directory, and a worktree would otherwise run an older `bsdmirror-test`. It then runs `docker run --rm -u "$(id -u):$(id -g)" --security-opt seccomp=unconfined -e HOME=/tmp -v "$PWD:/repo" -w /repo bsdmirror-test python scripts/render_icons.py`. Chromium needs the seccomp and HOME settings, as the test service in `docker-compose.yml` already gives it.
+  - The command first builds and tags the image from this checkout with `docker build -f Dockerfile.test -t bsdmirror-test .`, because `docker compose build` names the image after the checkout's directory, and a worktree would otherwise run an older `bsdmirror-test`. It then runs `docker run --rm --network none -u "$(id -u):$(id -g)" --security-opt seccomp=unconfined -e HOME=/tmp -v "$PWD:/repo" -w /repo bsdmirror-test python scripts/render_icons.py`. Chromium needs the seccomp and HOME settings, as the test service in `docker-compose.yml` already gives it. `--network none` keeps the render offline, as that service is.
   - `scripts/render_icons.py` belongs to devops-sre, like the rest of `scripts/`.
   - Headless Chrome renders the PNGs, and a short Python packer builds the ICO.
   - The command is recorded in `img/README.md`, and the outputs are committed.
   - The rendered 16px PNG is checked by eye, since the bowl-to-axis gap is only about 0.6px at that size.
-- **Linked from:** `index.html`, `admin/index.html` and both error pages, all four in PR 1. The error-page test counts only `rel="stylesheet"` links, so a `rel="icon"` link does not disturb it.
+- **Linked from:** `index.html`, `admin/index.html` and both error pages, all four in PR 1b. The error-page test counts only `rel="stylesheet"` links, so a `rel="icon"` link does not disturb it.
 
 ### 4.7 Icons
 
@@ -409,10 +409,10 @@ PR 1 changes `nginx/sites/production/production.conf`, in both `location /` and 
 | Responses | Header | Why |
 |---|---|---|
 | HTML pages (`/`, `/index.html`, `/admin/`), `.css` and `.js` | `expires epoch`, which emits `Cache-Control: no-cache` without `add_header`, so the security-header snippets need no re-including | Browsers keep the files but revalidate on every load; an unchanged file costs a 304. A deploy takes effect on the next page load |
-| The error pages | Unchanged | nginx's `expires` applies only to 2xx and 3xx responses, and the error pages are served as 404 and 5xx. A direct request for `/50x.html` hits `location = /50x.html` (`production.conf:288-290`), which also stays as it is. Their CSS revalidates like all CSS |
-| `.woff2`, `.svg`, `.png`, `.ico` | `expires 7d` and `public, immutable`, as today | These change only under a new filename, so revalidating them on every view would only add requests against `general_limit` (constraint 9). The one exception is `favicon.svg`, whose name is fixed: its PR 1 redesign reaches returning visitors within 7 days |
+| The error pages | Unchanged | nginx's `expires` applies only to 2xx and 3xx responses, and the error pages are served as 404 and 5xx. A direct request for `/50x.html` hits `location = /50x.html` (`production.conf:288-290`), which also stays as it is. Their CSS revalidates like all CSS, so under a rate limit the 503 page can arrive unstyled: its stylesheets share `general_limit` with the request that got the 503. That is accepted; the page still says what happened |
+| `.woff2`, `.svg`, `.png`, `.ico` | `expires 7d` and `public, immutable`, as today | These change only under a new filename, so revalidating them on every view would only add requests against `general_limit` (constraint 9). The exceptions are the favicon files, whose names are fixed: the favicon's PR 1 redesign reaches returning visitors within 7 days |
 
-**Soak period.** Copies of `.css` and `.js` fetched before PR 1 deploys stay fresh in visitors' browsers for up to 7 days. **PR 2 therefore deploys no earlier than 7 days after PR 1.** PR 3 needs no extra wait: by then, every CSS and JS file revalidates.
+**Soak period.** Copies of `.css` and `.js` fetched before PR 1a deploys stay fresh in visitors' browsers for up to 7 days. **PR 2 therefore deploys no earlier than 7 days after PR 1a.** PR 3 needs no extra wait: by then, every CSS and JS file revalidates.
 
 **Rate limits.** `/admin` sits under `api_limit` (`production.conf:184`, burst 10), which it shares with `/api/`. Once the admin's CSS and JS revalidate on every load, a dashboard load puts its asset requests on that zone on top of its own API calls. PR 1 therefore adds one location block that serves both `/admin/css/` and `/admin/js/` under `general_limit`, like every other static file. `/admin/` itself and `/api/` stay where they are.
 
@@ -421,18 +421,22 @@ PR 1 changes `nginx/sites/production/production.conf`, in both `location /` and 
 - `scripts/deploy.sh`'s post-deploy probe checks the live headers:
   - `/`, `/css/style.css`, `/admin/`, `/admin/css/admin.css` and `/admin/js/admin.js` answer with `Cache-Control: no-cache`.
   - One font file still answers with `immutable`, to catch the opposite mistake.
-  - The admin page and its assets, loaded twice in a row, get no 503s.
+  - The admin page and its assets, loaded twice in a row, get no 503s. This is a smoke test; the static test pins which zone limits each path.
   - `/admin/js/admin.js` joins `verify_security_headers`' path list (`deploy.sh:1682`), because it now has its own location block.
-- **The deploy's own checks get a retry.** `verify_frontend_assets` fetches every changed file under `frontend/public` twice, with no pause (`deploy.sh:1125-1128, 1551-1608`), and `verify_security_headers` follows immediately. PR 1 changes about 33 files there, roughly 66 requests against a burst of 30. A 503 there would report a good deploy as failed.
+- **The deploy's own checks get a retry.** `verify_frontend_assets` fetches every changed file under `frontend/public` twice, with no pause (`deploy.sh:1125-1128, 1551-1608`), and `verify_security_headers` follows immediately. PR 1b changes about 33 files there, roughly 66 requests against a burst of 30. A 503 there would report a good deploy as failed.
   - PR 1 makes these checks, and the new probes above, retry a 503 up to three times with a short pause. This is the pattern `deploy.sh` already uses for `/api/auth/token` (`:1402-1408`).
   - Each fetch takes the body and the status code from a single `curl` (`-o` plus `-w '%{http_code}'`), and a retry repeats that whole request. Today `verify_frontend_assets` hashes one request and reads the status from a second (`:1587-1592`). A 503 serves `50x.html`, so a 503 on the hashed request would be misreported as "SERVING STALE CONTENT".
   - Any other status still fails at once.
 - A CI probe would need a workflow edit, which you apply by hand, like the pending `ruff format --check` step. The deploy probe covers it without one.
 - `nginx -t` runs in CI and during the deploy.
 
+**Order.** A deploy runs the `deploy.sh` that was on disk when it started, so a change to `deploy.sh` protects only the deploys after it. PR 1 therefore ships as two pull requests (section 11):
+- **1a** carries the nginx change, the retries and the new probes, and nothing under `frontend/public`, so the previous `deploy.sh` has no files to fetch when 1a deploys. 1a's own cache headers are checked by hand after its deploy.
+- **1b** carries the asset files, and its deploy runs 1a's `deploy.sh`.
+
 **Housekeeping in PR 1:** stale references are corrected:
 - `fonts/README.md` cites `sites/default.conf:181`.
-- `nginx.conf`'s comments give old line numbers for the `.pulse` writes in `main.js` and the admin toast's inline animation. PR 1 updates the numbers.
+- `nginx.conf`'s comments give old line numbers for the `.pulse` writes in `main.js` and the admin toast's inline animation. PR 1 replaces the line numbers with names.
   - The `.pulse` writes stay until PR 2, which removes that part of the comment.
   - The toast write stays until PR 3, which removes the rest.
   - Both removals are devops-sre edits inside those PRs.
@@ -495,7 +499,7 @@ Each PR updates the tests for what it changes, in the same commit as the change.
 ## 11. Delivery
 
 **Routine per PR:**
-1. Each PR gets its own implementation plan, starting with PR 1's.
+1. Each PR gets its own implementation plan, starting with PR 1's, which covers both 1a and 1b.
 2. Then a branch, tests in Docker, a PR and its CI.
 3. Your approval, the merge, and CI on the merge commit.
 4. A deploy clear of the hourly health check.
@@ -505,8 +509,9 @@ Owners follow CLAUDE.md.
 
 | PR | Contents | Owners | Visible change | Earliest deploy |
 |---|---|---|---|---|
-| 1. Foundation | The cache change, the `/admin` asset limits and their tests (section 8); Unbounded and Instrument Sans self-hosted; the mark files; the favicon set, linked from all four pages; the icon set; the PR 1 checks from section 10; the `.screenshots/` ignore entry; the stale-reference fixes; this spec | devops-sre for nginx, deploy.sh and `scripts/render_icons.py`; web-designer for assets; developer for tests | The favicon | After review |
-| 2. Public site | The new tokens, the retired tokens and the legacy admin block; `index.html`; the `style.css` rewrite; the `main.js` state and icon changes; the error pages; the `.pulse` part of the nginx comment; test updates | web-designer, developer; devops-sre for the nginx comment | The whole public site and both error pages | 7 days after PR 1's deploy |
+| 1a. Cache and deploy checks | The cache change, the `/admin` asset limits and their tests (section 8); the `deploy.sh` retries and probes; the stale-reference fixes outside `frontend/public`; this spec and PR 1's plan | devops-sre for nginx and `deploy.sh`; developer for tests | None | After review |
+| 1b. Assets | Unbounded and Instrument Sans self-hosted; the mark files; the favicon set, linked from all four pages; the icon set; the other PR 1 checks from section 10; the `.screenshots/` ignore entry; the `fonts/README.md` fix; the font count in `CLAUDE.md` and `.dockerignore` | devops-sre for `scripts/render_icons.py`; web-designer for assets; developer for tests | The favicon | After 1a's deploy |
+| 2. Public site | The new tokens, the retired tokens and the legacy admin block; `index.html`; the `style.css` rewrite; the `main.js` state and icon changes; the error pages; the `.pulse` part of the nginx comment; test updates | web-designer, developer; devops-sre for the nginx comment | The whole public site and both error pages | 7 days after 1a's deploy, and after 1b's |
 | 3. Admin console | The legacy block removed; `admin/index.html`; `admin.css`; the `admin.js` toggle, class and toast changes; the mask icons; the responsive navigation; Inter removed; the rest of the nginx comment; test updates | web-designer, developer; devops-sre for the nginx comment | The whole admin console, including its light theme | After PR 2's deploy |
 
 ## 12. Risks
