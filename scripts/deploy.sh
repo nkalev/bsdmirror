@@ -1445,8 +1445,9 @@ verify_login_roundtrip() {
         set -e
         code="$body"
         # nginx applies `limit_req zone=auth_limit ... rate=3r/s` to this exact
-        # location (nginx/sites/default.conf:65). Back off rather than reporting
-        # a rate limit as an auth failure.
+        # location (`location = /api/auth/token` in
+        # nginx/sites/production/production.conf). Back off rather than
+        # reporting a rate limit as an auth failure.
         if [ "$code" = "429" ] || [ "$code" = "503" ]; then
             [ "$attempt" -ge 4 ] && { vfail "POST /api/auth/token kept returning $code (nginx rate limit)"; return 0; }
             warn "POST /api/auth/token -> $code (rate limited), retrying in 5s"
@@ -1659,7 +1660,7 @@ EOF
 # Mirrors tests/test_public_page_csp.py:nginx_csp(). Both read the exact same
 # thing: the single `map $host $csp_policy { default "..."; }` value in
 # nginx/nginx.conf, which is deliberately the one place that string is written
-# down even though four blocks in nginx/ emit it (see the comment above that
+# down even though several blocks in nginx/ emit it (see the comment above that
 # map). Keep this in lockstep with the Python extractor rather than evolving
 # it separately -- two copies of "how to read the policy out of nginx.conf"
 # that quietly drift apart is exactly the class of bug this repo keeps having.
