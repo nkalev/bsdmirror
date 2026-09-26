@@ -12,7 +12,7 @@
 #   .env, .credentials   real secrets on a developer machine and on the server
 #   data/                on production, a SYMLINK to 2.4 TB of mirror data
 #   .git/                every version of every file, including deleted ones
-#   frontend/            the site, plus 13 self-hosted woff2 font files
+#   frontend/            the site, plus its self-hosted woff2 font files
 #   nginx/, scripts/     config and shell, needed by no Python image
 #   tests/               run from a checkout in CI, never inside an image
 #

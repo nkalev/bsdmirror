@@ -159,3 +159,19 @@ def test_no_license_is_left_for_a_family_that_is_gone():
     families = {family.replace(" ", "") for family, _, _ in font_faces()}
     licensed = {path.name[len("LICENSE-") : -len(".txt")] for path in FONTS.glob("LICENSE-*.txt")}
     assert licensed == families
+
+
+@pytest.mark.parametrize(
+    "family, weights, stem",
+    [
+        ("Unbounded", {"600", "700"}, "unbounded"),
+        ("Instrument Sans", {"400", "500", "600"}, "instrument-sans"),
+    ],
+)
+def test_the_new_families_ship_latin_and_latin_ext_only(family, weights, stem):
+    faces = [(weight, file) for name, weight, file in font_faces() if name == family]
+    assert faces, f"fonts.css has no @font-face for {family}"
+    # Every weight in both subsets: checked apart, the weights and the files
+    # would miss a weight that has only one of them.
+    subsets = ("latin", "latin-ext")
+    assert set(faces) == {(w, f"{stem}-{s}.woff2") for w in weights for s in subsets}

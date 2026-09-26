@@ -2879,8 +2879,10 @@ If any check fails, set the downloads aside with `mv "$F/files" "$F/rejected-$(d
 def test_the_new_families_ship_latin_and_latin_ext_only(family, weights, stem):
     faces = [(weight, file) for name, weight, file in font_faces() if name == family]
     assert faces, f"fonts.css has no @font-face for {family}"
-    assert {weight for weight, _ in faces} == weights
-    assert {file for _, file in faces} == {f"{stem}-latin.woff2", f"{stem}-latin-ext.woff2"}
+    # Every weight in both subsets: checked apart, the weights and the files
+    # would miss a weight that has only one of them.
+    subsets = ("latin", "latin-ext")
+    assert set(faces) == {(w, f"{stem}-{s}.woff2") for w in weights for s in subsets}
 ```
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
@@ -3041,8 +3043,7 @@ takes a new name instead, such as a version suffix (see the caching caveat
 above). In the CSS, rewrite the `url()`s to `/fonts/` and re-indent the blocks
 to four spaces, like the rest of `fonts.css`. From the second response keep
 only the blocks under `/* latin */` and `/* latin-ext */`. Nothing else in the
-returned CSS should be altered. List every new file's checksum below, and
-re-run the rendering comparison.
+returned CSS should be altered. List every new file's checksum below.
 
 ## Checksums (SHA-256)
 
