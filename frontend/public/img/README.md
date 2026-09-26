@@ -62,3 +62,19 @@ the week.
     `style-src 'self'` never blocks.
   - `tests/test_favicon_dark_mode.py` checks, in Chromium, that the dark rule
     survives the production CSP header.
+- **`../favicon.ico` and `apple-touch-icon.png`:** rendered from `favicon.svg`,
+  always in its light colours.
+  - The ICO holds 16, 32 and 48px images.
+  - The touch icon is 180px, with the tile full-bleed, because iOS rounds the
+    corners itself and paints transparent pixels black.
+
+  Re-render both whenever `favicon.svg` changes. The render runs offline, in
+  the test image:
+
+      docker build -f Dockerfile.test -t bsdmirror-test .
+      docker run --rm --network none -u "$(id -u):$(id -g)" \
+          --security-opt seccomp=unconfined -e HOME=/tmp -v "$PWD:/repo" -w /repo \
+          bsdmirror-test python scripts/render_icons.py
+
+  Then look at the 16px image enlarged, eight times or so: at that size the
+  axis is less than a pixel wide.

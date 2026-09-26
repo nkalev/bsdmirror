@@ -4019,23 +4019,28 @@ def png_size(data):
     return struct.unpack(">II", data[16:24])
 
 
+def png_chunks(data):
+    """(type, body) for each chunk of a PNG, in file order."""
+    pos = 8
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos : pos + 8])
+        yield kind, data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+
+
 def png_rows(data):
     """(channels, rows) for an 8-bit, non-interlaced RGB or RGBA PNG."""
     width, height = png_size(data)
     bit_depth, colour_type, _, _, interlace = data[24:29]
     assert bit_depth == 8 and colour_type in (2, 6) and interlace == 0, "unexpected PNG format"
     channels = 4 if colour_type == 6 else 3
-    idat, pos = b"", 8
-    while pos < len(data):
-        length, kind = struct.unpack(">I4s", data[pos : pos + 8])
-        if kind == b"IDAT":
-            idat += data[pos + 8 : pos + 8 + length]
-        pos += 12 + length
+    idat = b"".join(body for kind, body in png_chunks(data) if kind == b"IDAT")
     raw, stride = zlib.decompress(idat), width * channels
     rows, previous = [], bytearray(stride)
     for y in range(height):
         start = y * (stride + 1)
         kind, row = raw[start], bytearray(raw[start + 1 : start + 1 + stride])
+        assert kind <= 4, f"row {y}: unknown PNG filter type {kind}"
         for x in range(stride):
             left = row[x - channels] if x >= channels else 0
             up = previous[x]
@@ -4079,6 +4084,8 @@ def test_favicon_ico_holds_16_32_and_48_pixel_pngs():
 def test_the_touch_icon_is_an_opaque_180_pixel_square():
     data = TOUCH_ICON.read_bytes()
     assert png_size(data) == (180, 180)
+    kinds = [kind for kind, _ in png_chunks(data)]
+    assert b"tRNS" not in kinds, "a tRNS chunk makes a colour transparent; iOS paints it black"
     channels, rows = png_rows(data)
     if channels == 4:
         alpha = min(row[i] for row in rows for i in range(3, len(row), 4))
@@ -4178,12 +4185,9 @@ def render(chromium: str, svg: str, size: int, workdir: pathlib.Path) -> bytes:
     page = workdir / "page.html"
     page.write_text(PAGE.format(size=size), encoding="utf-8")
     out = workdir / f"icon-{size}.png"
-    # --no-sandbox: this renders one local file of our own, and the container
-    # runs as the host's uid, which has no account in the image.
     command = [
         chromium,
         "--headless=new",
-        "--no-sandbox",
         "--disable-gpu",
         "--hide-scrollbars",
         "--default-background-color=00000000",
@@ -4196,8 +4200,11 @@ def render(chromium: str, svg: str, size: int, workdir: pathlib.Path) -> bytes:
     except subprocess.CalledProcessError as failure:
         tail = failure.stderr.decode(errors="replace")[-2000:]
         sys.exit(f"Chromium failed rendering {size}px (exit {failure.returncode}):\n{tail}")
-    png = out.read_bytes()
-    if png[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", png[16:24]) != (size, size):
+    except subprocess.TimeoutExpired as late:
+        sys.exit(f"Chromium did not finish rendering {size}px within {late.timeout:g} s")
+    png = out.read_bytes() if out.exists() else b""
+    header_ok = len(png) >= 24 and png[:8] == b"\x89PNG\r\n\x1a\n"
+    if not header_ok or struct.unpack(">II", png[16:24]) != (size, size):
         sys.exit(f"Chromium did not produce a {size}x{size} PNG")
     return png
 
@@ -4208,7 +4215,8 @@ def ico(pngs: dict[int, bytes]) -> bytes:
     entries, images = b"", b""
     offset = len(header) + 16 * len(pngs)
     for size, png in sorted(pngs.items()):
-        entries += struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(png), offset)
+        side = 0 if size == 256 else size  # one byte each way; 0 means 256
+        entries += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(png), offset)
         images += png
         offset += len(png)
     return header + entries + images
@@ -4220,8 +4228,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         workdir = pathlib.Path(tmp)
         light = light_only(svg)
-        ICO.write_bytes(ico({size: render(chromium, light, size, workdir) for size in ICO_SIZES}))
-        TOUCH_ICON.write_bytes(render(chromium, full_bleed(svg), TOUCH_SIZE, workdir))
+        icon = ico({size: render(chromium, light, size, workdir) for size in ICO_SIZES})
+        touch_icon = render(chromium, full_bleed(svg), TOUCH_SIZE, workdir)
+    # Nothing is written until both have rendered, so a failed run changes neither file.
+    ICO.write_bytes(icon)
+    TOUCH_ICON.write_bytes(touch_icon)
     for path in (ICO, TOUCH_ICON):
         print(f"wrote {path.relative_to(REPO)} ({path.stat().st_size} bytes)")
 

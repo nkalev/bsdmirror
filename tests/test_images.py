@@ -9,7 +9,9 @@ directly renders as a document, and nginx serves images with a week-long
 
 import pathlib
 import re
+import struct
 import xml.etree.ElementTree as ET
+import zlib
 
 import pytest
 
@@ -262,3 +264,85 @@ def test_favicon_svg_turns_dark_with_one_media_rule_and_nothing_else():
     assert re.fullmatch(rf"(?:{declaration} ?)+", body), f"the rule may only set colours: {body}"
     found = [(name, prop, colour.upper()) for name, prop, colour in re.findall(declaration, body)]
     assert found == FAVICON_DARK
+
+
+FAVICON_ICO = PUBLIC / "favicon.ico"
+TOUCH_ICON = IMG / "apple-touch-icon.png"
+
+
+def png_size(data):
+    assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+    return struct.unpack(">II", data[16:24])
+
+
+def png_chunks(data):
+    """(type, body) for each chunk of a PNG, in file order."""
+    pos = 8
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos : pos + 8])
+        yield kind, data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+
+
+def png_rows(data):
+    """(channels, rows) for an 8-bit, non-interlaced RGB or RGBA PNG."""
+    width, height = png_size(data)
+    bit_depth, colour_type, _, _, interlace = data[24:29]
+    assert bit_depth == 8 and colour_type in (2, 6) and interlace == 0, "unexpected PNG format"
+    channels = 4 if colour_type == 6 else 3
+    idat = b"".join(body for kind, body in png_chunks(data) if kind == b"IDAT")
+    raw, stride = zlib.decompress(idat), width * channels
+    rows, previous = [], bytearray(stride)
+    for y in range(height):
+        start = y * (stride + 1)
+        kind, row = raw[start], bytearray(raw[start + 1 : start + 1 + stride])
+        assert kind <= 4, f"row {y}: unknown PNG filter type {kind}"
+        for x in range(stride):
+            left = row[x - channels] if x >= channels else 0
+            up = previous[x]
+            up_left = previous[x - channels] if x >= channels else 0
+            if kind == 1:
+                row[x] = (row[x] + left) & 0xFF
+            elif kind == 2:
+                row[x] = (row[x] + up) & 0xFF
+            elif kind == 3:
+                row[x] = (row[x] + (left + up) // 2) & 0xFF
+            elif kind == 4:
+                estimate = left + up - up_left
+                distances = (abs(estimate - left), abs(estimate - up), abs(estimate - up_left))
+                row[x] = (row[x] + (left, up, up_left)[distances.index(min(distances))]) & 0xFF
+        rows.append(bytes(row))
+        previous = row
+    return channels, rows
+
+
+def test_favicon_ico_holds_16_32_and_48_pixel_pngs():
+    data = FAVICON_ICO.read_bytes()
+    reserved, kind, count = struct.unpack("<HHH", data[:6])
+    assert (reserved, kind) == (0, 1), "not an ICO file"
+    sizes = []
+    for i in range(count):
+        entry = data[6 + 16 * i : 22 + 16 * i]
+        width, height, _, _, _, _, length, offset = struct.unpack("<BBBBHHII", entry)
+        png = data[offset : offset + length]
+        size = png_size(png)
+        assert size == (width or 256, height or 256), "directory size differs from the image"
+        # The tile has rounded corners: transparent outside them, opaque inside.
+        channels, rows = png_rows(png)
+        assert channels == 4, f"{size[0]}px: no alpha channel, so no transparent corners"
+        middle = size[0] // 2
+        assert rows[0][3] == 0, f"{size[0]}px: the corner pixel is not transparent"
+        assert rows[middle][middle * 4 + 3] == 255, f"{size[0]}px: the middle is not opaque"
+        sizes.append(size)
+    assert sorted(sizes) == [(16, 16), (32, 32), (48, 48)]
+
+
+def test_the_touch_icon_is_an_opaque_180_pixel_square():
+    data = TOUCH_ICON.read_bytes()
+    assert png_size(data) == (180, 180)
+    kinds = [kind for kind, _ in png_chunks(data)]
+    assert b"tRNS" not in kinds, "a tRNS chunk makes a colour transparent; iOS paints it black"
+    channels, rows = png_rows(data)
+    if channels == 4:
+        alpha = min(row[i] for row in rows for i in range(3, len(row), 4))
+        assert alpha == 255, "iOS paints transparent pixels black"
