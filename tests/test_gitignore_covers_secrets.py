@@ -129,3 +129,13 @@ def test_no_credential_backup_was_ever_committed():
         "REDIS_PASSWORD, SECRET_KEY and ADMIN_PASSWORD, do not just gitignore "
         "them." % (len(commits), commits[:5])
     )
+
+
+def test_visual_check_screenshots_are_ignored():
+    """Not a secret, but the same kind of mistake. The redesign's visual checks
+    (docs/design/2026-09-25-reflection-redesign.md, section 10) write full-page
+    screenshots into .screenshots/, and they are shared, never committed. Only
+    the root's: nginx serves frontend/public/, so a copy there must show in git."""
+    assert _is_ignored(".screenshots/home-dark-400.png"), ".screenshots/ is not in .gitignore"
+    served = "frontend/public/.screenshots/home-dark-400.png"
+    assert not _is_ignored(served), "git would hide a .screenshots/ that nginx serves"

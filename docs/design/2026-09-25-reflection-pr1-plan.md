@@ -4412,8 +4412,11 @@ The test joins `tests/test_gitignore_covers_secrets.py`, which has an `_is_ignor
 def test_visual_check_screenshots_are_ignored():
     """Not a secret, but the same kind of mistake. The redesign's visual checks
     (docs/design/2026-09-25-reflection-redesign.md, section 10) write full-page
-    screenshots into .screenshots/, and they are shared, never committed."""
+    screenshots into .screenshots/, and they are shared, never committed. Only
+    the root's: nginx serves frontend/public/, so a copy there must show in git."""
     assert _is_ignored(".screenshots/home-dark-400.png"), ".screenshots/ is not in .gitignore"
+    served = "frontend/public/.screenshots/home-dark-400.png"
+    assert not _is_ignored(served), "git would hide a .screenshots/ that nginx serves"
 ```
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
@@ -4427,8 +4430,9 @@ Expected: `1 failed`, `rc=1`, with `.screenshots/ is not in .gitignore`.
 ```gitignore
 
 # Visual-check screenshots (docs/design/2026-09-25-reflection-redesign.md,
-# section 10). Shared in the session, never committed.
-.screenshots/
+# section 10). Shared in the session, never committed. Anchored at the root:
+# nginx serves frontend/public/, so a copy there must show in git status.
+/.screenshots/
 ```
 
 - [ ] **Step 4 (devops-sre): run the module, lint, and the whole suite.**
@@ -4539,7 +4543,7 @@ done
 [ "$up" = 1 ] || { echo "the sheet server never answered" >&2; exit 1; }
 for scheme in light dark; do
     flag=""; [ "$scheme" = dark ] && flag="--force-dark-mode"
-    chromium --headless=new --no-sandbox --disable-gpu --hide-scrollbars $flag \
+    chromium --headless=new --disable-gpu --hide-scrollbars $flag \
         --window-size=1200,900 --screenshot=/out/pr1b-assets-$scheme.png \
         http://127.0.0.1:8765/__sheet.html
 done
