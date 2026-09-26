@@ -1,26 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="32" height="32">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .tile-from { stop-color: #1C1F26 }
+      .tile-to { stop-color: #07080B }
+      .edge { stroke: #2C313A }
+      .glyph { fill: #EDEFF3 }
+      .axis { fill: #FF5A60 }
+    }
+  </style>
   <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:#E85D04"/>
-      <stop offset="100%" style="stop-color:#D62828"/>
+    <linearGradient id="tile" x1="0" y1="0" x2="1" y2="1">
+      <stop class="tile-from" offset="0" stop-color="#FFFFFF"/>
+      <stop class="tile-to" offset="1" stop-color="#CDD2DA"/>
     </linearGradient>
+    <!-- The b of the small mark: a stem and a ring (img/README.md). -->
+    <g id="b">
+      <rect x="4" y="8" width="8" height="49"/>
+      <path fill-rule="evenodd" d="M5 46a11 11 0 1 0 22 0a11 11 0 1 0-22 0ZM11.8 46a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0-8.4 0Z"/>
+    </g>
   </defs>
-  <!-- Background circle -->
-  <circle cx="50" cy="50" r="45" fill="url(#grad)"/>
-  <!-- BSD daemon horns -->
-  <path d="M30 38 L25 20 L35 30 Z" fill="white" opacity="0.95"/>
-  <path d="M70 38 L75 20 L65 30 Z" fill="white" opacity="0.95"/>
-  <!-- Daemon head -->
-  <circle cx="50" cy="48" r="22" fill="white" opacity="0.95"/>
-  <!-- Eyes -->
-  <circle cx="42" cy="44" r="4" fill="#D62828"/>
-  <circle cx="58" cy="44" r="4" fill="#D62828"/>
-  <!-- Grin -->
-  <path d="M38 54 Q50 64 62 54" stroke="#D62828" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-  <!-- Trident -->
-  <line x1="50" y1="68" x2="50" y2="85" stroke="white" stroke-width="3" stroke-linecap="round"/>
-  <path d="M42 72 L50 68 L58 72" stroke="white" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-  <circle cx="42" cy="72" r="2" fill="white"/>
-  <circle cx="58" cy="72" r="2" fill="white"/>
-  <circle cx="50" cy="68" r="2" fill="white"/>
+  <rect class="edge" x="1" y="1" width="62" height="62" rx="14" fill="url(#tile)" stroke="#C4C9D1" stroke-width="2"/>
+  <g transform="translate(7 7) scale(.78125)">
+    <use class="glyph" href="#b" fill="#0C0E12"/>
+    <use class="glyph" href="#b" fill="#0C0E12" transform="translate(64 0) scale(-1 1)"/>
+    <rect class="axis" x="30" y="5" width="4" height="54" rx="2" fill="#C8232C"/>
+  </g>
 </svg>

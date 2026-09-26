@@ -77,3 +77,8 @@ Thumbs.db
 
 # Mirror data (too large for git)
 /data/
+
+# Visual-check screenshots (docs/design/2026-09-25-reflection-redesign.md,
+# section 10). Shared in the session, never committed. Anchored at the root:
+# nginx serves frontend/public/, so a copy there must show in git status.
+/.screenshots/

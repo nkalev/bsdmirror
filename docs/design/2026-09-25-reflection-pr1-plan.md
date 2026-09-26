@@ -2427,9 +2427,12 @@ FONTS_CSS = PUBLIC / "css" / "fonts.css"
 FONTS_README = FONTS / "README.md"
 
 CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+MARKUP_COMMENT = re.compile(r"<!--.*?-->", re.S)
 CSS_URL = re.compile(r"""url\(\s*(['"]?)(.*?)\1\s*\)""")
 FONT_URL = re.compile(r"""url\(\s*['"]?/fonts/([^'")]+\.woff2)['"]?\s*\)""")
 FONT_FACE = re.compile(r"@font-face\s*\{(.*?)\}", re.S)
+FAMILY = re.compile(r"""font-family:\s*(['"])([^'"]+)\1""")
+WEIGHT = re.compile(r"font-weight:\s*([^;]+);")
 CHECKSUM = re.compile(r"^([0-9a-f]{64})  (\S+\.woff2)$", re.M)
 WOFF2_FILES = sorted(path.name for path in FONTS.glob("*.woff2"))
 
@@ -2446,18 +2449,31 @@ def without_comments(path):
     text = path.read_text(encoding="utf-8")
     if path.suffix in (".css", ".js"):
         return CSS_COMMENT.sub("", text)
-    if path.suffix == ".html":
-        return re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    if path.suffix in (".html", ".svg"):
+        return MARKUP_COMMENT.sub("", text)
     return text
 
 
+def font_face_blocks():
+    return FONT_FACE.findall(CSS_COMMENT.sub("", FONTS_CSS.read_text(encoding="utf-8")))
+
+
+def parse_face(body):
+    """(family, weight, file) of one @font-face body, with None for a field
+    that does not parse."""
+    family, weight, url = FAMILY.search(body), WEIGHT.search(body), FONT_URL.search(body)
+    return (
+        family.group(2) if family else None,
+        weight.group(1).strip() if weight else None,
+        url.group(1) if url else None,
+    )
+
+
 def font_faces():
-    """(family, weight, file) for every @font-face in fonts.css."""
-    css = CSS_COMMENT.sub("", FONTS_CSS.read_text(encoding="utf-8"))
-    for body in FONT_FACE.findall(css):
-        family = re.search(r"font-family:\s*'([^']+)'", body).group(1)
-        weight = re.search(r"font-weight:\s*([^;]+);", body).group(1).strip()
-        yield family, weight, FONT_URL.search(body).group(1)
+    """(family, weight, file) for every @font-face in fonts.css that parses.
+    The parametrized tests below are built from this at collection time, so it
+    must not raise on an odd block: test_every_font_face_parses names those."""
+    return [face for face in map(parse_face, font_face_blocks()) if None not in face]
 
 
 def readme_checksums():
@@ -2465,7 +2481,7 @@ def readme_checksums():
     return {name: digest for digest, name in CHECKSUM.findall(text)}
 
 
-@pytest.mark.parametrize("path", public_files(".css", ".html", ".js"), ids=rel)
+@pytest.mark.parametrize("path", public_files(".css", ".html", ".js", ".svg"), ids=rel)
 def test_nothing_loads_fonts_from_google(path):
     text = without_comments(path)
     for host in ("fonts.googleapis.com", "fonts.gstatic.com"):
@@ -2490,6 +2506,25 @@ def test_every_css_url_is_a_file_on_this_origin():
     assert not problems, "\n".join(problems)
 
 
+def test_every_font_face_parses():
+    blocks = font_face_blocks()
+    assert blocks, "no @font-face in fonts.css; the pattern is broken"
+    bad = [body.strip() for body in blocks if None in parse_face(body)]
+    assert not bad, "@font-face with no family, weight or /fonts/ url():\n" + "\n---\n".join(bad)
+
+
+def test_the_fonts_directory_holds_only_fonts_licences_and_the_readme():
+    others = sorted(
+        path.name
+        for path in FONTS.iterdir()
+        if not path.name.startswith(".")
+        and path.suffix != ".woff2"
+        and not (path.name.startswith("LICENSE-") and path.suffix == ".txt")
+        and path.name != "README.md"
+    )
+    assert others == [], f"fonts/ holds files that are none of those: {others}"
+
+
 def test_fonts_css_the_readme_and_the_directory_list_the_same_files():
     assert {file for _, _, file in font_faces()} == set(WOFF2_FILES)
     assert set(readme_checksums()) == set(WOFF2_FILES)
@@ -2505,9 +2540,9 @@ def test_each_font_is_woff2(name):
 @pytest.mark.parametrize("name", WOFF2_FILES)
 def test_each_font_matches_the_checksum_in_the_readme(name):
     digest = hashlib.sha256((FONTS / name).read_bytes()).hexdigest()
-    assert readme_checksums()[name] == digest, (
-        f"{name} changed in place. nginx caches fonts for a week as immutable: ship a "
-        "changed font under a new name and list its checksum in fonts/README.md"
+    assert readme_checksums().get(name) == digest, (
+        f"{name} does not match its checksum in fonts/README.md. nginx caches fonts for a "
+        "week as immutable: a changed font ships under a new name, with its checksum listed"
     )
 
 
@@ -2535,9 +2570,10 @@ def test_no_license_is_left_for_a_family_that_is_gone():
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `43 passed`, `rc=0`:
-- 12 stylesheets, pages and scripts free of Google hosts;
+Expected: `49 passed`, `rc=0`:
+- 16 stylesheets, pages, scripts and SVGs free of Google hosts;
 - the `url()` check;
+- every `@font-face` parses, and `fonts/` holds nothing but fonts, licences and the README;
 - the three-way list;
 - 13 WOFF2 signatures and 13 checksums;
 - 2 licences, each with no Reserved Font Name;
@@ -2843,15 +2879,17 @@ If any check fails, set the downloads aside with `mv "$F/files" "$F/rejected-$(d
 def test_the_new_families_ship_latin_and_latin_ext_only(family, weights, stem):
     faces = [(weight, file) for name, weight, file in font_faces() if name == family]
     assert faces, f"fonts.css has no @font-face for {family}"
-    assert {weight for weight, _ in faces} == weights
-    assert {file for _, file in faces} == {f"{stem}-latin.woff2", f"{stem}-latin-ext.woff2"}
+    # Every weight in both subsets: checked apart, the weights and the files
+    # would miss a weight that has only one of them.
+    subsets = ("latin", "latin-ext")
+    assert set(faces) == {(w, f"{stem}-{s}.woff2") for w in weights for s in subsets}
 ```
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `rc=1`. Both cases fail, with `fonts.css has no @font-face for Unbounded` and the same for Instrument Sans. The other 43 pass. Also run the lint pair on `tests/test_fonts.py` now, so a formatting slip in the appended test stays with its owner: both `rc=0`.
+Expected: `rc=1`. Both cases fail, with `fonts.css has no @font-face for Unbounded` and the same for Instrument Sans. The other 49 pass. Also run the lint pair on `tests/test_fonts.py` now, so a formatting slip in the appended test stays with its owner: both `rc=0`.
 
 - [ ] **Step 3 (web-designer): add the files.**
 
@@ -3000,12 +3038,12 @@ replace a file in place: if a font ever needs to change, give it a new filename
       "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Unbounded:wght@600;700&display=swap"
 
 Download each `url()` from the responses and rename it to
-`<family>-<subset>.woff2`. In the CSS, rewrite the `url()`s to `/fonts/` and
-re-indent the blocks to four spaces, like the rest of `fonts.css`. From the
-second response keep only the blocks under `/* latin */` and
-`/* latin-ext */`. Nothing else in the returned CSS should be altered.
-Re-verify the checksums below change as expected, and re-run the rendering
-comparison.
+`<family>-<subset>.woff2`. A file whose bytes differ from one already shipped
+takes a new name instead, such as a version suffix (see the caching caveat
+above). In the CSS, rewrite the `url()`s to `/fonts/` and re-indent the blocks
+to four spaces, like the rest of `fonts.css`. From the second response keep
+only the blocks under `/* latin */` and `/* latin-ext */`. Nothing else in the
+returned CSS should be altered. List every new file's checksum below.
 
 ## Checksums (SHA-256)
 
@@ -3018,7 +3056,7 @@ comparison.
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_fonts.py; echo "rc=$?"`
 
-Expected: `55 passed`, `rc=0`. The font checks now cover 17 files and four families: 12 files free of Google hosts, the `url()` check, the three-way list, 17 signatures, 17 checksums, 4 licences, the leftover-licence check and the 2 new-family tests.
+Expected: `61 passed`, `rc=0`. The font checks now cover 17 files and four families: 16 files free of Google hosts, the `url()` check, the parse and directory checks, the three-way list, 17 signatures, 17 checksums, 4 licences, the leftover-licence check and the 2 new-family tests.
 
 Then run the lint pair on `tests/test_fonts.py`, and the whole suite, which includes the CSP and contrast harnesses that load `fonts.css`. Expected: every `rc=0`.
 
@@ -3070,7 +3108,21 @@ PUBLIC = REPO_ROOT / "frontend" / "public"
 IMG = PUBLIC / "img"
 ICONS = IMG / "icons"
 SVG_NS = "{http://www.w3.org/2000/svg}"
-URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""")
+URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""", re.I)
+# Any <?...?> but the XML declaration. ElementTree drops these while parsing,
+# so they are looked for in the raw text; <?xml-stylesheet?> loads a sheet.
+PROCESSING_INSTRUCTION = re.compile(r"<\?(?!xml\s)", re.I)
+# Elements that run code, pull in other content, or rewrite attributes
+# after load, such as an href retargeted by <set>.
+FORBIDDEN = (
+    "script",
+    "foreignObject",
+    "image",
+    "set",
+    "animate",
+    "animateMotion",
+    "animateTransform",
+)
 ICON_NAMES = {
     "dashboard",
     "mirrors",
@@ -3091,6 +3143,8 @@ ICON_NAMES = {
 ICON_STROKE = {
     "viewBox": "0 0 24 24",
     "fill": "none",
+    # Without a stroke the mask is empty.
+    "stroke": "#000",
     "stroke-width": "1.6",
     "stroke-linecap": "round",
     "stroke-linejoin": "round",
@@ -3101,10 +3155,7 @@ FAVICON_BOWL = (
     "M5 46a11 11 0 1 0 22 0a11 11 0 1 0-22 0ZM11.8 46a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0-8.4 0Z"
 )
 # The b, then the d: the same group, mirrored across the 64-unit grid.
-MIRRORED = [
-    {"href": "#b", "transform": None},
-    {"href": "#b", "transform": "translate(64 0) scale(-1 1)"},
-]
+MIRROR = "translate(64 0) scale(-1 1)"
 FAVICON_SVG = IMG / "favicon.svg"
 FAVICON_LIGHT = {
     "tile-from": "#FFFFFF",
@@ -3149,13 +3200,24 @@ def group_ids(root):
     return [g.get("id") for g in root.iter(SVG_NS + "g") if g.get("id")]
 
 
+def tags(root):
+    return [element.tag.removeprefix(SVG_NS) for element in root.iter()]
+
+
 def assert_inert(path, root):
     """An SVG under /img/ opened directly renders as a document: no script, no
     event handler, no style attribute, nothing loaded from outside the file."""
+    raw = path.read_text(encoding="utf-8")
+    assert not PROCESSING_INSTRUCTION.search(raw), f"{path.name}: a processing instruction"
+    assert "<!DOCTYPE" not in raw.upper(), f"{path.name}: a DOCTYPE"
     for element in root.iter():
+        # An element in another namespace, such as <html:script>, still runs.
+        assert element.tag.startswith(SVG_NS), f"{path.name}: <{element.tag}> is not SVG"
         tag = element.tag.removeprefix(SVG_NS)
-        assert tag not in ("script", "foreignObject", "image"), f"{path.name}: <{tag}>"
+        assert tag not in FORBIDDEN, f"{path.name}: <{tag}>"
         texts = [element.text or ""] if tag == "style" else []
+        for text in texts:
+            assert "@import" not in text.lower(), f"{path.name}: @import in <style>"
         for attribute, value in element.attrib.items():
             name = attribute.rsplit("}", 1)[-1]
             assert not name.startswith("on"), f"{path.name}: {name}= event handler"
@@ -3184,7 +3246,6 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
     path = ICONS / f"{name}.svg"
     root = svg_root(path)
     assert attributes(root, *ICON_STROKE) == ICON_STROKE
-    assert root.get("stroke"), "without a stroke the mask is empty"
     assert len(root), "no shapes"
     for element in root.iter():
         if element is not root:
@@ -3195,18 +3256,20 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
 def test_mark_glyph_is_the_regular_b_and_its_mirror_image():
     root = svg_root(IMG / "mark-glyph.svg")
     assert root.get("viewBox") == "0 0 64 64"
+    assert tags(root) == ["svg", "defs", "g", "rect", "path", "use", "use"]
     assert group_ids(root) == ["b"]
     stems = [attributes(r, "x", "y", "width", "height") for r in root.iter(SVG_NS + "rect")]
     assert stems == [{"x": "5", "y": "6", "width": "7", "height": "52"}]
     bowls = [attributes(b, "d", "fill-rule") for b in root.iter(SVG_NS + "path")]
     assert bowls == [{"d": MARK_BOWL, "fill-rule": "evenodd"}]
-    uses = [attributes(u, "href", "transform") for u in root.iter(SVG_NS + "use")]
-    assert uses == MIRRORED
+    uses = [dict(u.attrib) for u in root.iter(SVG_NS + "use")]
+    assert uses == [{"href": "#b"}, {"href": "#b", "transform": MIRROR}]
 
 
 def test_mark_axis_is_the_regular_axis():
     root = svg_root(IMG / "mark-axis.svg")
     assert root.get("viewBox") == "0 0 64 64"
+    assert tags(root) == ["svg", "rect"]
     axes = [attributes(r, "x", "y", "width", "height", "rx") for r in root.iter(SVG_NS + "rect")]
     assert axes == [{"x": "30.7", "y": "3", "width": "2.6", "height": "58", "rx": "1.3"}]
 
@@ -3214,14 +3277,38 @@ def test_mark_axis_is_the_regular_axis():
 def test_favicon_svg_is_the_small_mark_on_the_light_tile():
     root = svg_root(FAVICON_SVG)
     assert root.get("viewBox") == "0 0 64 64"
+    # The <style> holding the dark rule is pinned by the next test; the
+    # fallback drops it.
+    shapes = [tag for tag in tags(root) if tag != "style"]
+    assert shapes == [
+        "svg",
+        "defs",
+        "linearGradient",
+        "stop",
+        "stop",
+        "g",
+        "rect",
+        "path",
+        "rect",
+        "g",
+        "use",
+        "use",
+        "rect",
+    ]
     parts = by_class(root)
+
+    def colours(name, attribute):
+        return [(e.get(attribute) or "").upper() for e in parts[name]]
+
     # The light colours are presentation attributes, which style-src never blocks.
-    assert [e.get("stop-color") for e in parts["tile-from"]] == [FAVICON_LIGHT["tile-from"]]
-    assert [e.get("stop-color") for e in parts["tile-to"]] == [FAVICON_LIGHT["tile-to"]]
-    assert [e.get("stroke") for e in parts["edge"]] == [FAVICON_LIGHT["edge"]]
-    assert [e.get("fill") for e in parts["glyph"]] == [FAVICON_LIGHT["glyph"]] * 2
-    assert [e.get("fill") for e in parts["axis"]] == [FAVICON_LIGHT["axis"]]
-    tile = attributes(parts["edge"][0], "x", "y", "width", "height", "rx", "stroke-width")
+    assert colours("tile-from", "stop-color") == [FAVICON_LIGHT["tile-from"]]
+    assert colours("tile-to", "stop-color") == [FAVICON_LIGHT["tile-to"]]
+    assert colours("edge", "stroke") == [FAVICON_LIGHT["edge"]]
+    assert colours("glyph", "fill") == [FAVICON_LIGHT["glyph"]] * 2
+    assert colours("axis", "fill") == [FAVICON_LIGHT["axis"]]
+    # The tile is painted by the gradient the dark rule recolours: a flat fill
+    # would leave the favicon light in a dark theme.
+    tile = attributes(parts["edge"][0], "x", "y", "width", "height", "rx", "stroke-width", "fill")
     assert tile == {
         "x": "1",
         "y": "1",
@@ -3229,6 +3316,7 @@ def test_favicon_svg_is_the_small_mark_on_the_light_tile():
         "height": "62",
         "rx": "14",
         "stroke-width": "2",
+        "fill": "url(#tile)",
     }
     # The small mark (section 4.5), scaled to 50 of the tile's 64 units and
     # inset 7 on each side.
@@ -3242,7 +3330,11 @@ def test_favicon_svg_is_the_small_mark_on_the_light_tile():
     assert stems == [{"x": "4", "y": "8", "width": "8", "height": "49"}]
     bowls = [attributes(b, "d", "fill-rule") for b in root.iter(SVG_NS + "path")]
     assert bowls == [{"d": FAVICON_BOWL, "fill-rule": "evenodd"}]
-    assert [attributes(e, "href", "transform") for e in parts["glyph"]] == MIRRORED
+    uses = [{k: v for k, v in e.attrib.items() if k != "fill"} for e in parts["glyph"]]
+    assert uses == [
+        {"class": "glyph", "href": "#b"},
+        {"class": "glyph", "href": "#b", "transform": MIRROR},
+    ]
     axis = attributes(parts["axis"][0], "x", "y", "width", "height", "rx")
     assert axis == {"x": "30", "y": "5", "width": "4", "height": "54", "rx": "2"}
 
@@ -3738,6 +3830,7 @@ these tests skip.
 
 import json
 import subprocess
+import xml.etree.ElementTree as ET
 
 import pytest
 
@@ -3758,7 +3851,7 @@ pytestmark = [
         reason=f"needs node and Chrome (node={bool(NODE)}, chrome={bool(CHROME)})",
     ),
     pytest.mark.skipif(
-        "prefers-color-scheme: dark" not in FAVICON.read_text(encoding="utf-8"),
+        ET.parse(FAVICON).getroot().find(".//{http://www.w3.org/2000/svg}style") is None,
         reason="favicon.svg ships as the light tile only (the design's fallback)",
     ),
 ]
@@ -3800,8 +3893,9 @@ def pixels():
 
 def test_the_copy_without_csp_renders_dark(pixels):
     assert reads_dark(pixels["withoutCsp"]), (
-        f"with no CSP at all the tile read {pixels['withoutCsp']}, not dark. The harness "
-        "is not putting the image in a dark colour scheme, or the copy did not draw."
+        f"with no CSP at all the tile read {pixels['withoutCsp']}, not dark. favicon.svg's "
+        "dark rule no longer darkens the tile, the harness is not putting the image in a "
+        "dark colour scheme, or the copy did not draw."
     )
 
 
@@ -3864,7 +3958,7 @@ The favicon has carried its dark rule since Task 12, so these tests pass the fir
 
 - **`12 passed`, `rc=0`:** the three dark-mode tests and the nine start/stop tests, the favicon harness's three among them. The dark rule works under the production CSP in Chromium; keep `favicon.svg` as it is. The dry run saw exactly this: both dark copies read `[21, 24, 30, 255]`, and the unstyled copy read light.
 - **Only `test_the_dark_rule_applies_under_the_production_csp` fails, and it says the tile read light:** Chromium blocks the rule, so take the design's fallback. *Controller:* record it for the PR description and the user. The web-designer deletes the `<style>` element from `favicon.svg`. Re-run: the dark-mode tests then skip, and Task 12's dark-rule test skips too.
-- **A control fails, the CSP test says the copy read neither tile, all three error at setup because the harness exited non-zero, or any other test fails, such as a start/stop case:** the harness or its fixture is broken, not the favicon. Debug it with superpowers:systematic-debugging before going on, and do not take the fallback on a broken measurement.
+- **A control fails, the CSP test says the copy read neither tile, all three error at setup because the harness exited non-zero, or any other test fails, such as a start/stop case:** the harness or its fixture is broken, not the favicon's CSP handling. One exception: if only the no-CSP control reads light, check `favicon.svg`'s dark rule first; Task 12's dark-rule test would fail with it. Debug it with superpowers:systematic-debugging before going on, and do not take the fallback on a broken measurement.
 
 - [ ] **Step 5 (web-designer): the README's `favicon.svg` item.** In `frontend/public/img/README.md`, replace the whole `favicon.svg` item, from ``- **`favicon.svg`:**`` to the end of the file, according to Step 4's outcome.
 
@@ -3925,23 +4019,28 @@ def png_size(data):
     return struct.unpack(">II", data[16:24])
 
 
+def png_chunks(data):
+    """(type, body) for each chunk of a PNG, in file order."""
+    pos = 8
+    while pos < len(data):
+        length, kind = struct.unpack(">I4s", data[pos : pos + 8])
+        yield kind, data[pos + 8 : pos + 8 + length]
+        pos += 12 + length
+
+
 def png_rows(data):
     """(channels, rows) for an 8-bit, non-interlaced RGB or RGBA PNG."""
     width, height = png_size(data)
     bit_depth, colour_type, _, _, interlace = data[24:29]
     assert bit_depth == 8 and colour_type in (2, 6) and interlace == 0, "unexpected PNG format"
     channels = 4 if colour_type == 6 else 3
-    idat, pos = b"", 8
-    while pos < len(data):
-        length, kind = struct.unpack(">I4s", data[pos : pos + 8])
-        if kind == b"IDAT":
-            idat += data[pos + 8 : pos + 8 + length]
-        pos += 12 + length
+    idat = b"".join(body for kind, body in png_chunks(data) if kind == b"IDAT")
     raw, stride = zlib.decompress(idat), width * channels
     rows, previous = [], bytearray(stride)
     for y in range(height):
         start = y * (stride + 1)
         kind, row = raw[start], bytearray(raw[start + 1 : start + 1 + stride])
+        assert kind <= 4, f"row {y}: unknown PNG filter type {kind}"
         for x in range(stride):
             left = row[x - channels] if x >= channels else 0
             up = previous[x]
@@ -3985,6 +4084,8 @@ def test_favicon_ico_holds_16_32_and_48_pixel_pngs():
 def test_the_touch_icon_is_an_opaque_180_pixel_square():
     data = TOUCH_ICON.read_bytes()
     assert png_size(data) == (180, 180)
+    kinds = [kind for kind, _ in png_chunks(data)]
+    assert b"tRNS" not in kinds, "a tRNS chunk makes a colour transparent; iOS paints it black"
     channels, rows = png_rows(data)
     if channels == 4:
         alpha = min(row[i] for row in rows for i in range(3, len(row), 4))
@@ -4084,12 +4185,9 @@ def render(chromium: str, svg: str, size: int, workdir: pathlib.Path) -> bytes:
     page = workdir / "page.html"
     page.write_text(PAGE.format(size=size), encoding="utf-8")
     out = workdir / f"icon-{size}.png"
-    # --no-sandbox: this renders one local file of our own, and the container
-    # runs as the host's uid, which has no account in the image.
     command = [
         chromium,
         "--headless=new",
-        "--no-sandbox",
         "--disable-gpu",
         "--hide-scrollbars",
         "--default-background-color=00000000",
@@ -4102,8 +4200,11 @@ def render(chromium: str, svg: str, size: int, workdir: pathlib.Path) -> bytes:
     except subprocess.CalledProcessError as failure:
         tail = failure.stderr.decode(errors="replace")[-2000:]
         sys.exit(f"Chromium failed rendering {size}px (exit {failure.returncode}):\n{tail}")
-    png = out.read_bytes()
-    if png[:8] != b"\x89PNG\r\n\x1a\n" or struct.unpack(">II", png[16:24]) != (size, size):
+    except subprocess.TimeoutExpired as late:
+        sys.exit(f"Chromium did not finish rendering {size}px within {late.timeout:g} s")
+    png = out.read_bytes() if out.exists() else b""
+    header_ok = len(png) >= 24 and png[:8] == b"\x89PNG\r\n\x1a\n"
+    if not header_ok or struct.unpack(">II", png[16:24]) != (size, size):
         sys.exit(f"Chromium did not produce a {size}x{size} PNG")
     return png
 
@@ -4114,7 +4215,8 @@ def ico(pngs: dict[int, bytes]) -> bytes:
     entries, images = b"", b""
     offset = len(header) + 16 * len(pngs)
     for size, png in sorted(pngs.items()):
-        entries += struct.pack("<BBBBHHII", size, size, 0, 0, 1, 32, len(png), offset)
+        side = 0 if size == 256 else size  # one byte each way; 0 means 256
+        entries += struct.pack("<BBBBHHII", side, side, 0, 0, 1, 32, len(png), offset)
         images += png
         offset += len(png)
     return header + entries + images
@@ -4126,8 +4228,11 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         workdir = pathlib.Path(tmp)
         light = light_only(svg)
-        ICO.write_bytes(ico({size: render(chromium, light, size, workdir) for size in ICO_SIZES}))
-        TOUCH_ICON.write_bytes(render(chromium, full_bleed(svg), TOUCH_SIZE, workdir))
+        icon = ico({size: render(chromium, light, size, workdir) for size in ICO_SIZES})
+        touch_icon = render(chromium, full_bleed(svg), TOUCH_SIZE, workdir)
+    # Nothing is written until both have rendered, so a failed run changes neither file.
+    ICO.write_bytes(icon)
+    TOUCH_ICON.write_bytes(touch_icon)
     for path in (ICO, TOUCH_ICON):
         print(f"wrote {path.relative_to(REPO)} ({path.stat().st_size} bytes)")
 
@@ -4217,10 +4322,13 @@ PAGES = [
     PUBLIC / "50x.html",
 ]
 FAVICON_LINKS = [
+    # sizes="32x32", not "any" or absent: with either, Chrome shows the ICO, not the SVG.
     {"rel": "icon", "href": "/favicon.ico", "sizes": "32x32"},
     {"rel": "icon", "type": "image/svg+xml", "href": "/img/favicon.svg"},
     {"rel": "apple-touch-icon", "href": "/img/apple-touch-icon.png"},
 ]
+# rel is a case-insensitive list of tokens, so "shortcut icon" and "ICON" are icon links too.
+ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed"}
 
 
 class LinkCollector(HTMLParser):
@@ -4233,15 +4341,23 @@ class LinkCollector(HTMLParser):
             self.links.append(dict(attrs))
 
 
+def test_pages_lists_every_html_page():
+    assert sorted(PUBLIC.rglob("*.html")) == sorted(PAGES), "PAGES must list every HTML page"
+
+
 @pytest.mark.parametrize("page", PAGES, ids=rel)
 def test_every_page_links_the_favicon_set(page):
     collector = LinkCollector()
     collector.feed(page.read_text(encoding="utf-8"))
-    icons = [link for link in collector.links if link.get("rel") in ("icon", "apple-touch-icon")]
+    icons = [
+        link for link in collector.links if ICON_RELS & set((link.get("rel") or "").lower().split())
+    ]
     assert icons == FAVICON_LINKS
     for link in icons:
         assert (PUBLIC / link["href"].lstrip("/")).is_file(), f"{link['href']} does not exist"
 ```
+
+`test_pages_lists_every_html_page` passes from the start. It guards the list itself: a fifth page fails it instead of shipping without the favicon set. Matching `rel` as tokens catches the legacy `rel="shortcut icon"`, which Chromium would show instead of the SVG.
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
 
@@ -4296,8 +4412,11 @@ The test joins `tests/test_gitignore_covers_secrets.py`, which has an `_is_ignor
 def test_visual_check_screenshots_are_ignored():
     """Not a secret, but the same kind of mistake. The redesign's visual checks
     (docs/design/2026-09-25-reflection-redesign.md, section 10) write full-page
-    screenshots into .screenshots/, and they are shared, never committed."""
+    screenshots into .screenshots/, and they are shared, never committed. Only
+    the root's: nginx serves frontend/public/, so a copy there must show in git."""
     assert _is_ignored(".screenshots/home-dark-400.png"), ".screenshots/ is not in .gitignore"
+    served = "frontend/public/.screenshots/home-dark-400.png"
+    assert not _is_ignored(served), "git would hide a .screenshots/ that nginx serves"
 ```
 
 - [ ] **Step 2 (developer): run it and watch it fail.**
@@ -4311,8 +4430,9 @@ Expected: `1 failed`, `rc=1`, with `.screenshots/ is not in .gitignore`.
 ```gitignore
 
 # Visual-check screenshots (docs/design/2026-09-25-reflection-redesign.md,
-# section 10). Shared in the session, never committed.
-.screenshots/
+# section 10). Shared in the session, never committed. Anchored at the root:
+# nginx serves frontend/public/, so a copy there must show in git status.
+/.screenshots/
 ```
 
 - [ ] **Step 4 (devops-sre): run the module, lint, and the whole suite.**
@@ -4423,7 +4543,7 @@ done
 [ "$up" = 1 ] || { echo "the sheet server never answered" >&2; exit 1; }
 for scheme in light dark; do
     flag=""; [ "$scheme" = dark ] && flag="--force-dark-mode"
-    chromium --headless=new --no-sandbox --disable-gpu --hide-scrollbars $flag \
+    chromium --headless=new --disable-gpu --hide-scrollbars $flag \
         --window-size=1200,900 --screenshot=/out/pr1b-assets-$scheme.png \
         http://127.0.0.1:8765/__sheet.html
 done
