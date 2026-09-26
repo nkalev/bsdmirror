@@ -1874,6 +1874,13 @@ verify_cache_headers() {
     # no `expires epoch` to find and nothing to check.
     local site
     site=$(env_get NGINX_SITE dev)
+    # docker compose strips quotes and inline comments from .env; env_get does
+    # not. A value it cannot resolve would otherwise read as "no policy" and
+    # pass unchecked.
+    if [ ! -d "nginx/sites/$site" ]; then
+        vfail "NGINX_SITE='$site' in .env names no directory under nginx/sites/; cache headers not checked"
+        return 0
+    fi
     if ! grep -qsE '^[[:space:]]*expires[[:space:]]+epoch[[:space:]]*;' nginx/sites/"$site"/*.conf; then
         if [ "$site" = "production" ]; then
             # Expected right after a rollback to a commit from before the

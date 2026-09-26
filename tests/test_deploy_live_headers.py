@@ -325,11 +325,27 @@ def test_the_checkout_s_own_profiles_are_read_as_intended(workdir, site, checked
 def test_the_active_profile_decides(workdir):
     # The dev and bootstrap profiles set no cache policy, even when the
     # production one does.
+    dev = workdir / "nginx" / "sites" / "dev"
+    dev.mkdir()
+    (dev / "dev.conf").write_text("server {\n    location / {\n    }\n}\n")
     (workdir / ".env").write_text("NGINX_SITE=dev\n")
     result = probe_cache(workdir)
     assert marker(result.output, "VERIFY_FAILURES") == 0, result.output
     assert result.calls == []
     assert "dev profile in this checkout sets no revalidation policy" in result.output
+
+
+@pytest.mark.parametrize(
+    "line", ['NGINX_SITE="production"', "NGINX_SITE=production # the live profile"]
+)
+def test_a_profile_name_that_names_no_directory_fails(workdir, line):
+    # docker compose strips the quotes and the comment and mounts production;
+    # read raw, the value names no profile, and a skip would pass unchecked.
+    (workdir / ".env").write_text(line + "\n")
+    result = probe_cache(workdir)
+    assert marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert "names no directory under nginx/sites/" in result.output
+    assert result.calls == []
 
 
 def test_verify_all_runs_the_cache_check():

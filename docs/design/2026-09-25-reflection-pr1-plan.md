@@ -19,7 +19,7 @@ The split exists because `deploy.sh` is one deploy behind itself: a deploy runs 
 - The font download itself (Task 10) waits for the user's approval. Its filter script ran against a synthetic Google response, and Task 11 against stand-in files: the repo's own Inter and JetBrains Mono files under the new names.
 - The deploy steps (Tasks 8 and 18) touch production and were not run.
 
-Executing PR 1a on 2026-09-26, each task's code review led to changes in Tasks 1, 4, 5 and 6. The tests, code, comments and counts in this plan are what was built and committed, each re-verified against its commit.
+Executing PR 1a on 2026-09-26, each task's code review led to changes in Tasks 1, 4, 5 and 6, and the security review in Task 8 to one more in Task 5. The tests, code, comments and counts in this plan are what was built and committed, each re-verified against its commit.
 
 The dry run also answered Task 13's open question (see its Step 4).
 
@@ -1744,11 +1744,27 @@ def test_the_checkout_s_own_profiles_are_read_as_intended(workdir, site, checked
 def test_the_active_profile_decides(workdir):
     # The dev and bootstrap profiles set no cache policy, even when the
     # production one does.
+    dev = workdir / "nginx" / "sites" / "dev"
+    dev.mkdir()
+    (dev / "dev.conf").write_text("server {\n    location / {\n    }\n}\n")
     (workdir / ".env").write_text("NGINX_SITE=dev\n")
     result = probe_cache(workdir)
     assert marker(result.output, "VERIFY_FAILURES") == 0, result.output
     assert result.calls == []
     assert "dev profile in this checkout sets no revalidation policy" in result.output
+
+
+@pytest.mark.parametrize(
+    "line", ['NGINX_SITE="production"', "NGINX_SITE=production # the live profile"]
+)
+def test_a_profile_name_that_names_no_directory_fails(workdir, line):
+    # docker compose strips the quotes and the comment and mounts production;
+    # read raw, the value names no profile, and a skip would pass unchecked.
+    (workdir / ".env").write_text(line + "\n")
+    result = probe_cache(workdir)
+    assert marker(result.output, "VERIFY_FAILURES") == 1, result.output
+    assert "names no directory under nginx/sites/" in result.output
+    assert result.calls == []
 
 
 def test_verify_all_runs_the_cache_check():
@@ -1762,8 +1778,8 @@ def test_verify_all_runs_the_cache_check():
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_deploy_live_headers.py; echo "rc=$?"`
 
-Expected: `rc=1`, with 17 failed and 14 passed.
-- The sixteen probe tests fail with `VERIFY_FAILURES marker missing`, because `verify_cache_headers: command not found` ends the probe. The `verify_all` test fails its search.
+Expected: `rc=1`, with 19 failed and 14 passed.
+- The eighteen probe tests fail with `VERIFY_FAILURES marker missing`, because `verify_cache_headers: command not found` ends the probe. The `verify_all` test fails its search.
 - The 14 that pass are Task 4's 12, the lowercase security-header case, and the console-list test, which reads only `admin/index.html`.
 
 - [ ] **Step 3 (devops-sre): add the function.** Insert after the closing `}` of `verify_security_headers()`:
@@ -1812,6 +1828,13 @@ verify_cache_headers() {
     # no `expires epoch` to find and nothing to check.
     local site
     site=$(env_get NGINX_SITE dev)
+    # docker compose strips quotes and inline comments from .env; env_get does
+    # not. A value it cannot resolve would otherwise read as "no policy" and
+    # pass unchecked.
+    if [ ! -d "nginx/sites/$site" ]; then
+        vfail "NGINX_SITE='$site' in .env names no directory under nginx/sites/; cache headers not checked"
+        return 0
+    fi
     if ! grep -qsE '^[[:space:]]*expires[[:space:]]+epoch[[:space:]]*;' nginx/sites/"$site"/*.conf; then
         if [ "$site" = "production" ]; then
             # Expected right after a rollback to a commit from before the
@@ -1900,7 +1923,7 @@ with:
 - [ ] **Step 5 (devops-sre): run the tests and the checks.**
 
 Run: `docker compose run --rm -T test pytest -q -p no:cacheprovider tests/test_deploy_live_headers.py tests/test_deploy_frontend_assets.py; echo "rc=$?"`
-Expected: `50 passed`, `rc=0`.
+Expected: `52 passed`, `rc=0`.
 
 Run shellcheck (expected `rc=0`) and the lint pair on `tests/test_deploy_live_headers.py` (expected both `rc=0`).
 
