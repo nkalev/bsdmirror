@@ -3108,7 +3108,21 @@ PUBLIC = REPO_ROOT / "frontend" / "public"
 IMG = PUBLIC / "img"
 ICONS = IMG / "icons"
 SVG_NS = "{http://www.w3.org/2000/svg}"
-URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""")
+URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""", re.I)
+# Any <?...?> but the XML declaration. ElementTree drops these while parsing,
+# so they are looked for in the raw text; <?xml-stylesheet?> loads a sheet.
+PROCESSING_INSTRUCTION = re.compile(r"<\?(?!xml\s)", re.I)
+# Elements that run code, pull in other content, or rewrite attributes
+# after load, such as an href retargeted by <set>.
+FORBIDDEN = (
+    "script",
+    "foreignObject",
+    "image",
+    "set",
+    "animate",
+    "animateMotion",
+    "animateTransform",
+)
 ICON_NAMES = {
     "dashboard",
     "mirrors",
@@ -3129,6 +3143,8 @@ ICON_NAMES = {
 ICON_STROKE = {
     "viewBox": "0 0 24 24",
     "fill": "none",
+    # Without a stroke the mask is empty.
+    "stroke": "#000",
     "stroke-width": "1.6",
     "stroke-linecap": "round",
     "stroke-linejoin": "round",
@@ -3139,10 +3155,7 @@ FAVICON_BOWL = (
     "M5 46a11 11 0 1 0 22 0a11 11 0 1 0-22 0ZM11.8 46a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0-8.4 0Z"
 )
 # The b, then the d: the same group, mirrored across the 64-unit grid.
-MIRRORED = [
-    {"href": "#b", "transform": None},
-    {"href": "#b", "transform": "translate(64 0) scale(-1 1)"},
-]
+MIRROR = "translate(64 0) scale(-1 1)"
 FAVICON_SVG = IMG / "favicon.svg"
 FAVICON_LIGHT = {
     "tile-from": "#FFFFFF",
@@ -3187,13 +3200,24 @@ def group_ids(root):
     return [g.get("id") for g in root.iter(SVG_NS + "g") if g.get("id")]
 
 
+def tags(root):
+    return [element.tag.removeprefix(SVG_NS) for element in root.iter()]
+
+
 def assert_inert(path, root):
     """An SVG under /img/ opened directly renders as a document: no script, no
     event handler, no style attribute, nothing loaded from outside the file."""
+    raw = path.read_text(encoding="utf-8")
+    assert not PROCESSING_INSTRUCTION.search(raw), f"{path.name}: a processing instruction"
+    assert "<!DOCTYPE" not in raw.upper(), f"{path.name}: a DOCTYPE"
     for element in root.iter():
+        # An element in another namespace, such as <html:script>, still runs.
+        assert element.tag.startswith(SVG_NS), f"{path.name}: <{element.tag}> is not SVG"
         tag = element.tag.removeprefix(SVG_NS)
-        assert tag not in ("script", "foreignObject", "image"), f"{path.name}: <{tag}>"
+        assert tag not in FORBIDDEN, f"{path.name}: <{tag}>"
         texts = [element.text or ""] if tag == "style" else []
+        for text in texts:
+            assert "@import" not in text.lower(), f"{path.name}: @import in <style>"
         for attribute, value in element.attrib.items():
             name = attribute.rsplit("}", 1)[-1]
             assert not name.startswith("on"), f"{path.name}: {name}= event handler"
@@ -3222,7 +3246,6 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
     path = ICONS / f"{name}.svg"
     root = svg_root(path)
     assert attributes(root, *ICON_STROKE) == ICON_STROKE
-    assert root.get("stroke"), "without a stroke the mask is empty"
     assert len(root), "no shapes"
     for element in root.iter():
         if element is not root:
@@ -3233,18 +3256,20 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
 def test_mark_glyph_is_the_regular_b_and_its_mirror_image():
     root = svg_root(IMG / "mark-glyph.svg")
     assert root.get("viewBox") == "0 0 64 64"
+    assert tags(root) == ["svg", "defs", "g", "rect", "path", "use", "use"]
     assert group_ids(root) == ["b"]
     stems = [attributes(r, "x", "y", "width", "height") for r in root.iter(SVG_NS + "rect")]
     assert stems == [{"x": "5", "y": "6", "width": "7", "height": "52"}]
     bowls = [attributes(b, "d", "fill-rule") for b in root.iter(SVG_NS + "path")]
     assert bowls == [{"d": MARK_BOWL, "fill-rule": "evenodd"}]
-    uses = [attributes(u, "href", "transform") for u in root.iter(SVG_NS + "use")]
-    assert uses == MIRRORED
+    uses = [dict(u.attrib) for u in root.iter(SVG_NS + "use")]
+    assert uses == [{"href": "#b"}, {"href": "#b", "transform": MIRROR}]
 
 
 def test_mark_axis_is_the_regular_axis():
     root = svg_root(IMG / "mark-axis.svg")
     assert root.get("viewBox") == "0 0 64 64"
+    assert tags(root) == ["svg", "rect"]
     axes = [attributes(r, "x", "y", "width", "height", "rx") for r in root.iter(SVG_NS + "rect")]
     assert axes == [{"x": "30.7", "y": "3", "width": "2.6", "height": "58", "rx": "1.3"}]
 
@@ -3252,14 +3277,38 @@ def test_mark_axis_is_the_regular_axis():
 def test_favicon_svg_is_the_small_mark_on_the_light_tile():
     root = svg_root(FAVICON_SVG)
     assert root.get("viewBox") == "0 0 64 64"
+    # The <style> holding the dark rule is pinned by the next test; the
+    # fallback drops it.
+    shapes = [tag for tag in tags(root) if tag != "style"]
+    assert shapes == [
+        "svg",
+        "defs",
+        "linearGradient",
+        "stop",
+        "stop",
+        "g",
+        "rect",
+        "path",
+        "rect",
+        "g",
+        "use",
+        "use",
+        "rect",
+    ]
     parts = by_class(root)
+
+    def colours(name, attribute):
+        return [(e.get(attribute) or "").upper() for e in parts[name]]
+
     # The light colours are presentation attributes, which style-src never blocks.
-    assert [e.get("stop-color") for e in parts["tile-from"]] == [FAVICON_LIGHT["tile-from"]]
-    assert [e.get("stop-color") for e in parts["tile-to"]] == [FAVICON_LIGHT["tile-to"]]
-    assert [e.get("stroke") for e in parts["edge"]] == [FAVICON_LIGHT["edge"]]
-    assert [e.get("fill") for e in parts["glyph"]] == [FAVICON_LIGHT["glyph"]] * 2
-    assert [e.get("fill") for e in parts["axis"]] == [FAVICON_LIGHT["axis"]]
-    tile = attributes(parts["edge"][0], "x", "y", "width", "height", "rx", "stroke-width")
+    assert colours("tile-from", "stop-color") == [FAVICON_LIGHT["tile-from"]]
+    assert colours("tile-to", "stop-color") == [FAVICON_LIGHT["tile-to"]]
+    assert colours("edge", "stroke") == [FAVICON_LIGHT["edge"]]
+    assert colours("glyph", "fill") == [FAVICON_LIGHT["glyph"]] * 2
+    assert colours("axis", "fill") == [FAVICON_LIGHT["axis"]]
+    # The tile is painted by the gradient the dark rule recolours: a flat fill
+    # would leave the favicon light in a dark theme.
+    tile = attributes(parts["edge"][0], "x", "y", "width", "height", "rx", "stroke-width", "fill")
     assert tile == {
         "x": "1",
         "y": "1",
@@ -3267,6 +3316,7 @@ def test_favicon_svg_is_the_small_mark_on_the_light_tile():
         "height": "62",
         "rx": "14",
         "stroke-width": "2",
+        "fill": "url(#tile)",
     }
     # The small mark (section 4.5), scaled to 50 of the tile's 64 units and
     # inset 7 on each side.
@@ -3280,7 +3330,11 @@ def test_favicon_svg_is_the_small_mark_on_the_light_tile():
     assert stems == [{"x": "4", "y": "8", "width": "8", "height": "49"}]
     bowls = [attributes(b, "d", "fill-rule") for b in root.iter(SVG_NS + "path")]
     assert bowls == [{"d": FAVICON_BOWL, "fill-rule": "evenodd"}]
-    assert [attributes(e, "href", "transform") for e in parts["glyph"]] == MIRRORED
+    uses = [{k: v for k, v in e.attrib.items() if k != "fill"} for e in parts["glyph"]]
+    assert uses == [
+        {"class": "glyph", "href": "#b"},
+        {"class": "glyph", "href": "#b", "transform": MIRROR},
+    ]
     axis = attributes(parts["axis"][0], "x", "y", "width", "height", "rx")
     assert axis == {"x": "30", "y": "5", "width": "4", "height": "54", "rx": "2"}
 

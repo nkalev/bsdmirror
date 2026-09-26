@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- The b|d mark's glyph, regular geometry (img/README.md), used as a CSS mask. -->
+  <defs>
+    <g id="b">
+      <rect x="5" y="6" width="7" height="52"/>
+      <path fill-rule="evenodd" d="M5 46a12 12 0 1 0 24 0a12 12 0 1 0-24 0ZM11 46a6 6 0 1 0 12 0a6 6 0 1 0-12 0Z"/>
+    </g>
+  </defs>
+  <use href="#b"/>
+  <use href="#b" transform="translate(64 0) scale(-1 1)"/>
+</svg>
