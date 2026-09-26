@@ -1831,6 +1831,116 @@ verify_security_headers() {
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Cache headers, probed on the live site
+# ---------------------------------------------------------------------------
+#
+# docs/design/2026-09-25-reflection-redesign.md, section 8. Pages, CSS and JS
+# keep unversioned names and change together, so they must revalidate on every
+# load: `expires epoch`, which nginx sends as Cache-Control: no-cache. Fonts and
+# images stay cached for a week as immutable. tests/test_nginx_cache_policy.py
+# proves that of the checkout; this proves it of what the live site sends.
+#
+# Then the console's page, stylesheets and script are loaded twice in a row,
+# with no retry, and must get no 503. That shows they are served, and that a
+# plain reload of them fits the limits. It cannot show which zone limits which
+# path, and a browser's reload also makes the console's API calls, in
+# parallel; tests/test_nginx_cache_policy.py pins the zones.
+#
+# deploy.sh runs one deploy behind itself, so the deploy that changes the
+# policy for a path probed here runs the previous copy of these lists. Loosen
+# a path's expectation a deploy ahead of the nginx change that alters it, or
+# of the change that renames a probed file.
+
+# Prints every value of header $2, matched case-insensitively, from the curl
+# -D dump in $1, one per line.
+header_values() {
+    tr -d '\r' <"$1" | awk -v want="$2" '
+        BEGIN { want = tolower(want) }
+        {
+            i = index($0, ":")
+            if (i > 1 && tolower(substr($0, 1, i - 1)) == want) {
+                value = substr($0, i + 1)
+                sub(/^[ \t]+/, "", value)
+                print value
+            }
+        }'
+}
+
+verify_cache_headers() {
+    # Compared against the checkout, like the checks above. A rollback to a
+    # commit from before the policy, and the dev and bootstrap profiles, have
+    # no `expires epoch` to find and nothing to check.
+    local site
+    site=$(env_get NGINX_SITE dev)
+    if ! grep -qsE '^[[:space:]]*expires[[:space:]]+epoch[[:space:]]*;' nginx/sites/"$site"/*.conf; then
+        if [ "$site" = "production" ]; then
+            # Expected right after a rollback to a commit from before the
+            # policy. Any other time it means this check stopped finding it.
+            warn "the production profile in this checkout sets no revalidation policy; cache headers not checked"
+        else
+            ok "the $site profile in this checkout sets no revalidation policy; no cache headers to check"
+        fi
+        return 0
+    fi
+
+    local -a revalidated=(/ /css/style.css /admin/ /admin/css/admin.css /admin/js/admin.js)
+    local immutable=/fonts/jetbrains-mono-latin.woff2
+    # What a browser requests to show the console once its fonts and images
+    # are cached; they are immutable, so a reload does not ask for them again.
+    local -a console=(/admin/ /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
+    local path code values opts round dump fails=0
+    dump=$(mktemp)
+
+    for path in "${revalidated[@]}"; do
+        code=$(fetch_with_retry /dev/null "$BASE_URL$path" -D "$dump")
+        values=$(header_values "$dump" cache-control | paste -sd, -)
+        if [ "$code" != "200" ]; then
+            bad "$path -- HTTP $code"
+            fails=$((fails + 1))
+        elif [ "$values" != "no-cache" ]; then
+            bad "$path -- Cache-Control '${values:-<none>}', want 'no-cache'"
+            fails=$((fails + 1))
+        else
+            ok "$path  Cache-Control: no-cache"
+        fi
+    done
+
+    code=$(fetch_with_retry /dev/null "$BASE_URL$immutable" -D "$dump")
+    values=$(header_values "$dump" cache-control | paste -sd, -)
+    rm -f "$dump"
+    if [ "$code" = "200" ] && [[ "$values" == *immutable* ]] && [[ "$values" != *no-cache* ]]; then
+        ok "$immutable  Cache-Control: $values"
+    else
+        bad "$immutable -- HTTP $code, Cache-Control '${values:-<none>}', want immutable"
+        fails=$((fails + 1))
+    fi
+
+    # Let the probes above drain out of the limiter first, so both loads start
+    # from a full burst, as a visitor's would.
+    sleep "$FETCH_RETRY_PAUSE"
+    opts=$(curl_base)
+    for round in 1 2; do
+        for path in "${console[@]}"; do
+            set +e
+            # shellcheck disable=SC2086
+            code=$(curl $opts -o /dev/null -w '%{http_code}' "$BASE_URL$path" 2>/dev/null)
+            set -e
+            if [ "$code" != "200" ]; then
+                bad "$path (load $round of 2) -- HTTP $code"
+                fails=$((fails + 1))
+            fi
+        done
+    done
+
+    if [ "$fails" -ne 0 ]; then
+        vfail "$fails cache-header check(s) failed on the live site"
+        bad "if this deploy changed nginx/, run 'scripts/nginx-apply.sh check' before believing anything else"
+        return 0
+    fi
+    ok "pages, CSS and JS revalidate, fonts stay immutable, and the console loads twice with no 503"
+}
+
 # The check that would have caught the whole class of problem this change
 # exists for: after the deploy, does the schema the containers are running
 # against actually match the models in the image that is serving?
@@ -1868,6 +1978,8 @@ verify_all() {
     verify_frontend_assets
     step "Verifying security headers on the live site"
     verify_security_headers
+    step "Verifying cache headers on the live site"
+    verify_cache_headers
 
     if [ "$VERIFY_FAILURES" -ne 0 ]; then
         banner "$C_RED" "DEPLOY COMPLETED BUT VERIFICATION FAILED ($VERIFY_FAILURES check(s))" \
