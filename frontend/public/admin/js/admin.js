@@ -314,8 +314,8 @@ function renderLayout(content, title) {
             <aside class="sidebar">
                 <div class="sidebar-header">
                     <div class="sidebar-logo">
-                        <span class="sidebar-logo-icon">🔄</span>
-                        <span>BSD Mirror</span>
+                        <span class="mark" aria-hidden="true"><span class="mark-glyph"></span><span class="mark-axis"></span></span>
+                        <span class="wordmark">BSD Mirror</span>
                     </div>
                 </div>
                 
@@ -323,7 +323,7 @@ function renderLayout(content, title) {
                     <div class="nav-section">
                         <div class="nav-section-title">Overview</div>
                         <a class="nav-item ${state.currentPage === 'dashboard' ? 'active' : ''}" href="#dashboard" data-nav="dashboard" aria-current="${state.currentPage === 'dashboard' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">📊</span>
+                            <span class="icon icon-dashboard" aria-hidden="true"></span>
                             <span>Dashboard</span>
                         </a>
                     </div>
@@ -331,20 +331,20 @@ function renderLayout(content, title) {
                     <div class="nav-section">
                         <div class="nav-section-title">Management</div>
                         <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" href="#mirrors" data-nav="mirrors" aria-current="${state.currentPage === 'mirrors' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">💾</span>
+                            <span class="icon icon-mirrors" aria-hidden="true"></span>
                             <span>Mirrors</span>
                         </a>
                         <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" href="#sync-failures" data-nav="sync-failures" aria-current="${state.currentPage === 'sync-failures' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">⚠️</span>
+                            <span class="icon icon-sync-failures" aria-hidden="true"></span>
                             <span>Sync Failures</span>
                         </a>
                         <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" href="#protected-paths" data-nav="protected-paths" aria-current="${state.currentPage === 'protected-paths' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">🔒</span>
+                            <span class="icon icon-protected-paths" aria-hidden="true"></span>
                             <span>Protected Paths</span>
                         </a>
                         ${isAdmin ? html`
                         <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" href="#users" data-nav="users" aria-current="${state.currentPage === 'users' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">👥</span>
+                            <span class="icon icon-users" aria-hidden="true"></span>
                             <span>Users</span>
                         </a>
                         ` : ''}
@@ -354,11 +354,11 @@ function renderLayout(content, title) {
                     <div class="nav-section">
                         <div class="nav-section-title">System</div>
                         <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" href="#audit-logs" data-nav="audit-logs" aria-current="${state.currentPage === 'audit-logs' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">📋</span>
+                            <span class="icon icon-audit-logs" aria-hidden="true"></span>
                             <span>Audit Logs</span>
                         </a>
                         <a class="nav-item ${state.currentPage === 'settings' ? 'active' : ''}" href="#settings" data-nav="settings" aria-current="${state.currentPage === 'settings' ? 'page' : 'false'}">
-                            <span class="nav-item-icon">⚙️</span>
+                            <span class="icon icon-settings" aria-hidden="true"></span>
                             <span>Settings</span>
                         </a>
                     </div>
@@ -374,7 +374,7 @@ function renderLayout(content, title) {
                         </div>
                     </div>
                     <button class="btn btn-secondary btn-sm u-full-width u-mt-sm" data-action="logout">
-                        Logout
+                        <span class="icon icon-log-out" aria-hidden="true"></span> Logout
                     </button>
                 </div>
             </aside>
@@ -415,7 +415,7 @@ const Toast = {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         setHtml(toast, html`
-            <span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
+            <span class="${type === 'success' ? 'icon icon-check' : type === 'error' ? 'icon icon-close' : 'icon icon-info'}" aria-hidden="true"></span>
             <span>${message}</span>
         `);
 
@@ -440,7 +440,7 @@ const Modal = {
         setHtml(modal, html`
             <div class="modal-header">
                 <h3 class="modal-title" id="modalTitle">${title}</h3>
-                <button class="modal-close" data-action="closeModal">×</button>
+                <button class="modal-close" data-action="closeModal" aria-label="Close"><span class="icon icon-close" aria-hidden="true"></span></button>
             </div>
             <div class="modal-body">
                 ${content}
@@ -466,7 +466,7 @@ function renderLoginPage() {
             <div class="login-card">
                 ${renderThemeToggle()}
                 <div class="login-header">
-                    <div class="login-logo">🔄</div>
+                    <div class="login-logo"><span class="mark" aria-hidden="true"><span class="mark-glyph"></span><span class="mark-axis"></span></span></div>
                     <h1 class="login-title">BSD Mirror Admin</h1>
                     <p class="login-subtitle">Sign in to continue</p>
                 </div>
@@ -487,6 +487,40 @@ function renderLoginPage() {
             </div>
         </div>
         <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+    `;
+}
+
+/**
+ * The disk-usage meter next to the storage tile's value (spec 4.8). Severity
+ * is a class on the fill element, not a computed value: is-crit replaces
+ * is-warn at DISK_USAGE_CRITICAL_PERCENT rather than joining it, so this is
+ * three full literal branches instead of one template with a class built
+ * from a ternary -- every class name it can ever emit stays literal text in
+ * this file, the same way the icon spans above do.
+ */
+function renderMeter(percentUsed) {
+    const pct = Math.min(100, Math.max(0, Math.round(percentUsed)));
+    if (pct >= DISK_USAGE_CRITICAL_PERCENT) {
+        return html`
+        <div class="meter" aria-hidden="true">
+            <div class="meter-fill is-crit" data-percent="${pct}"></div>
+            <div class="meter-tick"></div>
+        </div>
+        `;
+    }
+    if (pct >= DISK_USAGE_WARNING_PERCENT) {
+        return html`
+        <div class="meter" aria-hidden="true">
+            <div class="meter-fill is-warn" data-percent="${pct}"></div>
+            <div class="meter-tick"></div>
+        </div>
+        `;
+    }
+    return html`
+    <div class="meter" aria-hidden="true">
+        <div class="meter-fill" data-percent="${pct}"></div>
+        <div class="meter-tick"></div>
+    </div>
     `;
 }
 
@@ -517,31 +551,31 @@ async function renderDashboard() {
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">💾</span>
+                    <span class="stat-card-icon"><span class="icon icon-mirrors" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.total}</div>
                 <div class="stat-card-label">Total Mirrors</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">✅</span>
+                    <span class="stat-card-icon"><span class="icon icon-check" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.active}</div>
                 <div class="stat-card-label">Active Mirrors</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">🔄</span>
+                    <span class="stat-card-icon"><span class="icon icon-sync" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.syncing}</div>
                 <div class="stat-card-label">Currently Syncing</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">👥</span>
+                    <span class="stat-card-icon"><span class="icon icon-users" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.users.total}</div>
                 <div class="stat-card-label">Admin Users</div>
@@ -549,12 +583,13 @@ async function renderDashboard() {
 
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">🗄️</span>
+                    <span class="stat-card-icon"><span class="icon icon-disk" aria-hidden="true"></span></span>
                     ${d.storage.percent_used != null ? html`
                     <span class="stat-card-trend ${d.storage.percent_used >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${d.storage.percent_used}% used</span>
                     ` : ''}
                 </div>
                 <div class="stat-card-value">${d.storage.free_bytes != null ? formatBytes(d.storage.free_bytes) : 'Unknown'}</div>
+                ${d.storage.percent_used != null ? renderMeter(d.storage.percent_used) : ''}
                 <div class="stat-card-label">
                     ${d.storage.total_bytes != null
                         ? html`Disk free of ${formatBytes(d.storage.total_bytes)} (${formatBytes(d.storage.used_bytes)} used)`
@@ -573,11 +608,10 @@ async function renderDashboard() {
                 <ul class="activity-list">
                     ${d.recent_syncs.length ? d.recent_syncs.map(sync => html`
                         <li class="activity-item">
-                            <div class="activity-icon">🔄</div>
+                            <span class="status-badge ${sync.status}">${sync.status}</span>
                             <div class="activity-content">
                                 <div class="activity-text">
-                                    Mirror #${sync.mirror_id} -
-                                    <span class="status-badge ${sync.status}">${sync.status}</span>
+                                    Mirror #${sync.mirror_id}
                                     ${sync.files_deleted ? filesDeletedBadge(sync.files_deleted) : ''}
                                 </div>
                                 <div class="activity-time">${formatDate(sync.created_at)}</div>
@@ -594,7 +628,7 @@ async function renderDashboard() {
                 <ul class="activity-list">
                     ${d.recent_activity.length ? d.recent_activity.map(log => html`
                         <li class="activity-item">
-                            <div class="activity-icon">${getActivityIcon(log.action)}</div>
+                            <div class="activity-icon"><span class="icon ${getActivityIcon(log.action)}" aria-hidden="true"></span></div>
                             <div class="activity-content">
                                 <div class="activity-text">${formatAction(log.action)}</div>
                                 <div class="activity-time">${formatDate(log.created_at)}</div>
@@ -672,7 +706,10 @@ const HEALTH_STATE_LABEL = {
  * items (via `renderItem`, which may return a plain string or a nested
  * html`` fragment -- both are escaped the same way by the outer template)
  * or a placeholder `<li>` when there are none, matching the empty-state
- * shape Recent Sync Jobs / Recent Activity above already use.
+ * shape Recent Sync Jobs / Recent Activity above already use. `icon` is a
+ * pre-built html`` fragment (the state-specific health-check-icon span), not
+ * a bare icon name, so each of the four calls below can give its own list a
+ * different literal modifier and icon.
  */
 function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
     return html`
@@ -680,7 +717,7 @@ function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
         <ul class="health-check-list">
             ${items.length ? items.map(item => html`
                 <li class="health-check-row">
-                    <div class="health-check-icon">${icon}</div>
+                    ${icon}
                     <div class="health-check-content">
                         <div class="health-check-text">${renderItem(item)}</div>
                     </div>
@@ -706,18 +743,23 @@ function renderHealthChecksCard(health) {
                 <span>${h.reason || 'No health-check report is available.'}</span>
             </div>
             <p class="u-text-muted u-text-sm u-mt-sm">
+                <span class="icon icon-clock" aria-hidden="true"></span>
                 ${h.finished_at
                     ? html`Last ran ${formatDate(h.finished_at)}${age ? html` (${age})` : ''}`
                     : 'Last run: unknown'}
             </p>
             <div class="u-mt-sm">
-                ${healthChecklistSection('Bad', h.bad || [], 'No failing checks', '❌',
+                ${healthChecklistSection('Bad', h.bad || [], 'No failing checks',
+                    html`<span class="health-check-icon is-bad"><span class="icon icon-close" aria-hidden="true"></span></span>`,
                     (item) => `${item.label}: ${item.detail}`)}
-                ${healthChecklistSection('Skipped', h.skipped || [], 'No skipped checks', '⏭️',
+                ${healthChecklistSection('Skipped', h.skipped || [], 'No skipped checks',
+                    html`<span class="health-check-icon is-skip"><span class="icon icon-skip" aria-hidden="true"></span></span>`,
                     (item) => `${item.check}: ${item.reason}`)}
-                ${healthChecklistSection('Warnings', h.warnings || [], 'No warnings', '⚠️',
+                ${healthChecklistSection('Warnings', h.warnings || [], 'No warnings',
+                    html`<span class="health-check-icon is-warn"><span class="icon icon-warning" aria-hidden="true"></span></span>`,
                     (item) => item)}
-                ${healthChecklistSection('OK', h.ok || [], 'No checks reported ok', '✅',
+                ${healthChecklistSection('OK', h.ok || [], 'No checks reported ok',
+                    html`<span class="health-check-icon is-ok"><span class="icon icon-check" aria-hidden="true"></span></span>`,
                     (item) => item)}
             </div>
         </div>
@@ -742,8 +784,8 @@ async function renderMirrors() {
                         <tr>
                             <th>Name</th>
                             <th>Status</th>
-                            <th>Size</th>
-                            <th>Last Sync</th>
+                            <th class="num">Size</th>
+                            <th class="num">Last Sync</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -755,13 +797,10 @@ async function renderMirrors() {
                                     <br><small class="u-text-muted">${mirror.url_path}</small>
                                 </td>
                                 <td>
-                                    <span class="status-badge ${mirror.status}">
-                                        <span class="status-dot"></span>
-                                        ${mirror.status}
-                                    </span>
+                                    <span class="status-badge ${mirror.status}">${mirror.status}</span>
                                 </td>
-                                <td>${mirror.total_size_human || '--'}</td>
-                                <td>${mirror.last_sync_completed ? formatDate(mirror.last_sync_completed) : 'Never'}</td>
+                                <td class="num">${mirror.total_size_human || '--'}</td>
+                                <td class="num">${mirror.last_sync_completed ? formatDate(mirror.last_sync_completed) : 'Never'}</td>
                                 <td>
                                     <button class="btn btn-primary btn-sm" data-action="syncMirror" data-id="${mirror.id}">
                                         Sync Now
@@ -802,14 +841,14 @@ async function renderSyncFailures() {
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">❌</span>
+                    <span class="stat-card-icon"><span class="icon icon-close" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.totals.failed}</div>
                 <div class="stat-card-label">Failed (last ${d.period_days}d)</div>
             </div>
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">✅</span>
+                    <span class="stat-card-icon"><span class="icon icon-check" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.totals.completed}</div>
                 <div class="stat-card-label">Completed (last ${d.period_days}d)</div>
@@ -825,18 +864,18 @@ async function renderSyncFailures() {
                     <thead>
                         <tr>
                             <th>Mirror</th>
-                            <th>Failed</th>
-                            <th>Completed</th>
-                            <th>Failure Rate</th>
+                            <th class="num">Failed</th>
+                            <th class="num">Completed</th>
+                            <th class="num">Failure Rate</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${d.by_mirror.map(m => html`
                             <tr>
                                 <td><strong>${m.mirror_name}</strong></td>
-                                <td class="${m.failed > 0 ? 'u-text-error' : ''}">${m.failed}</td>
-                                <td>${m.completed}</td>
-                                <td>${m.failure_rate_percent != null ? m.failure_rate_percent + '%' : '--'}</td>
+                                <td class="num ${m.failed > 0 ? 'u-text-error' : ''}">${m.failed}</td>
+                                <td class="num">${m.completed}</td>
+                                <td class="num">${m.failure_rate_percent != null ? m.failure_rate_percent + '%' : '--'}</td>
                             </tr>
                         `)}
                     </tbody>
@@ -854,9 +893,9 @@ async function renderSyncFailures() {
                         <tr>
                             <th>Mirror</th>
                             <th>Error</th>
-                            <th>Occurrences</th>
-                            <th>First Seen</th>
-                            <th>Last Seen</th>
+                            <th class="num">Occurrences</th>
+                            <th class="num">First Seen</th>
+                            <th class="num">Last Seen</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -865,9 +904,9 @@ async function renderSyncFailures() {
                             <tr>
                                 <td><strong>${inc.mirror_name}</strong></td>
                                 <td><code class="code-block">${inc.error_message || '(no error message recorded)'}</code></td>
-                                <td>${inc.occurrences.toLocaleString()}</td>
-                                <td>${formatDate(inc.first_seen)}</td>
-                                <td>${formatDate(inc.last_seen)}</td>
+                                <td class="num">${inc.occurrences.toLocaleString()}</td>
+                                <td class="num">${formatDate(inc.first_seen)}</td>
+                                <td class="num">${formatDate(inc.last_seen)}</td>
                                 <td>
                                     <button class="btn btn-secondary btn-sm" data-action="viewSyncLogs" data-id="${inc.latest_job_id}">
                                         View Logs
@@ -962,7 +1001,7 @@ const PROTECTION_BADGE_CLASS = {
     full: 'active',
     partial: 'syncing',
     none: 'disabled',
-    unknown: 'error',
+    unknown: 'disabled',
 };
 
 const PROTECTION_LABEL = {
@@ -1009,7 +1048,7 @@ function releaseTagBadges(release) {
     // read as a pill matching its row-mates. See that class in admin.css for
     // why it is the most alarming colour available here, not a softer one.
     if (release.at_risk) {
-        tags.push(html`<span class="status-badge at-risk">⚠️ At risk</span>`);
+        tags.push(html`<span class="status-badge at-risk">At risk</span>`);
     }
     return tags;
 }
@@ -1041,8 +1080,8 @@ function releaseRows(release) {
             <td><strong>${release.version}</strong></td>
             <td>${protectionBadge(release.protection)}</td>
             <td><span class="u-row-8">${releaseTagBadges(release)}</span></td>
-            <td>${release.location_count.toLocaleString()}</td>
-            <td>${formatDate(release.modified)}</td>
+            <td class="num">${release.location_count.toLocaleString()}</td>
+            <td class="num">${formatDate(release.modified)}</td>
         </tr>
         ${unprotectedRow}
     `;
@@ -1061,8 +1100,8 @@ function renderMirrorInventoryTable(mirror) {
                         <th>Version</th>
                         <th>Protection</th>
                         <th>Tags</th>
-                        <th>Locations</th>
-                        <th>Last Changed</th>
+                        <th class="num">Locations</th>
+                        <th class="num">Last Changed</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1163,7 +1202,7 @@ async function renderUsers() {
             <div class="card-header">
                 <h3 class="card-title">User Management</h3>
                 <button class="btn btn-primary btn-sm" data-action="showAddUser">
-                    + Add User
+                    <span class="icon icon-plus" aria-hidden="true"></span> Add User
                 </button>
             </div>
             <div class="table-container">
@@ -1174,7 +1213,7 @@ async function renderUsers() {
                             <th>Email</th>
                             <th>Role</th>
                             <th>Status</th>
-                            <th>Last Login</th>
+                            <th class="num">Last Login</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -1184,14 +1223,14 @@ async function renderUsers() {
                                 <td><strong>${user.username}</strong></td>
                                 <td>${user.email || '--'}</td>
                                 <td>
-                                    <span class="status-badge ${user.role === 'admin' ? 'active' : ''}">${user.role}</span>
+                                    <span class="status-badge ${user.role === 'admin' ? 'info' : ''}">${user.role}</span>
                                 </td>
                                 <td>
                                     <span class="status-badge ${user.is_active ? 'active' : 'disabled'}">
                                         ${user.is_active ? 'Active' : 'Disabled'}
                                     </span>
                                 </td>
-                                <td>${user.last_login ? formatDate(user.last_login) : 'Never'}</td>
+                                <td class="num">${user.last_login ? formatDate(user.last_login) : 'Never'}</td>
                                 <td>
                                     <button class="btn btn-secondary btn-sm" data-action="editUser" data-id="${user.id}">
                                         Edit
@@ -1227,7 +1266,7 @@ async function renderAuditLogs() {
                 <table>
                     <thead>
                         <tr>
-                            <th>Time</th>
+                            <th class="num">Time</th>
                             <th>User</th>
                             <th>Action</th>
                             <th>Resource</th>
@@ -1237,7 +1276,7 @@ async function renderAuditLogs() {
                     <tbody>
                         ${state.data.auditLogs.map(log => html`
                             <tr>
-                                <td>${formatDate(log.created_at)}</td>
+                                <td class="num">${formatDate(log.created_at)}</td>
                                 <td>${log.username || 'System'}</td>
                                 <td>${formatAction(log.action)}</td>
                                 <td>${log.resource_type}${log.resource_id ? html` #${log.resource_id}` : ''}</td>
@@ -1319,14 +1358,14 @@ async function renderSettings() {
                     <thead>
                         <tr>
                             <th>Key</th>
-                            <th>Last Updated</th>
+                            <th class="num">Last Updated</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${state.data.settings.map(s => html`
                             <tr>
                                 <td><code>${s.key}</code></td>
-                                <td>${formatDate(s.updated_at)}</td>
+                                <td class="num">${formatDate(s.updated_at)}</td>
                             </tr>
                         `)}
                     </tbody>
@@ -1420,10 +1459,10 @@ const actions = {
                     <ul class="activity-list">
                         ${history.length ? history.map(h => html`
                             <li class="activity-item">
-                                <div class="activity-icon">${h.status === 'completed' ? '✅' : h.status === 'failed' ? '❌' : h.status === 'running' ? '🔄' : '⏳'}</div>
+                                <span class="status-badge ${h.status}">${h.status}</span>
                                 <div class="activity-content">
                                     <div class="activity-text">
-                                        ${h.status}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
+                                        ${h.bytes_transferred ? formatBytes(h.bytes_transferred) : ''}
                                         ${h.files_deleted ? html` ${filesDeletedBadge(h.files_deleted)}` : ''}
                                         ${h.triggered_by ? html` <small>(by ${h.triggered_by})</small>` : ''}
                                     </div>
@@ -1470,10 +1509,9 @@ const actions = {
     async viewSyncLogs(jobId) {
         try {
             const job = await api.get(`/admin/sync-jobs/${jobId}/logs`);
-            const statusIcon = job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : job.status === 'running' ? '🔄' : '⏳';
             const isRunning = job.status === 'running' || job.status === 'pending';
 
-            Modal.show(`${statusIcon} Sync Job #${job.id}`, html`
+            Modal.show(`Sync Job #${job.id}`, html`
                 <div class="u-grid-2-tight">
                     <div>
                         <label class="form-label">Status</label>
@@ -1831,7 +1869,9 @@ function formatBytes(bytes) {
  */
 function filesDeletedBadge(count) {
     const large = count >= LARGE_DELETION_THRESHOLD;
-    return html`<span class="${large ? 'u-text-error' : 'u-text-muted'}">${large ? '⚠️ ' : ''}${count.toLocaleString()} deleted</span>`;
+    return large
+        ? html`<span class="u-text-error"><span class="icon icon-warning" aria-hidden="true"></span> ${count.toLocaleString()} deleted</span>`
+        : html`<span class="u-text-muted">${count.toLocaleString()} deleted</span>`;
 }
 
 function formatDate(dateStr) {
@@ -1889,17 +1929,17 @@ function formatAction(action) {
 
 function getActivityIcon(action) {
     const icons = {
-        'login_success': '🔓',
-        'login_failed': '🔒',
-        'logout': '👋',
-        'user_created': '👤',
-        'user_updated': '✏️',
-        'user_deleted': '🗑️',
-        'mirror_updated': '💾',
-        'sync_triggered': '🔄',
-        'settings_updated': '⚙️'
+        'login_success': 'icon-unlock',
+        'login_failed': 'icon-lock',
+        'logout': 'icon-log-out',
+        'user_created': 'icon-user',
+        'user_updated': 'icon-edit',
+        'user_deleted': 'icon-trash',
+        'mirror_updated': 'icon-mirrors',
+        'sync_triggered': 'icon-sync',
+        'settings_updated': 'icon-settings'
     };
-    return icons[action] || '📋';
+    return icons[action] || 'icon-audit-logs';
 }
 
 // ===========================================

@@ -19,14 +19,20 @@
  *     #themeToggle (not by setting the attribute from here) so the real
  *     ThemeManager code path is exercised;
  *   - a synthetic admin fixture: admin.js's own page-renderer functions
- *     (renderLoginPage, renderLayout, renderUsers, renderMirrors), loaded
- *     into a vm context exactly the way tests/js/escaping_harness.mjs does,
- *     called for their real HTML output, and dropped into a page that links
- *     the real admin.css/tokens.css/fonts.css. The admin SPA needs a live
- *     backend to reach these views by clicking through the app; calling the
- *     renderers directly gets the real markup without one, the same
- *     trade-off escaping_harness.mjs already makes. Unchanged by the public
- *     palette switch.
+ *     (renderLoginPage, renderLayout, renderUsers, renderMirrors,
+ *     renderDashboard), loaded into a vm context exactly the way
+ *     tests/js/escaping_harness.mjs does, called for their real HTML output,
+ *     and dropped into a page that links the real admin.css/tokens.css/
+ *     fonts.css. The admin SPA needs a live backend to reach these views by
+ *     clicking through the app; calling the renderers directly gets the real
+ *     markup without one, the same trade-off escaping_harness.mjs already
+ *     makes. The admin console now follows the same saved light/dark choice
+ *     as the public site (spec section 6.2), so this same rendered markup is
+ *     served twice, as two separate documents each with its own <html
+ *     data-surface="admin"> (light) or <html data-theme="dark"
+ *     data-surface="admin"> (dark) -- a real navigation to each, not a class
+ *     toggle on one shared page, since data-theme is an attribute of <html>
+ *     itself.
  *
  * :hover states (.nav-link:hover, .btn-secondary:hover) are reached with a
  * genuine Input.dispatchMouseEvent mousemove, not a CSS class toggle, so the
@@ -138,7 +144,7 @@ function loadAdminRenderers(sourcePath) {
     };
     sandbox.globalThis = sandbox;
     const epilogue = `
-;({ html, renderLoginPage, renderLayout, renderUsers, renderMirrors, state, api });
+;({ html, renderLoginPage, renderLayout, renderUsers, renderMirrors, renderDashboard, state, api });
 `;
     return vm.runInNewContext(source + epilogue, sandbox, { filename: sourcePath });
 }
@@ -158,20 +164,48 @@ function buildAdminFixtureHtml(mod) {
     const layout = String(mod.renderLayout(mod.html`<p>fixture</p>`, 'Dashboard'));
 
     // Deferred: renderWith is async and buildAdminFixtureHtml is not, so the
-    // two table renders are produced by the caller and passed in instead.
+    // table and dashboard renders are produced by the caller and passed in
+    // instead.
     return { login, layout };
+}
+
+/** One <html>-level page embedding the same five rendered fragments, for a
+ * given theme: data-surface="admin" always; data-theme="light"/"dark" set
+ * explicitly, exactly as AdminTheme.apply() does in the real console (spec
+ * section 6.2) -- tokens.css has no [data-theme="light"] rule, so this
+ * matches the light state whether the attribute is set or left off, and
+ * setting it explicitly is what a real page after a real toggle click
+ * actually carries. */
+function buildAdminFixturePage(theme, fragments) {
+    const { login, layout, usersHtml, mirrorsHtml, dashboardHtml } = fragments;
+    return `<!DOCTYPE html>
+<html data-theme="${theme}" data-surface="admin">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/admin/css/admin.css">
+</head>
+<body>
+<div id="login-fixture">${login}</div>
+<div id="layout-fixture">${layout}</div>
+<div id="users-fixture">${usersHtml}</div>
+<div id="mirrors-fixture">${mirrorsHtml}</div>
+<div id="dashboard-fixture">${dashboardHtml}</div>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------
 // Static + synthetic-fixture server
 // ---------------------------------------------------------------------------
-function serve(fixtureHtml) {
+function serve(fixturePages) {
     return new Promise((resolve) => {
         const server = createServer(async (req, res) => {
             const url = req.url.split('?')[0];
-            if (url === '/__admin_fixture__.html') {
+            if (Object.prototype.hasOwnProperty.call(fixturePages, url)) {
                 res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                return res.end(fixtureHtml);
+                return res.end(fixturePages[url]);
             }
             let rel = decodeURIComponent(url);
             if (rel.endsWith('/')) rel += 'index.html';
@@ -570,9 +604,15 @@ const PUBLIC_PROBES = [
     { id: '.status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true, setState: { selector: '#overallStatus', value: 'disabled' } }
 ];
 
+// Measured once per admin theme (see buildAdminFixturePage() and main()): the
+// fixture markup itself does not depend on theme, only which stylesheet
+// cascade layer <html>'s data-theme selects. The three job-status/meter/
+// toggle entries are what the Reflection redesign added to the console (spec
+// sections 4.8 and 6.2); the rest predate it.
 const ADMIN_PROBES = [
     { id: '.login-subtitle', selector: '#login-fixture .login-subtitle', bgSelector: '#login-fixture .login-card' },
     { id: '.btn-primary', selector: '#login-fixture .btn-primary', bgSelector: '#login-fixture .btn-primary' },
+    { id: '.theme-toggle', selector: '#layout-fixture .theme-toggle', bgSelector: '#layout-fixture .theme-toggle' },
     { id: '.nav-item.active', selector: '#layout-fixture .nav-item.active', bgSelector: '#layout-fixture .nav-item.active' },
     { id: '.user-avatar', selector: '#layout-fixture .user-avatar', bgSelector: '#layout-fixture .user-avatar' },
     { id: '.user-role', selector: '#layout-fixture .user-role', bgSelector: '#layout-fixture .user-info' },
@@ -582,7 +622,16 @@ const ADMIN_PROBES = [
     { id: 'th', selector: '#users-fixture th', bgSelector: '#users-fixture th' },
     { id: '.u-text-muted', selector: '#mirrors-fixture .u-text-muted', bgSelector: '#mirrors-fixture .card' },
     { id: '.status-badge.error', selector: '#mirrors-fixture .status-badge.error', bgSelector: '#mirrors-fixture .status-badge.error' },
-    { id: '.status-badge.syncing', selector: '#mirrors-fixture .status-badge.syncing', bgSelector: '#mirrors-fixture .status-badge.syncing' }
+    { id: '.status-badge.syncing', selector: '#mirrors-fixture .status-badge.syncing', bgSelector: '#mirrors-fixture .status-badge.syncing' },
+    // Recent Sync Jobs' job-status pill (dashboard-fixture is seeded with one
+    // completed job, spec 4.8's pill mapping) and the disk meter's own fill,
+    // seeded at 91% so it renders in its is-warn band (DISK_USAGE_WARNING_
+    // PERCENT/_CRITICAL_PERCENT; the .meter-fill on .meter pairing is a UI
+    // indicator, 3:1, not text -- see measureDot()'s reasoning; this one still
+    // has real text content, so the plain (element, property) measure() shape
+    // fits, unlike .status-dot).
+    { id: '.status-badge.completed', selector: '#dashboard-fixture .status-badge.completed', bgSelector: '#dashboard-fixture .status-badge.completed' },
+    { id: '.meter-fill.is-warn', selector: '#dashboard-fixture .meter-fill.is-warn', bgSelector: '#dashboard-fixture .meter', dot: true }
 ];
 
 /** ::placeholder is a pseudo-element, not reachable through the plain
@@ -652,29 +701,30 @@ async function main() {
             total_size_human: '2 GB', last_sync_completed: null
         }
     ]);
+    // A completed job (the pill probe) and 91% storage (the meter's is-warn
+    // band, DISK_USAGE_WARNING_PERCENT/_CRITICAL_PERCENT) in one render.
+    const dashboardHtml = await renderWith(mod, mod.renderDashboard, {
+        mirrors: { total: 3, active: 2, syncing: 1, error: 0, total_size_bytes: 0 },
+        users: { total: 2 },
+        storage: { path: '/data/mirrors', total_bytes: 1000, used_bytes: 910, free_bytes: 90, percent_used: 91 },
+        recent_syncs: [
+            { id: 1, mirror_id: 1, status: 'completed', files_deleted: 0, created_at: new Date().toISOString() }
+        ],
+        recent_activity: []
+    });
 
-    const fixtureHtml = `<!DOCTYPE html>
-<html data-theme="dark" data-surface="admin">
-<head>
-<meta charset="UTF-8">
-<link rel="stylesheet" href="/css/fonts.css">
-<link rel="stylesheet" href="/css/tokens.css">
-<link rel="stylesheet" href="/admin/css/admin.css">
-</head>
-<body>
-<div id="login-fixture">${login}</div>
-<div id="layout-fixture">${layout}</div>
-<div id="users-fixture">${usersHtml}</div>
-<div id="mirrors-fixture">${mirrorsHtml}</div>
-</body>
-</html>`;
+    const fragments = { login, layout, usersHtml, mirrorsHtml, dashboardHtml };
+    const fixturePages = {
+        '/__admin_fixture_light__.html': buildAdminFixturePage('light', fragments),
+        '/__admin_fixture_dark__.html': buildAdminFixturePage('dark', fragments)
+    };
 
-    const { server, port } = await serve(fixtureHtml);
+    const { server, port } = await serve(fixturePages);
     const origin = `http://127.0.0.1:${port}`;
     const { chrome, cdp, sessionId } = await launchChrome();
     const evaluate = makeEvaluate(cdp, sessionId);
 
-    const out = { public: { light: {}, dark: {} }, admin: {} };
+    const out = { public: { light: {}, dark: {} }, admin: { light: {}, dark: {} } };
 
     await navigate(cdp, sessionId, `${origin}/index.html`);
     const initialTheme = await evaluate('document.documentElement.getAttribute("data-theme")');
@@ -716,13 +766,24 @@ async function main() {
     }
     out.public.dark = await measurePublicProbes(cdp, sessionId, evaluate);
 
-    await navigate(cdp, sessionId, `${origin}/__admin_fixture__.html`);
-    for (const probe of ADMIN_PROBES) {
-        out.admin[probe.id] = await measure(cdp, sessionId, evaluate, probe);
+    // The admin console now follows the same saved light/dark choice as the
+    // public site (spec section 6.2): each theme's fixture is its own
+    // document (data-theme lives on <html>, not on a sub-tree), so every
+    // ADMIN_PROBES entry is measured once per real navigation, not once per
+    // page. checkForPageErrors() runs once at the end of main(), after both.
+    for (const theme of ['light', 'dark']) {
+        await navigate(cdp, sessionId, `${origin}/__admin_fixture_${theme}__.html`);
+        const admin_theme = await evaluate('document.documentElement.getAttribute("data-theme")');
+        if (admin_theme !== theme) {
+            throw new Error(`admin fixture (${theme}) did not carry data-theme=${theme} (got ${admin_theme})`);
+        }
+        for (const probe of ADMIN_PROBES) {
+            out.admin[theme][probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
+        }
+        out.admin[theme]['.form-input::placeholder'] = await measurePlaceholder(
+            evaluate, '#login-fixture .form-input', '#login-fixture .form-input'
+        );
     }
-    out.admin['.form-input::placeholder'] = await measurePlaceholder(
-        evaluate, '#login-fixture .form-input', '#login-fixture .form-input'
-    );
 
     checkForPageErrors(cdp);
 

@@ -22,36 +22,35 @@
    3. LIGHT THEME          Semantics for :root, i.e. the public site's default.
    4. DARK THEME           Semantics for [data-theme="dark"], set by
                            theme-init.js and main.js.
-   5. ADMIN SURFACE        Frozen ahead of the admin console's own redesign
-                           (spec section 6). See the note at that block.
+   5. ADMIN SURFACE        No colour tokens (spec section 7); one non-colour
+                           override for the sidebar's width.
 
    ---------------------------------------------------------------------------
    How a surface picks its values
    ---------------------------------------------------------------------------
    Theme and surface are independent axes, both expressed on <html>:
 
-     <html>                                    public site, light
-     <html data-theme="dark">                  public site, dark  (theme-init.js, main.js)
-     <html data-theme="dark" data-surface="admin">   admin panel
+     <html>                                          public site, light
+     <html data-theme="dark">                        public site, dark  (theme-init.js, main.js)
+     <html data-surface="admin">                      admin console, light
+     <html data-theme="dark" data-surface="admin">    admin console, dark  (js/theme-init.js, admin.js)
 
-   The admin panel has no theme toggle yet (spec section 6.2 adds one); it is
-   dark-only and carries data-theme="dark" statically. Until its own redesign
-   (spec section 7) its colours come from the LEGACY ADMIN group in the admin
-   layer below, not from this file's dark theme.
+   The admin console has its own toggle (spec section 6.2) and follows the
+   same saved choice as the public site; data-theme is never static there.
+   Its colours come from the shared light and dark layers above, exactly like
+   the public site's.
 
    Layers 3-5 all have specificity (0,1,0), so ordering in this file decides:
    dark overrides light, admin overrides dark. Keep them in this order.
 
    ---------------------------------------------------------------------------
-   Layer 5, frozen ahead of the admin redesign
+   Layer 5, the admin surface
    ---------------------------------------------------------------------------
-   The admin console must keep looking exactly as it does today until its own
-   redesign (spec section 6), even though this file's primitives and light/dark
-   semantics changed under it. [data-surface="admin"] pins the values admin.css
-   reads directly, as literals, so none of them can resolve through the shared
-   layers above. That admin redesign deletes the LEGACY ADMIN group and folds
-   admin's colours back into the shared light/dark layers, checked in both
-   themes; see spec section 7.
+   The admin console (spec section 6) takes its colours from layers 3-4
+   above, exactly like the public site: [data-surface="admin"] sets no
+   --bg-*, --text-*, --accent-*, --border-*, --status-* or --stream-* token
+   (spec section 7). It keeps one non-colour override, --sidebar-width,
+   documented at that block below.
 */
 
 /* ===========================================================================
@@ -142,8 +141,10 @@
     --radius-xl: 14px;
     --radius-full: 999px;
 
-    /* Layout. --sidebar-width is unchanged until the admin console's own
-       redesign (spec section 6), which retunes it to 188px. */
+    /* Layout. The admin surface below retunes --sidebar-width to 188px
+       (spec section 6); this 260px value is what a page with no
+       data-surface="admin" attribute would fall back to, which no page
+       does today. */
     --container-max: 1180px;
     --header-height: 64px;
     --sidebar-width: 260px;
@@ -208,8 +209,9 @@
 
 /* ===========================================================================
    4. DARK THEME
-   Applied by theme-init.js and main.js on the public site; static on the
-   admin panel.
+   Applied by theme-init.js and main.js on the public site, and by
+   js/theme-init.js and admin.js's own toggle on the admin console (spec
+   section 6.2) -- one saved 'theme' choice, read by both.
    =========================================================================== */
 
 [data-theme="dark"] {
@@ -254,53 +256,14 @@
 
 /* ===========================================================================
    5. ADMIN SURFACE
-   Frozen ahead of the admin console's own redesign (spec section 6), which
-   deletes the LEGACY ADMIN group below and folds admin's colours back into
-   the shared light/dark layers above (spec section 7).
+   The admin console (spec section 6) renders from the shared light and dark
+   layers above, exactly like the public site. This layer sets no colour
+   token at all (spec section 7) -- only the one non-colour override its
+   layout needs.
    =========================================================================== */
 
 [data-surface="admin"] {
-    /* ===== ADMIN SURFACE: NON-COLOUR TOKENS =====
-       admin.css's own values for the non-colour tokens, declared here so a
-       change to the INVARIANTS layer above never reaches the admin console.
-       The admin console's own redesign revisits these; until then they keep
-       today's numbers (spec section 7: "the admin layer then holds only
-       non-colour tokens"). */
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-    --header-height: 64px;
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --sidebar-width: 260px;
-    --transition-fast: 150ms ease;
-    --transition-base: 300ms ease;
-
-    /* ===== LEGACY ADMIN =====
-       Pins every colour token admin.css consumes at its value today, as a
-       literal rather than a var() reference, so none of them can resolve
-       through a shared layer when this file's primitives and light/dark
-       semantics change under it. Raw hex, so these do not follow the shared
-       primitives, which the Reflection palette replaces. The admin console's
-       own redesign deletes this whole group.
-       Verified against admin.css by tests/test_legacy_admin_tokens.py. */
-    --accent-primary: #F48C06;
-    --bg-card: #1A1A2E;
-    --bg-primary: #0D0D1A;
-    --bg-secondary: #1A1A2E;
-    --bg-tertiary: #2A2A40;
-    --border-color: #2A2A40;
-    --status-error: #EF4444;
-    --status-error-bg: #462B3B;
-    --status-error-text: #F87171;
-    --status-healthy: #22C55E;
-    --status-healthy-bg: #1C3C38;
-    --status-info-bg: #203B56;
-    --status-info-text: #38BDF8;
-    --status-syncing: #F59E0B;
-    --status-syncing-bg: #463427;
-    --text-muted: #9696AC;
-    --text-on-accent: #0D0D1A;
-    --text-primary: #E8E8F0;
-    --text-secondary: #A0A0B8;
+    /* The console's sidebar is narrower than any public-site layout needs a
+       variable for; every colour it uses comes from the shared layers above. */
+    --sidebar-width: 188px;
 }

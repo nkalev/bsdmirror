@@ -168,6 +168,28 @@ HARNESS_CHECKS = [
     "renderHealthChecksCard renders unknown when given no data",
     "renderDashboard renders the health-checks card end-to-end via its own fetch",
     "renderDashboard shows the health-checks card as unknown, not a false all-clear, when that fetch fails",
+    "renderLayout renders the sidebar mark and wordmark",
+    "renderLoginPage renders the mark",
+    "renderLayout gives every nav-item an icon span naming the right icon",
+    "renderLayout gives the logout button an icon-log-out span",
+    "renderDashboard tile icons name mirrors, check, sync, users and disk",
+    "renderSyncFailures tile icons name close and check",
+    "renderHealthChecksCard gives every row an icon wrapper with the right modifier and icon",
+    "renderDashboard activity rows carry the mapped icon for every action, including the default",
+    "Toast.show renders an icon span for success, error and info",
+    "Modal.show renders a close button with an icon-close span and aria-label",
+    "renderUsers Add User button carries an icon-plus span",
+    "every icon span rendered anywhere names a file under img/icons/",
+    "renderMirrors renders the status pill with no inner span",
+    "renderDashboard renders a Recent Sync Jobs pill with no inner span",
+    "viewSyncLogs shows the status as a pill and drops the title emoji prefix",
+    "viewMirror renders each history row status as a pill instead of an emoji",
+    "renderDashboard shows the disk meter at is-warn, at is-crit and never for an unknown percentage",
+    "renderMirrors, renderSyncFailures, renderProtectedPaths, renderUsers, renderAuditLogs and "
+    "renderSettings mark numeric and time cells with class=num",
+    "releaseTagBadges renders At risk with no emoji",
+    "admin.js no longer names status-dot anywhere",
+    "no rendered view contains an emoji or symbol glyph beyond the allowed dashes and ellipsis",
 ]
 
 
@@ -218,8 +240,8 @@ MUTATIONS = [
         "escapeHtml escapes all six metacharacters",
     ),
     (
-        # The bug class the brief called out: an escape that stops in the wrong
-        # place. Without /g only the first metacharacter is replaced.
+        # The bug class this mutation guards against: an escape that stops in
+        # the wrong place. Without /g only the first metacharacter is replaced.
         "drop_global_regex_flag",
         """return String(value).replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);""",
         """return String(value).replace(/[&<>"'`]/, (ch) => HTML_ESCAPES[ch]);""",
@@ -743,8 +765,8 @@ NEGATIVE_CONTROLS = [
     ),
     (
         "inline_event_handler",
-        '<button class="modal-close" data-action="closeModal">',
-        '<button class="modal-close" onclick="Modal.close()" data-action="closeModal">',
+        '<button class="modal-close" data-action="closeModal" aria-label="Close">',
+        '<button class="modal-close" onclick="Modal.close()" data-action="closeModal" aria-label="Close">',
         "test_no_inline_event_handlers_in_markup",
     ),
     (

@@ -1,11 +1,15 @@
 """WCAG 2.1 AA contrast for the public site and the admin panel.
 
-The public site runs the "Reflection" palette (docs/design/2026-09-25-
-reflection-redesign.md, sections 4.1-4.4, 4.7-4.8 and 9); the admin panel is
-frozen at its pre-Reflection colours by tokens.css's LEGACY ADMIN block
-(tests/test_legacy_admin_tokens.py) until its own redesign. This file checks
-both, but the two halves are largely independent: a change to the public
-palette should never need to touch ADMIN_PAIRS, and vice versa.
+Both surfaces run the "Reflection" palette (docs/design/2026-09-25-
+reflection-redesign.md, sections 4.1-4.4, 4.7-4.9): the admin console follows
+the same saved light/dark choice as the public site (section 6.2) and sets no
+colour token of its own (section 7), so every ADMIN_PAIRS entry below is
+checked against the exact same tokens the public site's LIGHT/DARK themes
+already prove compliant, in both admin states. This file checks both
+surfaces, but the two halves are largely independent day to day: a change to
+the public palette should never need to touch ADMIN_PAIRS, and vice versa --
+only a change to a token both surfaces share moves both at once, which is
+exactly what the mutation tests below are for.
 
 This file has two halves.
 
@@ -293,13 +297,22 @@ def parse_custom_properties(block):
 
 
 def build_themes(tokens_css_text):
-    """Returns (light, dark, admin), each {token_name: raw value string}.
+    """Returns (light, dark, admin_light, admin_dark), each {token_name: raw
+    value string}.
 
     Raw, not yet resolved through var() -- resolve()/resolved_hex() below walk
-    the chain at lookup time using whichever of these three dicts is asked,
-    so a token that is only overridden for one theme still resolves correctly
-    through the layers under it (tokens.css's own layering rule: dark
-    overrides light, admin overrides dark).
+    the chain at lookup time using whichever of these dicts is asked, so a
+    token that is only overridden for one theme still resolves correctly
+    through the layers under it.
+
+    admin_light and admin_dark mirror the two real states a browser actually
+    renders (spec section 6.2): [data-surface="admin"] alone -- data-theme
+    absent, i.e. light -- and [data-theme="dark"][data-surface="admin"]
+    together. Since [data-theme="dark"] does not match at all in the first
+    state, admin_light is light-plus-admin, never dark-plus-admin, unlike the
+    single always-dark `admin` this function returned before the admin
+    console followed the theme toggle (spec section 6.1's "Admin is dark-only"
+    is gone, along with the LEGACY ADMIN block).
     """
     css = _prepared_css(tokens_css_text)
     root_bodies, dark_body, admin_body = [], None, None
@@ -327,10 +340,13 @@ def build_themes(tokens_css_text):
     dark = dict(light)
     dark.update(parse_custom_properties(dark_body))
 
-    admin = dict(dark)
-    admin.update(parse_custom_properties(admin_body))
+    admin_light = dict(light)
+    admin_light.update(parse_custom_properties(admin_body))
 
-    return light, dark, admin
+    admin_dark = dict(dark)
+    admin_dark.update(parse_custom_properties(admin_body))
+
+    return light, dark, admin_light, admin_dark
 
 
 def resolve(theme, name, _seen=frozenset()):
@@ -353,17 +369,31 @@ def resolved_hex(theme, name):
 
 
 TOKENS_TEXT = TOKENS_CSS.read_text(encoding="utf-8")
-LIGHT, DARK, ADMIN = build_themes(TOKENS_TEXT)
+LIGHT, DARK, ADMIN_LIGHT, ADMIN_DARK = build_themes(TOKENS_TEXT)
 
 
-def test_light_dark_admin_actually_differ():
-    """A guard against build_themes() silently returning the same dict three
-    times, which would make every "checked in both themes" claim below
-    meaningless. --bg-card is a colour the LEGACY ADMIN block still sets as
-    a literal (tests/test_legacy_admin_tokens.py), so it also proves admin
-    is not just quietly inheriting dark's resolved value."""
-    assert resolved_hex(LIGHT, "--bg-primary") != resolved_hex(DARK, "--bg-primary")
-    assert resolved_hex(DARK, "--bg-card") != resolved_hex(ADMIN, "--bg-card")
+def test_the_admin_layer_sets_no_colour_token():
+    """Spec section 7: the admin console's own redesign folds every one of
+    its colours back into the shared light/dark layers, leaving
+    [data-surface="admin"] with nothing but its one non-colour override
+    (--sidebar-width). A colour token reintroduced there would silently
+    re-freeze whatever pair it backs at today's value, exactly the LEGACY
+    ADMIN bug this same block used to be on purpose
+    (tests/test_legacy_admin_tokens.py, deleted alongside it) -- so this
+    checks the block's own declarations directly, not merely that
+    ADMIN_LIGHT/ADMIN_DARK happen to resolve like LIGHT/DARK today."""
+    admin_tokens = parse_custom_properties(find_block(TOKENS_TEXT, '[data-surface="admin"]'))
+    colour_prefixes = (
+        "--bg-",
+        "--text-",
+        "--accent-",
+        "--border-",
+        "--status-",
+        "--stream-",
+        "--mark-",
+    )
+    offenders = sorted(name for name in admin_tokens if name.startswith(colour_prefixes))
+    assert not offenders, f'[data-surface="admin"] still sets colour token(s): {offenders}'
 
 
 # ===========================================================================
@@ -557,14 +587,17 @@ def test_footer_version_declares_no_opacity():
 # The token-level pairs spec section 9 names, resolved directly from
 # tokens.css in both themes -- independent of whether a component rule in
 # style.css happens to consume a given pair today. Two of these
-# (--status-info, --status-incomplete) have no consumer until the admin
-# console's redesign, which spec section 4.8's table gives them to (admin.css
-# reads the LEGACY ADMIN block's pinned tokens until then); --border-strong
-# reaches the public site only as two hover borders (a border-color, which no
-# selector pair above reads), and the disk meter's fills have no consumer yet
-# either (spec section 4.8, "Disk meter") -- all of them are pinned here, so
-# each is checked wherever it is consumed, including by the admin console's
-# own redesign (spec section 6.1).
+# (--status-info, --status-incomplete) have no consumer on the public site --
+# they back the admin console's info/incomplete pills instead (spec section
+# 4.8's table; see ADMIN_PAIRS' .status-badge.info/.pending/.health-incomplete
+# rows); --border-strong reaches the public site only as two hover borders (a
+# border-color, which no selector pair above reads) and backs three admin
+# control edges the same way (spec section 9; not separately selector-pinned
+# in ADMIN_PAIRS, see the note above compute_admin_checks()); the disk meter's
+# fills are consumed only by the admin console (spec section 4.8, "Disk
+# meter") -- all of them are pinned here, so each is checked wherever it is
+# actually consumed, in both public themes and, since the admin surface sets
+# no colour of its own, in both admin states for free.
 # ===========================================================================
 TOKEN_PAIRS = [
     ("--text-primary", "--bg-primary", 4.5),
@@ -586,6 +619,10 @@ TOKEN_PAIRS = [
     ("--status-healthy", "--bg-card", 3.0),
     ("--status-syncing", "--bg-card", 3.0),
     ("--status-error", "--bg-card", 3.0),
+    # admin.css's .log-pre-error (spec 6.1: "log blocks ... in mono") reads
+    # --status-error directly against --bg-secondary; no other component pair
+    # covers that background, so it gets a row of its own.
+    ("--status-error", "--bg-secondary", 4.5),
     # The disk meter: each fill against the track (--border-color), 3:1. The
     # tick at 85% (--text-primary on --bg-card, 3:1) has no row of its own:
     # the 4.5:1 text pair at the top of this list is the same two tokens at
@@ -620,76 +657,163 @@ def test_token_level_contrast(check_id, ratio, min_ratio, fg_hex, bg_hex):
 
 
 # ===========================================================================
-# The pairs the admin panel actually renders (admin.css). Admin is dark-only
-# (data-theme="dark" data-surface="admin" is static, never toggled), so
-# these are checked once, against ADMIN. Untouched by the public palette
-# switch: every one of these still passes because of the LEGACY ADMIN block.
+# The pairs the admin panel actually renders (admin.css). The admin console
+# now follows the same saved light/dark choice as the public site (spec
+# section 6.2), so every pair here is checked in both ADMIN_LIGHT and
+# ADMIN_DARK -- see compute_admin_checks(). Since the admin layer sets no
+# colour token of its own any more (spec section 7), every one of these
+# resolves through the exact same tokens the public site's LIGHT/DARK themes
+# already do; nothing here is a colour admin alone invented.
 # ===========================================================================
 # fmt: off
 ADMIN_PAIRS = [
-    (".nav-item.active", ".nav-item.active", "color", ("own",), 4.5),
-    (".user-avatar", ".user-avatar", "color", ("own",), 4.5),
-    (".user-role", ".user-role", "color", ("parent", ".user-info"), 4.5),
+    # --- Shell: sidebar, header, the theme toggle -------------------------
+    ("body", "body", "color", ("own",), 4.5),
+    (".loading-screen", ".loading-screen", "color", ("parent", "body"), 4.5),
+    (".wordmark", ".wordmark", "color", ("parent", ".sidebar"), 4.5),
     (".nav-section-title", ".nav-section-title", "color", ("parent", ".sidebar"), 4.5),
-    (".stat-card-label", ".stat-card-label", "color", ("parent", ".stat-card"), 4.5),
-    ("th", "th", "color", ("own",), 4.5),
-    (".status-badge.disabled", ".status-badge.disabled", "color", ("own",), 4.5),
-    (".status-badge.active", ".status-badge.active", "color", ("own",), 4.5),
-    (".status-badge.syncing", ".status-badge.syncing", "color", ("own",), 4.5),
-    (".status-badge.error", ".status-badge.error", "color", ("own",), 4.5),
+    (".nav-item", ".nav-item", "color", ("parent", ".sidebar"), 4.5),
+    (".nav-item:hover", ".nav-item:hover", "color", ("own",), 4.5),
+    (".nav-item.active", ".nav-item.active", "color", ("own",), 4.5),
+    (".user-name", ".user-name", "color", ("parent", ".user-info"), 4.5),
+    (".user-role", ".user-role", "color", ("parent", ".user-info"), 4.5),
+    (".user-avatar", ".user-avatar", "color", ("own",), 4.5),
+    (".header-title", ".header-title", "color", ("parent", ".header"), 4.5),
+    (".theme-toggle", ".theme-toggle", "color", ("own",), 4.5),
+    # --- Cards and KPI tiles (spec 6.1) ------------------------------------
+    (".card-title", ".card-title", "color", ("parent", ".card"), 4.5),
+    (".card-subtitle", ".card-subtitle", "color", ("parent", ".card"), 4.5),
+    (".stat-card-icon", ".stat-card-icon", "color", ("own",), 4.5),
     (".stat-card-trend.up", ".stat-card-trend.up", "color", ("own",), 4.5),
     (".stat-card-trend.down", ".stat-card-trend.down", "color", ("own",), 4.5),
-    (".form-input::placeholder", ".form-input::placeholder", "color", ("parent", ".form-input"), 4.5),
-    (".btn-primary", ".btn-primary", "color", ("own",), 4.5),
-    (".btn-danger", ".btn-danger", "color", ("own",), 4.5),
-    (".modal-close", ".modal-close", "color", ("parent", ".modal"), 4.5),
-    (".activity-time", ".activity-time", "color", ("parent", ".card"), 4.5),
-    (".login-subtitle", ".login-subtitle", "color", ("parent", ".login-card"), 4.5),
-    (".login-error", ".login-error", "color", ("own",), 4.5),
-    (".u-text-muted", ".u-text-muted", "color", ("parent", ".card"), 4.5),
-    (".log-pre-error", ".log-pre-error", "color", ("parent", ".log-pre"), 4.5),
-    # Health-checks card (dashboard): the "incomplete" state's own badge
-    # variant, and the .card-title-adjacent subheading the card's four
-    # checklists use instead of it. Same shape as the pairs above, just two
-    # selectors that did not exist before that card did.
-    (".status-badge.health-incomplete", ".status-badge.health-incomplete", "color", ("own",), 4.5),
-    (".card-subtitle", ".card-subtitle", "color", ("parent", ".card"), 4.5),
-    # Archive inventory (Protected Paths page): the informational tag variant
-    # (Newest / Latest-in-major / Pre-release) and the "At risk" warning pill
-    # -- see releaseTagBadges in admin.js. Both are their own solid fill, the
-    # same "own" shape as the other .status-badge variants above.
-    (".status-badge.info", ".status-badge.info", "color", ("own",), 4.5),
+    (".stat-card-value", ".stat-card-value", "color", ("parent", ".stat-card"), 4.5),
+    (".stat-card-label", ".stat-card-label", "color", ("parent", ".stat-card"), 4.5),
+    # --- Tables -------------------------------------------------------------
+    ("th", "th", "color", ("own",), 4.5),
+    ("td", "td", "color", ("parent", ".card"), 4.5),
+    # td's own rule sets no colour of its own on hover, so the text is still
+    # td's --text-primary; only the background changes. fg_selector reads the
+    # unconditional rule, bg_source reads the hover rule's own fill.
+    ("tr:hover td", "td", "color", ("parent", "tr:hover td"), 4.5),
+    # --- Status pills (spec 4.8): the bare/neutral rule, then every named
+    # modifier the job, mirror, protection and role pills can render. Each is
+    # its own standalone rule (never grouped), even where two modifiers share
+    # a colour -- see admin.css's status-badge section. --------------------
+    (".status-badge", ".status-badge", "color", ("own",), 4.5),
+    (".status-badge.disabled", ".status-badge.disabled", "color", ("own",), 4.5),
+    (".status-badge.cancelled", ".status-badge.cancelled", "color", ("own",), 4.5),
+    (".status-badge.active", ".status-badge.active", "color", ("own",), 4.5),
+    (".status-badge.completed", ".status-badge.completed", "color", ("own",), 4.5),
+    (".status-badge.syncing", ".status-badge.syncing", "color", ("own",), 4.5),
+    (".status-badge.running", ".status-badge.running", "color", ("own",), 4.5),
     (".status-badge.at-risk", ".status-badge.at-risk", "color", ("own",), 4.5),
+    (".status-badge.error", ".status-badge.error", "color", ("own",), 4.5),
+    (".status-badge.failed", ".status-badge.failed", "color", ("own",), 4.5),
+    (".status-badge.info", ".status-badge.info", "color", ("own",), 4.5),
+    (".status-badge.pending", ".status-badge.pending", "color", ("own",), 4.5),
+    # "incomplete": the health-checks card only (spec 4.8: kept distinct from
+    # neutral, so it is never mistaken for "Unknown").
+    (".status-badge.health-incomplete", ".status-badge.health-incomplete", "color", ("own",), 4.5),
+    # --- Recent Sync Jobs / Recent Activity, and the health-checks card ----
+    (".activity-icon", ".activity-icon", "color", ("own",), 4.5),
+    (".activity-text", ".activity-text", "color", ("parent", ".card"), 4.5),
+    (".activity-time", ".activity-time", "color", ("parent", ".card"), 4.5),
+    (".health-check-icon", ".health-check-icon", "color", ("parent", ".card"), 4.5),
+    (".health-check-icon.is-bad", ".health-check-icon.is-bad", "color", ("parent", ".card"), 4.5),
+    (".health-check-icon.is-warn", ".health-check-icon.is-warn", "color", ("parent", ".card"), 4.5),
+    (".health-check-icon.is-ok", ".health-check-icon.is-ok", "color", ("parent", ".card"), 4.5),
+    (".health-check-icon.is-skip", ".health-check-icon.is-skip", "color", ("parent", ".card"), 4.5),
+    (".health-check-text", ".health-check-text", "color", ("parent", ".card"), 4.5),
+    # --- Forms (spec 6.1: "fields never sit directly on the page ground") -
+    # .form-label sits inside either a plain .card (Settings) or a .modal
+    # (add/edit user); both share --bg-card, so either name reads the same
+    # fill.
+    (".form-label", ".form-label", "color", ("parent", ".card"), 4.5),
+    (".form-input", ".form-input", "color", ("own",), 4.5),
+    (".form-input::placeholder", ".form-input::placeholder", "color", ("parent", ".form-input"), 4.5),
+    # --- Buttons ------------------------------------------------------------
+    (".btn-primary", ".btn-primary", "color", ("own",), 4.5),
+    (".btn-secondary", ".btn-secondary", "color", ("own",), 4.5),
+    (".btn-danger", ".btn-danger", "color", ("own",), 4.5),
+    # --- Modal ----------------------------------------------------------------
+    (".modal-title", ".modal-title", "color", ("parent", ".modal"), 4.5),
+    (".modal-close", ".modal-close", "color", ("parent", ".modal"), 4.5),
+    # --- Login page -----------------------------------------------------------
+    (".login-title", ".login-title", "color", ("parent", ".login-card"), 4.5),
+    (".login-subtitle", ".login-subtitle", "color", ("parent", ".login-card"), 4.5),
+    # --- Toasts: the message text, then the type icon (spec 4.7) ----------
+    (".toast", ".toast", "color", ("own",), 4.5),
+    (".toast.success .icon", ".toast.success .icon", "color", ("parent", ".toast"), 4.5),
+    (".toast.error .icon", ".toast.error .icon", "color", ("parent", ".toast"), 4.5),
+    (".toast.info .icon", ".toast.info .icon", "color", ("parent", ".toast"), 4.5),
+    # --- Code and logs (spec 6.1: "code chips and log blocks on
+    # --bg-secondary, in mono") ---------------------------------------------
+    (".code-block", ".code-block", "color", ("own",), 4.5),
     # The location-name chips joinCodeList's <code> elements render as, once
     # scoped by the .code-chip-list wrapper (renderMirrorInventoryCard,
     # releaseRows). Its own solid background, not the ambient card/table one.
     (".code-chip-list code", ".code-chip-list code", "color", ("own",), 4.5),
+    (".log-pre", ".log-pre", "color", ("own",), 4.5),
+    (".log-pre-error", ".log-pre-error", "color", ("parent", ".log-pre"), 4.5),
+    # --- Utilities ------------------------------------------------------------
+    (".u-text-muted", ".u-text-muted", "color", ("parent", ".card"), 4.5),
+    (".u-text-error", ".u-text-error", "color", ("parent", ".card"), 4.5),
+    # --- Disk meter (spec 4.8): UI indicators, not text, so 3:1 against the
+    # track (.meter) or the tile (.stat-card), read from `background` rather
+    # than `color` -- the same shape the public site's .status-dot and
+    # .stream-line::before pairs use. The tick at 85% is proved at the
+    # stricter 4.5:1 already, by the shared --text-primary on --bg-card pair
+    # above (.stat-card-value), so it gets no --text-primary-on-border-color
+    # entry of its own -- only its own selector, at the 3:1 floor that
+    # actually applies to it. ------------------------------------------------
+    (".meter-fill", ".meter-fill", "background", ("parent", ".meter"), 3.0),
+    (".meter-fill.is-warn", ".meter-fill.is-warn", "background", ("parent", ".meter"), 3.0),
+    (".meter-fill.is-crit", ".meter-fill.is-crit", "background", ("parent", ".meter"), 3.0),
+    (".meter-tick", ".meter-tick", "background", ("parent", ".stat-card"), 3.0),
 ]
 # fmt: on
 
+# The three --border-strong edges spec 9 also calls out (.btn-secondary,
+# .form-input, .theme-toggle, all at least 3:1 against --bg-card) are
+# deliberately not selector-pinned here: .form-input and .theme-toggle
+# declare theirs through the `border: 1px solid var(--border-strong)`
+# shorthand, which is not a bare var() in the one property color_hex()
+# recognises (declared() would return the whole shorthand value, not just the
+# colour). All three already resolve through the shared --border-strong on
+# --bg-card pair TOKEN_PAIRS proves in both LIGHT and DARK below, and since
+# the admin layer sets no --border-* token of its own, that same proof holds
+# for ADMIN_LIGHT/ADMIN_DARK for free -- see compute_admin_checks()'s
+# docstring.
 
-def compute_admin_checks(admin_css_text, admin_theme):
+
+def compute_admin_checks(admin_css_text, themes):
+    """themes: {label: theme_dict} -- ADMIN_LIGHT and ADMIN_DARK, the two
+    states a browser actually renders (data-surface="admin" alone, and
+    together with data-theme="dark"). Same shape as compute_public_checks()/
+    compute_token_checks(), so a mutation that reruns one reruns all three the
+    same way."""
     results = []
-    for check_id, fg_selector, fg_prop, bg_source, min_ratio in ADMIN_PAIRS:
-        fg_block = find_block(admin_css_text, fg_selector)
-        fg_hex = color_hex(admin_theme, declared(fg_block, fg_prop))
+    for label, theme in themes.items():
+        for check_id, fg_selector, fg_prop, bg_source, min_ratio in ADMIN_PAIRS:
+            fg_block = find_block(admin_css_text, fg_selector)
+            fg_hex = color_hex(theme, declared(fg_block, fg_prop))
 
-        kind = bg_source[0]
-        if kind == "own":
-            bg_hex = color_hex(admin_theme, declared_background(fg_block))
-        elif kind == "parent":
-            bg_block = find_block(admin_css_text, bg_source[1])
-            bg_hex = color_hex(admin_theme, declared_background(bg_block))
-        else:  # pragma: no cover
-            raise AssertionError(f"unknown bg_source kind {kind!r}")
+            kind = bg_source[0]
+            if kind == "own":
+                bg_hex = color_hex(theme, declared_background(fg_block))
+            elif kind == "parent":
+                bg_block = find_block(admin_css_text, bg_source[1])
+                bg_hex = color_hex(theme, declared_background(bg_block))
+            else:  # pragma: no cover
+                raise AssertionError(f"unknown bg_source kind {kind!r}")
 
-        ratio = contrast_ratio(fg_hex, bg_hex)
-        results.append((check_id, ratio, min_ratio, fg_hex, bg_hex))
+            ratio = contrast_ratio(fg_hex, bg_hex)
+            results.append((f"{check_id} [{label}]", ratio, min_ratio, fg_hex, bg_hex))
     return results
 
 
 ADMIN_CSS_TEXT = ADMIN_CSS.read_text(encoding="utf-8")
-ADMIN_CHECKS = compute_admin_checks(ADMIN_CSS_TEXT, ADMIN)
+ADMIN_CHECKS = compute_admin_checks(ADMIN_CSS_TEXT, {"light": ADMIN_LIGHT, "dark": ADMIN_DARK})
 
 
 @pytest.mark.parametrize(
@@ -752,10 +876,11 @@ def test_text_secondary_resolves_to_each_themes_own_shade():
 def test_white_on_accent_primary_would_fail_in_dark_and_admin():
     """White text is not used on a solid --accent-primary fill anywhere any
     more (see --text-on-accent's consumers), but the number itself -- proving
-    why -- must still hold, in the new public dark theme as much as in the
-    (unchanged) admin one."""
+    why -- must still hold: in the public dark theme, and in the admin
+    console's own dark state, which resolves --accent-primary through that
+    same shared layer now that the admin surface sets no colour of its own."""
     assert contrast_ratio("#FFFFFF", resolved_hex(DARK, "--accent-primary")) < 4.5
-    assert contrast_ratio("#FFFFFF", resolved_hex(ADMIN, "--accent-primary")) < 4.5
+    assert contrast_ratio("#FFFFFF", resolved_hex(ADMIN_DARK, "--accent-primary")) < 4.5
 
 
 # ===========================================================================
@@ -792,20 +917,25 @@ TOKEN_MUTATIONS = [
         ".nav-link [dark]",
     ),
     (
-        # Targets the LEGACY ADMIN line, not the INVARIANTS var() reference:
-        # the admin block pins its own --text-on-accent, so a mutation of the
-        # shared layers never reaches ADMIN.
+        # Targets the shared DARK line, not a LEGACY ADMIN one -- that block
+        # is gone, and admin.css now reads this same token (spec section 7),
+        # so a mutation here reaches both the public token pair and every
+        # admin fill that consumes --text-on-accent.
         "text_on_accent_reverts_to_white",
-        "--text-on-accent: #0D0D1A;",
+        "--text-on-accent: var(--c-red-975);",
         "--text-on-accent: #FFFFFF;",
         None,  # asserted separately: this breaks an ADMIN_CHECKS id, checked below
     ),
     (
-        # Same shape as the mutation above: --status-error-text exists only
-        # in the admin block, so this targets that line.
+        # --status-error-text is retired (spec section 7): admin.css now
+        # reads --status-error directly for the error badge and
+        # .log-pre-error, the same shared token status_error_light_reverts_
+        # to_the_dark_shade below already mutates for LIGHT. This targets the
+        # DARK line instead, so both mutations stay distinct and each still
+        # bites a real, different rendering.
         "status_error_text_reverts_to_status_error",
-        "--status-error-text: #F87171;",
-        "--status-error-text: #EF4444;",
+        "--status-error: var(--c-red-300);",
+        "--status-error: var(--c-red-650);",
         None,  # breaks an ADMIN_CHECKS id, checked below
     ),
     (
@@ -863,11 +993,11 @@ def test_tokens_css_mutation_is_caught(name, old, new, must_fail):
         f"(found {TOKENS_TEXT.count(old)}). Update the mutation, do not delete it."
     )
     mutated_text = TOKENS_TEXT.replace(old, new)
-    light, dark, admin = build_themes(mutated_text)
+    light, dark, admin_light, admin_dark = build_themes(mutated_text)
 
     public_results = compute_public_checks(STYLE_CSS_TEXT, {"light": light, "dark": dark})
     token_results = compute_token_checks({"light": light, "dark": dark})
-    admin_results = compute_admin_checks(ADMIN_CSS_TEXT, admin)
+    admin_results = compute_admin_checks(ADMIN_CSS_TEXT, {"light": admin_light, "dark": admin_dark})
     failed_ids = {
         cid
         for cid, ratio, min_ratio, *_ in public_results + token_results + admin_results
@@ -886,24 +1016,35 @@ def test_text_on_accent_mutation_breaks_an_admin_fill():
     """The two token mutations above that pass must_fail=None still have to
     break *something* concrete -- named here instead of folded into the
     parametrised case so a failure points at a specific, checkable claim
-    rather than "some id or other went red"."""
-    mutated_text = TOKENS_TEXT.replace("--text-on-accent: #0D0D1A;", "--text-on-accent: #FFFFFF;")
-    _, _, admin = build_themes(mutated_text)
-    results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
-    assert results[".nav-item.active"] < 4.5
-    assert results[".btn-primary"] < 4.5
-    assert results[".user-avatar"] < 4.5
-    assert results[".btn-danger"] < 4.5
+    rather than "some id or other went red". Only .user-avatar and
+    .btn-primary read --text-on-accent (admin.css); .nav-item.active reads
+    --text-primary and .btn-danger reads --status-error now, so mutating this
+    one token no longer touches either of those two."""
+    mutated_text = TOKENS_TEXT.replace(
+        "--text-on-accent: var(--c-red-975);", "--text-on-accent: #FFFFFF;"
+    )
+    _, _, _, admin_dark = build_themes(mutated_text)
+    results = {
+        cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, {"dark": admin_dark})
+    }
+    assert results[".user-avatar [dark]"] < 4.5
+    assert results[".btn-primary [dark]"] < 4.5
 
 
 def test_status_error_text_mutation_breaks_the_error_badge():
+    """--status-error-text is retired; admin.css's error badge and
+    .log-pre-error now read --status-error directly (spec section 7), so this
+    mutates that shared DARK line -- see the TOKEN_MUTATIONS entry above."""
     mutated_text = TOKENS_TEXT.replace(
-        "--status-error-text: #F87171;", "--status-error-text: #EF4444;"
+        "--status-error: var(--c-red-300);", "--status-error: var(--c-red-650);"
     )
-    _, _, admin = build_themes(mutated_text)
-    results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
-    assert results[".status-badge.error"] < 4.5
-    assert results[".log-pre-error"] < 4.5
+    _, _, _, admin_dark = build_themes(mutated_text)
+    results = {
+        cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, {"dark": admin_dark})
+    }
+    assert results[".status-badge.error [dark]"] < 4.5
+    assert results[".status-badge.failed [dark]"] < 4.5
+    assert results[".log-pre-error [dark]"] < 4.5
 
 
 def test_status_healthy_mutation_breaks_the_pill_the_dot_and_both_tokens():
@@ -914,7 +1055,7 @@ def test_status_healthy_mutation_breaks_the_pill_the_dot_and_both_tokens():
     mutated_text = TOKENS_TEXT.replace(
         "--status-healthy: var(--c-green-700);", "--status-healthy: var(--c-green-400);"
     )
-    light, dark, _ = build_themes(mutated_text)
+    light, dark, _, _ = build_themes(mutated_text)
     themes = {"light": light, "dark": dark}
     results = {cid: ratio for cid, ratio, *_ in compute_public_checks(STYLE_CSS_TEXT, themes)}
     tokens = {cid: ratio for cid, ratio, *_ in compute_token_checks(themes)}
@@ -932,7 +1073,7 @@ def test_stream_line_mutation_breaks_the_selector_and_the_token_pair():
     mutated_text = TOKENS_TEXT.replace(
         "--stream-line: var(--c-graphite-650);", "--stream-line: var(--c-graphite-700);"
     )
-    light, dark, _ = build_themes(mutated_text)
+    light, dark, _, _ = build_themes(mutated_text)
     themes = {"light": light, "dark": dark}
     results = {cid: ratio for cid, ratio, *_ in compute_public_checks(STYLE_CSS_TEXT, themes)}
     tokens = {cid: ratio for cid, ratio, *_ in compute_token_checks(themes)}
@@ -948,7 +1089,7 @@ def test_status_syncing_bg_mutation_breaks_the_pill_and_its_token_pair():
     mutated_text = TOKENS_TEXT.replace(
         "--status-syncing-bg: var(--c-amber-50);", "--status-syncing-bg: var(--c-amber-925);"
     )
-    light, dark, _ = build_themes(mutated_text)
+    light, dark, _, _ = build_themes(mutated_text)
     themes = {"light": light, "dark": dark}
     results = {cid: ratio for cid, ratio, *_ in compute_public_checks(STYLE_CSS_TEXT, themes)}
     tokens = {cid: ratio for cid, ratio, *_ in compute_token_checks(themes)}
@@ -982,70 +1123,62 @@ CSS_MUTATIONS = [
     ),
     (
         # A component-file edit, not a token edit: reverts just this one
-        # rule's `color` back to --status-error, independent of
+        # rule's `color`, independent of
         # test_status_error_text_mutation_breaks_the_error_badge above (which
-        # mutates the token instead). Both must be caught; a fix at either
-        # layer could otherwise mask a regression at the other.
-        "status_badge_error_reverts_color_to_status_error",
+        # mutates a shared token instead). Both must be caught; a fix at
+        # either layer could otherwise mask a regression at the other.
+        # #6B7280 -- a plausible, unremarkable muted grey (the kind of colour
+        # left behind by copying the neutral .status-badge rule and
+        # forgetting to retint it) -- is not one of admin.css's own tokens, so
+        # planting it cannot pass for a reason unrelated to this rule; it is
+        # 3.98:1 against --status-error-bg in light and 3.55:1 in dark,
+        # confirmed by hand against tokens.css's resolved values, below 4.5:1
+        # in both.
+        "status_badge_error_reverts_color_to_a_plausible_low_contrast_grey",
         ADMIN_CSS,
         "ADMIN",
-        ".status-badge.error {\n    background: var(--status-error-bg);\n"
-        "    /* status-error-text, not status-error: see tokens.css -- status-error\n"
-        "       itself is 3.65-3.71:1 here (needs 4.5:1 as text). */\n"
-        "    color: var(--status-error-text);",
-        ".status-badge.error {\n    background: var(--status-error-bg);\n"
-        "    /* status-error-text, not status-error: see tokens.css -- status-error\n"
-        "       itself is 3.65-3.71:1 here (needs 4.5:1 as text). */\n"
-        "    color: var(--status-error);",
-        ".status-badge.error",
+        ".status-badge.error {\n    color: var(--status-error);\n"
+        "    background: var(--status-error-bg);\n}",
+        ".status-badge.error {\n    color: #6B7280;\n" "    background: var(--status-error-bg);\n}",
+        ".status-badge.error [light]",
     ),
     (
-        # Same shape as the mutation above, for the health-checks card's
-        # "incomplete" badge -- with one difference from the other three
-        # ADMIN_CSS mutations here: the "wrong" colour is a literal hex, not
-        # var(--status-info). --status-info is not one of the 28 tokens
-        # admin.css actually uses (tests/test_legacy_admin_tokens.py), so the
-        # legacy block deliberately does not pin it, and it resolves through
-        # the SHARED (public, Reflection-palette) dark theme instead, to
-        # #7CB7F2 -- 5.44:1 here, so planting var(--status-info) would pass
-        # for a reason unrelated to admin.css. #2D5A82 -- a plausible,
-        # unremarkable medium blue -- is 1.59:1 against --status-info-bg
-        # whatever the shared palette does, which is the point: this guard is
-        # about admin.css choosing the right token, not about which colour
-        # any particular token resolves to.
-        "status_badge_health_incomplete_reverts_color_to_a_plausible_low_contrast_blue",
+        # Same shape and the same grey, for the health-checks card's
+        # "incomplete" badge: 4.02:1 against --status-incomplete-bg in light,
+        # 3.42:1 in dark.
+        "status_badge_health_incomplete_reverts_color_to_a_plausible_low_contrast_grey",
         ADMIN_CSS,
         "ADMIN",
-        ".status-badge.health-incomplete {\n    background: var(--status-info-bg);\n"
-        "    color: var(--status-info-text);",
-        ".status-badge.health-incomplete {\n    background: var(--status-info-bg);\n"
-        "    color: #2D5A82;",
-        ".status-badge.health-incomplete",
+        ".status-badge.health-incomplete {\n    color: var(--status-incomplete);\n"
+        "    background: var(--status-incomplete-bg);\n}",
+        ".status-badge.health-incomplete {\n    color: #6B7280;\n"
+        "    background: var(--status-incomplete-bg);\n}",
+        ".status-badge.health-incomplete [light]",
     ),
     (
-        # Same shape and same reason as the mutation above, for the
-        # archive-inventory table's informational tag variant (Newest /
-        # Latest-in-major / Pre-release).
-        "status_badge_info_reverts_color_to_a_plausible_low_contrast_blue",
+        # Same shape, for the archive-inventory table's informational tag
+        # variant (Newest / Latest-in-major / Pre-release) and the job
+        # "pending" pill: 4.12:1 against --status-info-bg in light, 3.28:1 in
+        # dark.
+        "status_badge_info_reverts_color_to_a_plausible_low_contrast_grey",
         ADMIN_CSS,
         "ADMIN",
-        ".status-badge.info {\n    background: var(--status-info-bg);\n"
-        "    color: var(--status-info-text);",
-        ".status-badge.info {\n    background: var(--status-info-bg);\n" "    color: #2D5A82;",
-        ".status-badge.info",
+        ".status-badge.info {\n    color: var(--status-info);\n"
+        "    background: var(--status-info-bg);\n}",
+        ".status-badge.info {\n    color: #6B7280;\n" "    background: var(--status-info-bg);\n}",
+        ".status-badge.info [light]",
     ),
     (
-        # Same shape as status_badge_error_reverts_color_to_status_error, for
-        # the "At risk" pill: reverts its `color` back to --status-error,
-        # which is 3.34:1 against this pill's own background (needs 4.5:1).
-        "status_badge_at_risk_reverts_color_to_status_error",
+        # Same shape, for the "At risk" pill: 4.28:1 against
+        # --status-syncing-bg in light, 3.25:1 in dark.
+        "status_badge_at_risk_reverts_color_to_a_plausible_low_contrast_grey",
         ADMIN_CSS,
         "ADMIN",
-        ".status-badge.at-risk {\n    background: var(--status-error-bg);\n"
-        "    color: var(--status-error-text);",
-        ".status-badge.at-risk {\n    background: var(--status-error-bg);\n"
-        "    color: var(--status-error);",
-        ".status-badge.at-risk",
+        ".status-badge.at-risk {\n    color: var(--status-syncing);\n"
+        "    background: var(--status-syncing-bg);\n}",
+        ".status-badge.at-risk {\n    color: #6B7280;\n"
+        "    background: var(--status-syncing-bg);\n}",
+        ".status-badge.at-risk [light]",
     ),
 ]
 
@@ -1064,7 +1197,7 @@ def test_component_css_mutation_is_caught(name, path, which, old, new, must_fail
     if which == "STYLE":
         results = compute_public_checks(mutated, {"light": LIGHT, "dark": DARK})
     else:
-        results = compute_admin_checks(mutated, ADMIN)
+        results = compute_admin_checks(mutated, {"light": ADMIN_LIGHT, "dark": ADMIN_DARK})
 
     failed_ids = {cid for cid, ratio, min_ratio, *_ in results if ratio < min_ratio}
     assert failed_ids, f"mutation {name!r} changed a live rule and nothing failed"
@@ -1243,25 +1376,50 @@ def test_public_site_contrast_in_a_real_browser(measured, probe_id, theme_label,
     )
 
 
+# (probe_id, theme_label, min_ratio), the admin equivalent of
+# DYNAMIC_PUBLIC_CHECKS above: every probe is measured in both
+# data-surface="admin" (light) and data-theme="dark" data-surface="admin"
+# (dark) -- see contrast_harness.mjs's ADMIN_PROBES and its two-fixture-page
+# docstring. The three new entries cover a job-status pill, the disk meter's
+# warning-band fill and the theme toggle -- the components spec 6.1 and 4.8
+# added that the pre-redesign console never had.
 # fmt: off
 DYNAMIC_ADMIN_CHECKS = [
-    ".login-subtitle", ".btn-primary", ".nav-item.active", ".user-avatar",
-    ".user-role", ".nav-section-title", ".status-badge.disabled",
-    ".status-badge.active", "th", ".u-text-muted", ".status-badge.error",
-    ".status-badge.syncing", ".form-input::placeholder",
+    (".login-subtitle", "light", 4.5), (".login-subtitle", "dark", 4.5),
+    (".btn-primary", "light", 4.5), (".btn-primary", "dark", 4.5),
+    (".nav-item.active", "light", 4.5), (".nav-item.active", "dark", 4.5),
+    (".user-avatar", "light", 4.5), (".user-avatar", "dark", 4.5),
+    (".user-role", "light", 4.5), (".user-role", "dark", 4.5),
+    (".nav-section-title", "light", 4.5), (".nav-section-title", "dark", 4.5),
+    (".status-badge.disabled", "light", 4.5), (".status-badge.disabled", "dark", 4.5),
+    (".status-badge.active", "light", 4.5), (".status-badge.active", "dark", 4.5),
+    ("th", "light", 4.5), ("th", "dark", 4.5),
+    (".u-text-muted", "light", 4.5), (".u-text-muted", "dark", 4.5),
+    (".status-badge.error", "light", 4.5), (".status-badge.error", "dark", 4.5),
+    (".status-badge.syncing", "light", 4.5), (".status-badge.syncing", "dark", 4.5),
+    (".status-badge.completed", "light", 4.5), (".status-badge.completed", "dark", 4.5),
+    (".theme-toggle", "light", 4.5), (".theme-toggle", "dark", 4.5),
+    (".form-input::placeholder", "light", 4.5), (".form-input::placeholder", "dark", 4.5),
+    # A UI indicator (WCAG 2.1 SC 1.4.11), not text: 3:1, not 4.5:1.
+    (".meter-fill.is-warn", "light", 3.0), (".meter-fill.is-warn", "dark", 3.0),
 ]
 # fmt: on
 
 
 @requires_browser
-@pytest.mark.parametrize("probe_id", DYNAMIC_ADMIN_CHECKS)
-def test_admin_panel_contrast_in_a_real_browser(measured, probe_id):
-    page_bg = resolved_hex(ADMIN, "--bg-primary")
-    measurement = measured["admin"][probe_id]
+@pytest.mark.parametrize(
+    "probe_id,theme_label,min_ratio",
+    DYNAMIC_ADMIN_CHECKS,
+    ids=[f"{p} [{t}]" for p, t, _ in DYNAMIC_ADMIN_CHECKS],
+)
+def test_admin_panel_contrast_in_a_real_browser(measured, probe_id, theme_label, min_ratio):
+    page_bg = resolved_hex(ADMIN_LIGHT if theme_label == "light" else ADMIN_DARK, "--bg-primary")
+    measurement = measured["admin"][theme_label][probe_id]
     ratio = _measured_ratio(measurement, page_bg)
-    assert (
-        ratio >= 4.5
-    ), f"{probe_id}: real browser measured {measurement}, contrast {ratio:.2f}:1, needs >= 4.5:1"
+    assert ratio >= min_ratio, (
+        f"{probe_id} [{theme_label}]: real browser measured {measurement}, "
+        f"contrast {ratio:.2f}:1, needs >= {min_ratio}:1"
+    )
 
 
 @requires_browser
@@ -1270,7 +1428,11 @@ def test_dynamic_probe_list_matches_the_harness():
     PUBLIC_PROBES/ADMIN_PROBES in contrast_harness.mjs. Pins them together the
     same way test_admin_inline_styles.py pins its STYLEHEETS list against
     admin/index.html's actual <link> tags -- so a probe added to one and not
-    the other fails loudly here instead of silently measuring nothing."""
+    the other fails loudly here instead of silently measuring nothing.
+    ADMIN_PROBES is a single, theme-independent list run once per theme (the
+    harness re-measures the same probes against a fresh light and a fresh
+    dark fixture page), so its id set is compared against DYNAMIC_ADMIN_CHECKS
+    with the theme label dropped, not doubled."""
     harness_source = HARNESS.read_text(encoding="utf-8")
     public_block = re.search(r"const PUBLIC_PROBES = \[(.*?)\n\];", harness_source, re.S)
     admin_block = re.search(r"const ADMIN_PROBES = \[(.*?)\n\];", harness_source, re.S)
@@ -1280,7 +1442,7 @@ def test_dynamic_probe_list_matches_the_harness():
     harness_admin_ids = set(re.findall(r"id:\s*'([^']+)'", admin_block.group(1)))
 
     test_public_ids = {p for p, _, _ in DYNAMIC_PUBLIC_CHECKS}
-    test_admin_ids = set(DYNAMIC_ADMIN_CHECKS) | {".form-input::placeholder"}
+    test_admin_ids = {p for p, _, _ in DYNAMIC_ADMIN_CHECKS} | {".form-input::placeholder"}
 
     assert test_public_ids == harness_public_ids, (
         f"public probe ids differ: test has {test_public_ids - harness_public_ids} extra, "
@@ -1306,7 +1468,11 @@ def test_harness_detects_a_reintroduced_low_contrast_fill(tmp_path):
 
     The bug lives in admin.css (.btn-primary's `color`), not admin.js -- the
     harness links the real admin.css into its fixture page, so the docroot
-    served to it, not the admin.js path, is what needs mutating."""
+    served to it, not the admin.js path, is what needs mutating. Checked in
+    dark only: white on light's --accent-primary is 5.63:1 and genuinely
+    passes (the same asymmetry test_white_on_accent_primary_would_fail_in_
+    dark_and_admin and the public btn_primary_public_reverts_to_white_text
+    mutation both already only claim for [dark])."""
     docroot = tmp_path / "public"
     shutil.copytree(REPO_ROOT / "frontend" / "public", docroot)
     admin_css_copy = docroot / "admin" / "css" / "admin.css"
@@ -1320,7 +1486,9 @@ def test_harness_detects_a_reintroduced_low_contrast_fill(tmp_path):
     admin_css_copy.write_text(source.replace(old, new), encoding="utf-8")
 
     result = run_contrast_harness(docroot, ADMIN_JS)
-    ratio = _measured_ratio(result["admin"][".btn-primary"], resolved_hex(ADMIN, "--bg-primary"))
+    ratio = _measured_ratio(
+        result["admin"]["dark"][".btn-primary"], resolved_hex(ADMIN_DARK, "--bg-primary")
+    )
     assert ratio < 4.5, (
         f"planting color: white back into admin.css's .btn-primary did not make a "
         f"real browser render a failing ratio (measured {ratio:.2f}:1) -- the "

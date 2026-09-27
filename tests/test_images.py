@@ -20,6 +20,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PUBLIC = REPO_ROOT / "frontend" / "public"
 IMG = PUBLIC / "img"
 ICONS = IMG / "icons"
+ADMIN_JS = PUBLIC / "admin" / "js" / "admin.js"
+INDEX_HTML = PUBLIC / "index.html"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""", re.I)
 # Any <?...?> but the XML declaration. ElementTree drops these while parsing,
@@ -178,6 +180,34 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
         if element is not root:
             overridden = {"fill", "stroke", *ICON_STROKE} & set(element.attrib)
             assert not overridden, f"{name}.svg: <{element.tag}> sets {sorted(overridden)}"
+
+
+def test_every_icon_name_has_a_consumer():
+    """Every file under img/icons/ must be named by admin.js or index.html
+    (spec 4.7's set is exactly what the console and the public page consume,
+    no more). Six names -- icon-info, icon-user, icon-edit, icon-trash,
+    icon-lock, icon-unlock -- reach the page only through a lookup table
+    (getActivityIcon(), Toast.show()): admin.js still writes their class
+    string as literal text there ('icon-user', never `icon-${name}`), so a
+    plain substring search finds them without executing the file."""
+    corpus = ADMIN_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")
+    missing = sorted(name for name in ICON_NAMES if f"icon-{name}" not in corpus)
+    assert not missing, f"no admin.js/index.html reference to icon-{{{','.join(missing)}}}"
+
+
+def test_every_icon_class_named_in_admin_js_or_index_html_is_a_real_icon():
+    """The converse of the check above: a class naming a file that does not
+    exist under img/icons/ renders an empty mask silently -- a missing
+    mask-image paints nothing, not a broken-image glyph, so nobody would
+    notice without this. Excludes .icon-btn (index.html): an unrelated,
+    pre-existing button class that happens to start with "icon-" too, always
+    its own first class token (class="icon-btn ..."), never preceded by a
+    separate "icon" class the way every real mask reference (class="icon
+    icon-NAME", or a bare 'icon-NAME' lookup-table literal) is."""
+    corpus = ADMIN_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")
+    used = {m.group(1) for m in re.finditer(r'(?<!class=")icon-([a-z][a-z-]*)', corpus)}
+    unknown = sorted(used - ICON_NAMES)
+    assert not unknown, f"icon-NAME(s) with no file under img/icons/: {unknown}"
 
 
 def test_mark_glyph_is_the_regular_b_and_its_mirror_image():

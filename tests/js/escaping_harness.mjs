@@ -13,11 +13,24 @@
  * Exit status is 0 even when checks fail: pytest reads the JSON and decides.
  * A mutation run needs to report "these checks failed", not crash.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import vm from 'node:vm';
 
 const sourcePath = process.argv[2];
 const source = readFileSync(sourcePath, 'utf8');
+
+// The icons directory and the code-point allowlist below are read against the
+// real repo tree, not the (possibly mutated, possibly tmp-dir) admin.js copy
+// under test: pytest always runs this harness with cwd=REPO_ROOT (see
+// run_harness() in test_admin_js_escaping.py), so this is stable for both the
+// real file and a mutated copy alike.
+const ICONS_DIR = path.resolve(process.cwd(), 'frontend/public/img/icons');
+
+/** En dash, em dash, ellipsis -- the only punctuation above U+2000 the console's
+ *  own rendered text already uses. Everything else above that point was an
+ *  emoji or a symbol glyph standing in for an icon. */
+const ALLOWED_HIGH_CODEPOINTS = new Set([0x2013, 0x2014, 0x2026]);
 
 // ---------------------------------------------------------------------------
 // Load admin.js into a vm context
@@ -1083,6 +1096,544 @@ async function main() {
         assert(out.includes('4'), 'the rest of the dashboard did not render alongside the failed card');
         assert(out.includes('status-badge disabled'), `expected the unknown badge, got ${out}`);
         assert(!out.includes('status-badge active'), `must not show a false all-clear: ${out}`);
+        return '';
+    });
+
+    // --- The Reflection switch: mark, icons, pills, the meter (spec 4.7-4.8) -
+    //
+    // Every emoji and the modal's "x" glyph become a CSS-mask <span> (spec
+    // constraint 2: no <svg>, no <img> anywhere in this file), the mirrors
+    // table's inner status-dot span goes (the dot is now a ::before rule), and
+    // the disk tile gains a meter whose severity is a class driven by
+    // DISK_USAGE_WARNING_PERCENT / DISK_USAGE_CRITICAL_PERCENT.
+
+    await check('renderLayout renders the sidebar mark and wordmark', () => {
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        mod.state.user = null;
+
+        const marks = scanTags(out).filter((t) => t.name === 'span' && t.attrs.class === 'mark');
+        assert(marks.length === 1, `expected exactly one .mark span, found ${marks.length} in ${out}`);
+        assert(out.includes('<span class="mark-glyph"></span>'), `mark-glyph span missing: ${out}`);
+        assert(out.includes('<span class="mark-axis"></span>'), `mark-axis span missing: ${out}`);
+        assert(out.includes('<span class="wordmark">BSD Mirror</span>'), `wordmark span missing: ${out}`);
+        return '';
+    });
+
+    await check('renderLoginPage renders the mark', () => {
+        const out = String(mod.renderLoginPage());
+        const marks = scanTags(out).filter((t) => t.name === 'span' && t.attrs.class === 'mark');
+        assert(marks.length === 1, `expected exactly one .mark span, found ${marks.length} in ${out}`);
+        assert(out.includes('<span class="mark-glyph"></span>'), `mark-glyph span missing: ${out}`);
+        assert(out.includes('<span class="mark-axis"></span>'), `mark-axis span missing: ${out}`);
+        return '';
+    });
+
+    await check('renderLayout gives every nav-item an icon span naming the right icon', () => {
+        const iconFor = {
+            dashboard: 'icon-dashboard',
+            mirrors: 'icon-mirrors',
+            'sync-failures': 'icon-sync-failures',
+            'protected-paths': 'icon-protected-paths',
+            users: 'icon-users',
+            'audit-logs': 'icon-audit-logs',
+            settings: 'icon-settings'
+        };
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        mod.state.user = null;
+
+        for (const [route, iconClass] of Object.entries(iconFor)) {
+            const re = new RegExp(
+                `data-nav="${route}"[^>]*>\\s*<span class="icon ${iconClass}" aria-hidden="true"></span>`
+            );
+            assert(re.test(out), `nav-item ${route} missing its ${iconClass} icon span`);
+        }
+        return `${Object.keys(iconFor).length} nav icons`;
+    });
+
+    await check('renderLayout gives the logout button an icon-log-out span', () => {
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        mod.state.user = null;
+        assert(
+            /data-action="logout"[^>]*>\s*<span class="icon icon-log-out" aria-hidden="true"><\/span>/.test(out),
+            `logout button missing its icon-log-out span: ${out}`
+        );
+        return '';
+    });
+
+    await check('renderDashboard tile icons name mirrors, check, sync, users and disk', async () => {
+        const out = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 3, active: 2, syncing: 1, error: 0, total_size_bytes: 0 },
+            users: { total: 2 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [],
+            recent_activity: []
+        });
+        for (const iconClass of ['icon-mirrors', 'icon-check', 'icon-sync', 'icon-users', 'icon-disk']) {
+            assert(
+                out.includes(`<span class="icon ${iconClass}" aria-hidden="true">`),
+                `missing the ${iconClass} tile icon: ${out}`
+            );
+        }
+        return '';
+    });
+
+    await check('renderSyncFailures tile icons name close and check', async () => {
+        const out = await renderWith(mod.renderSyncFailures, {
+            period_days: 30,
+            totals: { failed: 2, completed: 5 },
+            by_mirror: [],
+            incidents: []
+        });
+        assert(out.includes('<span class="icon icon-close" aria-hidden="true">'), `missing icon-close: ${out}`);
+        assert(out.includes('<span class="icon icon-check" aria-hidden="true">'), `missing icon-check: ${out}`);
+        return '';
+    });
+
+    await check('renderHealthChecksCard gives every row an icon wrapper with the right modifier and icon', () => {
+        const out = String(mod.renderHealthChecksCard({
+            state: 'failing',
+            reason: 'x',
+            finished_at: '2026-09-13T07:29:49Z',
+            age_seconds: 60,
+            bad: [{ label: 'disk', detail: 'full' }],
+            skipped: [{ check: 'containers', reason: 'no docker' }],
+            warnings: ['low memory'],
+            ok: ['disk space']
+        }));
+        const rows = [
+            ['is-bad', 'icon-close'],
+            ['is-skip', 'icon-skip'],
+            ['is-warn', 'icon-warning'],
+            ['is-ok', 'icon-check']
+        ];
+        for (const [modifier, iconClass] of rows) {
+            assert(
+                out.includes(
+                    `<span class="health-check-icon ${modifier}"><span class="icon ${iconClass}" aria-hidden="true"></span></span>`
+                ),
+                `missing the health-check-icon ${modifier} / ${iconClass} wrapper: ${out}`
+            );
+        }
+        return '';
+    });
+
+    await check('renderDashboard activity rows carry the mapped icon for every action, including the default', async () => {
+        const actionsToIcons = {
+            login_success: 'icon-unlock',
+            login_failed: 'icon-lock',
+            logout: 'icon-log-out',
+            user_created: 'icon-user',
+            user_updated: 'icon-edit',
+            user_deleted: 'icon-trash',
+            mirror_updated: 'icon-mirrors',
+            sync_triggered: 'icon-sync',
+            settings_updated: 'icon-settings',
+            some_unmapped_action: 'icon-audit-logs'
+        };
+        const out = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [],
+            recent_activity: Object.keys(actionsToIcons).map((action, i) => (
+                { id: i, action, created_at: '2026-01-01T00:00:00Z' }
+            ))
+        });
+        for (const [action, iconClass] of Object.entries(actionsToIcons)) {
+            assert(
+                out.includes(`<div class="activity-icon"><span class="icon ${iconClass}" aria-hidden="true"></span></div>`),
+                `${action} did not render inside .activity-icon with ${iconClass}: ${out}`
+            );
+        }
+        return `${Object.keys(actionsToIcons).length} actions`;
+    });
+
+    await check('Toast.show renders an icon span for success, error and info', () => {
+        // A fresh makeWriteCapture() per toast, since each Toast.show() call
+        // creates its own element; each one's Map holds className then the
+        // sink write in that insertion order, so the last value is always
+        // what setHtml() wrote, whichever property that turns out to be.
+        const captures = [];
+        sandbox.document.createElement = () => {
+            const capture = makeWriteCapture();
+            captures.push(capture);
+            return capture.node;
+        };
+        sandbox.document.getElementById = (id) =>
+            (id === 'toastContainer' ? { appendChild: () => {} } : null);
+
+        mod.Toast.show('ok', 'success');
+        mod.Toast.show('bad', 'error');
+        mod.Toast.show('fyi', 'info');
+
+        assert(captures.length === 3, `expected 3 toasts created, got ${captures.length}`);
+        const written = captures.map(({ assigned }) => [...assigned.values()].at(-1));
+        assert(written[0].includes('<span class="icon icon-check" aria-hidden="true">'), `success: ${written[0]}`);
+        assert(written[1].includes('<span class="icon icon-close" aria-hidden="true">'), `error: ${written[1]}`);
+        assert(written[2].includes('<span class="icon icon-info" aria-hidden="true">'), `info: ${written[2]}`);
+        return '';
+    });
+
+    await check('Modal.show renders a close button with an icon-close span and aria-label', () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+
+        mod.Modal.show('Title', mod.html`<p>body</p>`, mod.html`<button>Close</button>`);
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        assert(
+            written.includes(
+                '<button class="modal-close" data-action="closeModal" aria-label="Close">'
+                + '<span class="icon icon-close" aria-hidden="true"></span></button>'
+            ),
+            `modal close button missing or wrong: ${written}`
+        );
+        return '';
+    });
+
+    await check('renderUsers Add User button carries an icon-plus span', async () => {
+        const out = await renderWith(mod.renderUsers, []);
+        assert(
+            out.includes('<span class="icon icon-plus" aria-hidden="true"></span> Add User'),
+            `Add User button missing its icon: ${out}`
+        );
+        return '';
+    });
+
+    await check('every icon span rendered anywhere names a file under img/icons/', async () => {
+        const files = new Set(readdirSync(ICONS_DIR).map((f) => f.replace(/\.svg$/, '')));
+        assert(files.size > 0, `no icon files found under ${ICONS_DIR}`);
+
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const layout = String(mod.renderLayout(mod.html`<p>x</p>`, 'Dashboard'));
+        mod.state.user = null;
+        const login = String(mod.renderLoginPage());
+        const dashboard = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 91 },
+            recent_syncs: [{ id: 1, mirror_id: 1, status: 'completed', files_deleted: 0, created_at: '2026-01-01T00:00:00Z' }],
+            recent_activity: [
+                { id: 1, action: 'login_success', created_at: '2026-01-01T00:00:00Z' },
+                { id: 2, action: 'login_failed', created_at: '2026-01-01T00:00:00Z' },
+                { id: 3, action: 'logout', created_at: '2026-01-01T00:00:00Z' },
+                { id: 4, action: 'user_created', created_at: '2026-01-01T00:00:00Z' },
+                { id: 5, action: 'user_updated', created_at: '2026-01-01T00:00:00Z' },
+                { id: 6, action: 'user_deleted', created_at: '2026-01-01T00:00:00Z' },
+                { id: 7, action: 'mirror_updated', created_at: '2026-01-01T00:00:00Z' },
+                { id: 8, action: 'sync_triggered', created_at: '2026-01-01T00:00:00Z' },
+                { id: 9, action: 'settings_updated', created_at: '2026-01-01T00:00:00Z' }
+            ]
+        });
+        const syncFailures = await renderWith(mod.renderSyncFailures, {
+            period_days: 30, totals: { failed: 1, completed: 1 }, by_mirror: [], incidents: []
+        });
+        const health = String(mod.renderHealthChecksCard({
+            state: 'failing', reason: 'x', finished_at: '2026-01-01T00:00:00Z', age_seconds: 5,
+            bad: [{ label: 'a', detail: 'b' }], skipped: [{ check: 'a', reason: 'b' }],
+            warnings: ['w'], ok: ['ok']
+        }));
+        const users = await renderWith(mod.renderUsers, [
+            { id: 1, username: 'a', email: 'a@x.com', role: 'admin', is_active: true, last_login: null }
+        ]);
+        const { node: toastNode, assigned: toastAssigned } = makeWriteCapture();
+        sandbox.document.createElement = () => toastNode;
+        sandbox.document.getElementById = (id) =>
+            (id === 'toastContainer' ? { appendChild: () => {} } : null);
+        mod.Toast.show('hi', 'info');
+        const toastHtml = [...toastAssigned.values()].at(-1);
+
+        const corpus = layout + login + dashboard + syncFailures + health + users + toastHtml;
+        const used = new Set([...corpus.matchAll(/\bicon-([a-z][a-z-]*)\b/g)].map((m) => m[1]));
+        assert(used.size > 0, 'no icon-NAME classes found in any rendered view');
+        const missing = [...used].filter((name) => !files.has(name));
+        assert(missing.length === 0, `rendered icon-NAME(s) with no file under img/icons/: ${missing.sort()}`);
+        return `${used.size} distinct icons found`;
+    });
+
+    await check('renderMirrors renders the status pill with no inner span', async () => {
+        const out = await renderWith(mod.renderMirrors, [
+            { id: 1, name: 'FreeBSD', url_path: '/pub/FreeBSD', status: 'active', total_size_human: '1.0 TB', last_sync_completed: '2026-01-01T00:00:00Z' }
+        ]);
+        assert(!out.includes('status-dot'), `status-dot should be gone: ${out}`);
+        assert(
+            /<span class="status-badge active">\s*active\s*<\/span>/.test(out),
+            `expected a plain pill with no inner span: ${out}`
+        );
+        return '';
+    });
+
+    await check('renderDashboard renders a Recent Sync Jobs pill with no inner span', async () => {
+        const out = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 100, used_bytes: 40, free_bytes: 60, percent_used: 40 },
+            recent_syncs: [{ id: 1, mirror_id: 7, status: 'completed', files_deleted: 0, created_at: '2026-01-01T00:00:00Z' }],
+            recent_activity: []
+        });
+        assert(
+            /<span class="status-badge completed">\s*completed\s*<\/span>/.test(out),
+            `expected a plain job-status pill: ${out}`
+        );
+        return '';
+    });
+
+    await check('viewSyncLogs shows the status as a pill and drops the title emoji prefix', async () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+        mod.api.get = async () => ({
+            id: 42, status: 'failed', triggered_by: 'scheduler',
+            started_at: '2026-01-01T00:00:00Z', completed_at: '2026-01-01T00:05:00Z',
+            files_transferred: 3, bytes_transferred: 1024, files_deleted: 0,
+            error_message: 'boom', rsync_output: 'log output'
+        });
+
+        await mod.actions.viewSyncLogs(42);
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        const titles = scanTags(written).filter((t) => t.name === 'h3' && t.attrs.id === 'modalTitle');
+        assert(titles.length === 1, `expected one title, found ${titles.length} in ${written}`);
+        assert(written.includes('>Sync Job #42<'), `title should read "Sync Job #42" with no prefix: ${written}`);
+        assert(
+            /<span class="status-badge failed">\s*failed\s*<\/span>/.test(written),
+            `expected a plain status pill in the facts grid: ${written}`
+        );
+        return '';
+    });
+
+    await check('viewMirror renders each history row status as a pill instead of an emoji', async () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+        mod.api.get = async (endpoint) => {
+            if (endpoint.includes('/sync-history')) {
+                return [
+                    { id: 1, status: 'completed', bytes_transferred: 100, files_deleted: 0, triggered_by: 'admin', completed_at: '2026-01-01T00:00:00Z' },
+                    { id: 2, status: 'running', bytes_transferred: 0, files_deleted: 0, triggered_by: null, started_at: '2026-01-01T00:00:00Z' }
+                ];
+            }
+            return { id: 9, name: 'FreeBSD', upstream_url: 'rsync://x/pub', local_path: '/data/x', total_size_human: '1.0 GB' };
+        };
+
+        await mod.actions.viewMirror(9);
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        assert(
+            /<span class="status-badge completed">\s*completed\s*<\/span>/.test(written),
+            `expected a plain pill for the completed row: ${written}`
+        );
+        assert(
+            /<span class="status-badge running">\s*running\s*<\/span>/.test(written),
+            `expected a plain pill for the running row: ${written}`
+        );
+        const offenders = [...written].filter(
+            (ch) => ch.codePointAt(0) > 0x2000 && !ALLOWED_HIGH_CODEPOINTS.has(ch.codePointAt(0))
+        );
+        assert(offenders.length === 0, `emoji glyph(s) left in the history rows: ${JSON.stringify([...new Set(offenders)])}`);
+        return '';
+    });
+
+    await check('renderDashboard shows the disk meter at is-warn, at is-crit and never for an unknown percentage', async () => {
+        const payloadAt = (percentUsed) => ({
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 1000, used_bytes: 910, free_bytes: 90, percent_used: percentUsed },
+            recent_syncs: [],
+            recent_activity: []
+        });
+
+        const warn = await renderWith(mod.renderDashboard, payloadAt(91));
+        assert(
+            warn.includes('<div class="meter-fill is-warn" data-percent="91"></div>'),
+            `expected the 91% warn band: ${warn}`
+        );
+        assert(!warn.includes('is-crit'), `did not expect is-crit at 91%: ${warn}`);
+
+        const crit = await renderWith(mod.renderDashboard, payloadAt(96));
+        assert(
+            crit.includes('<div class="meter-fill is-crit" data-percent="96"></div>'),
+            `expected the 96% crit band: ${crit}`
+        );
+        assert(!crit.includes('meter-fill is-warn'), `is-crit must replace is-warn, not add to it: ${crit}`);
+
+        const unknownPayload = payloadAt(40);
+        unknownPayload.storage.percent_used = null;
+        const unknown = await renderWith(mod.renderDashboard, unknownPayload);
+        assert(!unknown.includes('class="meter"'), `no meter should render when percent_used is null: ${unknown}`);
+        return '';
+    });
+
+    await check(
+        'renderMirrors, renderSyncFailures, renderProtectedPaths, renderUsers, renderAuditLogs and '
+        + 'renderSettings mark numeric and time cells with class=num',
+        async () => {
+            const mirrors = await renderWith(mod.renderMirrors, [
+                { id: 1, name: 'FreeBSD', url_path: '/pub/FreeBSD', status: 'active', total_size_human: '1.0 TB', last_sync_completed: null }
+            ]);
+            assert(mirrors.includes('<th class="num">Size</th>'), `mirrors: Size header not numeric: ${mirrors}`);
+            assert(mirrors.includes('<td class="num">1.0 TB</td>'), `mirrors: Size cell not numeric: ${mirrors}`);
+            assert(mirrors.includes('<th class="num">Last Sync</th>'), `mirrors: Last Sync header not numeric: ${mirrors}`);
+            assert(mirrors.includes('<td class="num">Never</td>'), `mirrors: Last Sync cell not numeric: ${mirrors}`);
+
+            const failures = await renderWith(mod.renderSyncFailures, {
+                period_days: 30,
+                totals: { failed: 1, completed: 1 },
+                by_mirror: [{ mirror_name: 'FreeBSD', failed: 3, completed: 7, failure_rate_percent: 30 }],
+                incidents: [{ mirror_name: 'FreeBSD', error_message: 'boom', occurrences: 5, first_seen: null, last_seen: null, latest_job_id: 1 }]
+            });
+            for (const header of ['Failed', 'Completed', 'Failure Rate', 'Occurrences', 'First Seen', 'Last Seen']) {
+                assert(failures.includes(`<th class="num">${header}</th>`), `${header} header not numeric: ${failures}`);
+            }
+            assert(/<td class="num[^"]*">3<\/td>/.test(failures), `Failed cell not numeric: ${failures}`);
+            assert(failures.includes('<td class="num">7</td>'), `Completed cell not numeric: ${failures}`);
+            assert(failures.includes('<td class="num">30%</td>'), `Failure Rate cell not numeric: ${failures}`);
+            assert(failures.includes('<td class="num">5</td>'), `Occurrences cell not numeric: ${failures}`);
+            const incidentDashCells = (failures.match(/<td class="num">--<\/td>/g) || []).length;
+            assert(
+                incidentDashCells === 2,
+                `First Seen and Last Seen cells not both numeric: ${failures}`
+            );
+
+            const inventoryPayload = {
+                generated_at: '2026-01-01T00:00:00Z',
+                mirrors: [{
+                    mirror_type: 'freebsd', mirror_names: ['FreeBSD'], root: '/x', available: true, error: null,
+                    truncated: false, protected_not_on_disk: [],
+                    releases: [{
+                        version: '14.3', line: '14.3', major: '14', kind: 'release', protection: 'full',
+                        unprotected_locations: [], locations: ['a', 'b'], location_count: 2,
+                        newest: true, latest_in_major: true, current: true, at_risk: false, modified: null
+                    }]
+                }]
+            };
+            mod.api.get = async (endpoint) =>
+                (endpoint === '/admin/archive-inventory' ? inventoryPayload : { groups: [] });
+            const protectedPaths = String(await mod.renderProtectedPaths());
+            assert(
+                protectedPaths.includes('<th class="num">Locations</th>'),
+                `archive inventory: Locations header not numeric: ${protectedPaths}`
+            );
+            assert(
+                protectedPaths.includes('<td class="num">2</td>'),
+                `archive inventory: Locations cell not numeric: ${protectedPaths}`
+            );
+            assert(
+                protectedPaths.includes('<th class="num">Last Changed</th>'),
+                `archive inventory: Last Changed header not numeric: ${protectedPaths}`
+            );
+            assert(
+                protectedPaths.includes('<td class="num">--</td>'),
+                `archive inventory: Last Changed cell not numeric: ${protectedPaths}`
+            );
+
+            const users = await renderWith(mod.renderUsers, [
+                { id: 1, username: 'a', email: 'a@x.com', role: 'admin', is_active: true, last_login: null }
+            ]);
+            assert(users.includes('<th class="num">Last Login</th>'), `users: Last Login header not numeric: ${users}`);
+            assert(users.includes('<td class="num">Never</td>'), `users: Last Login cell not numeric: ${users}`);
+
+            const auditLogs = await renderWith(mod.renderAuditLogs, [{
+                id: 1, created_at: null, username: 'a', action: 'login_success',
+                resource_type: 'user', resource_id: null, ip_address: '127.0.0.1'
+            }]);
+            assert(auditLogs.includes('<th class="num">Time</th>'), `audit logs: Time header not numeric: ${auditLogs}`);
+            assert(auditLogs.includes('<td class="num">--</td>'), `audit logs: Time cell not numeric: ${auditLogs}`);
+
+            const settings = await renderWith(mod.renderSettings, [
+                { key: 'sync_schedule', value: '0 4 * * *', description: 'when', updated_at: null }
+            ]);
+            assert(settings.includes('<th class="num">Last Updated</th>'), `settings: Last Updated header not numeric: ${settings}`);
+            assert(settings.includes('<td class="num">--</td>'), `settings: Last Updated cell not numeric: ${settings}`);
+            return '';
+        }
+    );
+
+    await check('releaseTagBadges renders At risk with no emoji', async () => {
+        const inventoryPayload = {
+            generated_at: '2026-01-01T00:00:00Z',
+            mirrors: [{
+                mirror_type: 'openbsd', mirror_names: ['OpenBSD'], root: '/x', available: true, error: null,
+                truncated: false, protected_not_on_disk: [],
+                releases: [{
+                    version: '7.5', line: '7.5', major: '7', kind: 'release', protection: 'none',
+                    unprotected_locations: [], locations: ['a'], location_count: 1,
+                    newest: false, latest_in_major: false, current: false, at_risk: true, modified: null
+                }]
+            }]
+        };
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/archive-inventory' ? inventoryPayload : { groups: [] });
+        const out = String(await mod.renderProtectedPaths());
+        assert(out.includes('<span class="status-badge at-risk">At risk</span>'), `expected the plain At risk pill: ${out}`);
+        assert(!out.includes('⚠'), `the warning emoji must be gone: ${out}`);
+        return '';
+    });
+
+    await check('admin.js no longer names status-dot anywhere', () => {
+        assert(!source.includes('status-dot'), 'status-dot should be fully removed; the dot is now a ::before rule');
+        return '';
+    });
+
+    await check('no rendered view contains an emoji or symbol glyph beyond the allowed dashes and ellipsis', async () => {
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const layout = String(mod.renderLayout(mod.html`<p>x</p>`, 'Dashboard'));
+        mod.state.user = null;
+        const login = String(mod.renderLoginPage());
+        const dashboard = await renderWith(mod.renderDashboard, {
+            mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+            users: { total: 1 },
+            storage: { path: '/data/mirrors', total_bytes: 1000, used_bytes: 910, free_bytes: 90, percent_used: 91 },
+            recent_syncs: [{ id: 1, mirror_id: 1, status: 'completed', files_deleted: 1500, created_at: '2026-01-01T00:00:00Z' }],
+            recent_activity: [{ id: 1, action: 'login_success', created_at: '2026-01-01T00:00:00Z' }]
+        });
+        const mirrors = await renderWith(mod.renderMirrors, [
+            { id: 1, name: 'FreeBSD', url_path: '/pub/FreeBSD', status: 'active', total_size_human: '1.0 TB', last_sync_completed: null }
+        ]);
+        const syncFailures = await renderWith(mod.renderSyncFailures, {
+            period_days: 30, totals: { failed: 1, completed: 1 }, by_mirror: [], incidents: []
+        });
+        const users = await renderWith(mod.renderUsers, [
+            { id: 1, username: 'a', email: 'a@x.com', role: 'admin', is_active: true, last_login: null }
+        ]);
+        const auditLogs = await renderWith(mod.renderAuditLogs, [
+            { created_at: '2026-01-01T00:00:00Z', username: 'a', action: 'login_success', resource_type: 'user', resource_id: 1, ip_address: '127.0.0.1' }
+        ]);
+        const settings = await renderWith(mod.renderSettings, [
+            { key: 'sync_schedule', value: '0 4 * * *', description: 'when', updated_at: null }
+        ]);
+        const health = String(mod.renderHealthChecksCard({
+            state: 'failing', reason: 'x', finished_at: '2026-01-01T00:00:00Z', age_seconds: 5,
+            bad: [{ label: 'a', detail: 'b' }], skipped: [{ check: 'a', reason: 'b' }],
+            warnings: ['w'], ok: ['ok']
+        }));
+        const filesDeleted = String(mod.filesDeletedBadge(mod.LARGE_DELETION_THRESHOLD));
+
+        const corpus = [layout, login, dashboard, mirrors, syncFailures, users, auditLogs, settings, health, filesDeleted].join('');
+        const offenders = [...corpus].filter(
+            (ch) => ch.codePointAt(0) > 0x2000 && !ALLOWED_HIGH_CODEPOINTS.has(ch.codePointAt(0))
+        );
+        assert(
+            offenders.length === 0,
+            `emoji or symbol glyph(s) found: ${JSON.stringify([...new Set(offenders)])}`
+        );
+        assert(!corpus.includes('×'), 'the modal-close "×" glyph must be gone');
         return '';
     });
 
