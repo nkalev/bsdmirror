@@ -6,8 +6,8 @@ every element at once, so this pins that rule rather than each control. Its
 colour is --accent-primary, whose contrast against the surface and the ground
 tests/test_contrast.py's token pairs pin in both themes.
 
-Covers style.css. error.css joins STYLESHEETS once the error pages carry a
-focus rule of their own (spec section 5.3).
+Covers style.css and error.css. The error pages load error.css without
+style.css (spec section 5.3), so it carries a ring of its own.
 """
 import pathlib
 import re
@@ -16,7 +16,8 @@ import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STYLE_CSS = REPO_ROOT / "frontend" / "public" / "css" / "style.css"
-STYLESHEETS = [STYLE_CSS]
+ERROR_CSS = REPO_ROOT / "frontend" / "public" / "css" / "error.css"
+STYLESHEETS = [STYLE_CSS, ERROR_CSS]
 
 
 def top_level_rules(css_text):
