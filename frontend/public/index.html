@@ -15,255 +15,256 @@
     <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 </head>
 <body>
-    <div class="background-gradient"></div>
+    <!-- The b|d mark (docs/design/2026-09-25-reflection-redesign.md, section
+         4.5): one definition, reused by every <svg class="mark"><use
+         href="#mark"></use></svg> below. Kept in the render tree (clipped,
+         not display:none) so <use> can still resolve it. -->
+    <svg class="visually-hidden" aria-hidden="true" focusable="false">
+        <defs>
+            <symbol id="mark" viewBox="0 0 64 64">
+                <g class="mark-glyph">
+                    <rect x="5" y="6" width="7" height="52"/>
+                    <path fill-rule="evenodd" d="M5 46a12 12 0 1 0 24 0a12 12 0 1 0-24 0ZM11 46a6 6 0 1 0 12 0a6 6 0 1 0-12 0Z"/>
+                    <g transform="translate(64 0) scale(-1 1)">
+                        <rect x="5" y="6" width="7" height="52"/>
+                        <path fill-rule="evenodd" d="M5 46a12 12 0 1 0 24 0a12 12 0 1 0-24 0ZM11 46a6 6 0 1 0 12 0a6 6 0 1 0-12 0Z"/>
+                    </g>
+                </g>
+                <rect class="mark-axis" x="30.7" y="3" width="2.6" height="58" rx="1.3"/>
+            </symbol>
+            <linearGradient id="hero-mark-gradient" gradientUnits="userSpaceOnUse" x1="0" y1="6" x2="0" y2="58">
+                <stop class="mark-gradient-from" offset="0"/>
+                <stop class="mark-gradient-to" offset="1"/>
+            </linearGradient>
+        </defs>
+    </svg>
 
     <header class="header">
-        <div class="container">
-            <div class="header-content">
-                <div class="logo">
-                    <span class="logo-icon">
-                        <svg viewBox="0 0 100 100" width="32" height="32">
-                            <defs><linearGradient id="logo-grad" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" stop-color="#E85D04"/><stop offset="100%" stop-color="#D62828"/></linearGradient></defs>
-                            <circle cx="50" cy="50" r="45" fill="url(#logo-grad)"/>
-                            <path d="M30 38 L25 20 L35 30 Z" fill="white" opacity="0.95"/>
-                            <path d="M70 38 L75 20 L65 30 Z" fill="white" opacity="0.95"/>
-                            <circle cx="50" cy="48" r="22" fill="white" opacity="0.95"/>
-                            <circle cx="42" cy="44" r="4" fill="#D62828"/>
-                            <circle cx="58" cy="44" r="4" fill="#D62828"/>
-                            <path d="M38 54 Q50 64 62 54" stroke="#D62828" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-                        </svg>
-                    </span>
-                    <span class="logo-text">BSD Mirror</span>
-                </div>
-                <nav class="nav">
-                    <a href="#mirrors" class="nav-link">Mirrors</a>
-                    <a href="#status" class="nav-link">Status</a>
-                    <a href="#about" class="nav-link">About</a>
-                    <a href="/admin" class="nav-link nav-admin">Admin</a>
-                </nav>
-                <button class="theme-toggle" id="themeToggle" aria-label="Toggle theme">
-                    <span class="theme-icon">&#9790;</span>
+        <div class="container header-inner">
+            <div class="brand">
+                <svg class="mark" viewBox="0 0 64 64" aria-hidden="true" focusable="false"><use href="#mark"></use></svg>
+                <span class="wordmark">BSD Mirror</span>
+            </div>
+            <nav class="nav" aria-label="Site">
+                <a href="#mirrors" class="nav-link">Mirrors</a>
+                <a href="#status" class="nav-link">Status</a>
+                <a href="#access" class="nav-link">Access</a>
+                <a href="#about" class="nav-link">About</a>
+            </nav>
+            <div class="nav-actions">
+                <button class="icon-btn theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme">
+                    <span class="icon theme-icon" data-icon="moon" aria-hidden="true"></span>
                 </button>
+                <a href="/admin" class="nav-admin">Admin</a>
             </div>
         </div>
     </header>
 
     <main>
-        <!-- Hero Section -->
+        <!-- Hero -->
         <section class="hero">
+            <div class="container hero-inner">
+                <div class="hero-copy">
+                    <p class="hero-eyebrow">FreeBSD &middot; NetBSD &middot; OpenBSD</p>
+                    <h1 class="hero-title">Every BSD, mirrored.</h1>
+                    <p class="hero-lede">High-speed access to releases, packages and documentation, synced from the official upstream mirrors.</p>
+                    <div class="hero-stats">
+                        <div class="stat">
+                            <span class="stat-value" id="statSize">&mdash;</span>
+                            <span class="stat-label">mirrored</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="statFiles">&mdash;</span>
+                            <span class="stat-label">files</span>
+                        </div>
+                        <div class="stat">
+                            <span class="stat-value" id="statLastSync">&mdash;</span>
+                            <span class="stat-label">last sync</span>
+                        </div>
+                    </div>
+                    <div class="hero-ctas">
+                        <a href="#mirrors" class="btn btn-primary">Browse mirrors<span class="icon icon-arrow-right" aria-hidden="true"></span></a>
+                        <button class="btn btn-secondary" type="button" data-copy="rsync-root"><span class="icon icon-copy" aria-hidden="true"></span>Copy rsync URL</button>
+                    </div>
+                </div>
+                <div class="hero-art" aria-hidden="true">
+                    <svg class="mark hero-mark" viewBox="0 0 64 64" focusable="false"><use href="#mark"></use></svg>
+                    <div class="hero-floor"></div>
+                    <div class="hero-reflect">
+                        <svg class="mark hero-mark" viewBox="0 0 64 64" focusable="false"><use href="#mark"></use></svg>
+                    </div>
+                    <div class="hero-sheen"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Sync streams: one row per mirror, upstream to us. -->
+        <section class="streams" aria-label="Sync streams">
             <div class="container">
-                <h1 class="hero-title">
-                    <span class="gradient-text">BSD Mirror</span>
-                </h1>
-                <p class="hero-subtitle">
-                    High-speed mirror for FreeBSD, NetBSD, and OpenBSD distributions.
-                    Serving the BSD community with reliable access to packages, releases, and documentation.
-                </p>
-                <div class="hero-stats" id="heroStats">
-                    <div class="stat-card loading">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
-                                <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
-                                <line x1="12" y1="22.08" x2="12" y2="12"/>
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="statMirrors">3</div>
-                        <div class="stat-label">BSD Distributions</div>
+                <div class="streams-inner">
+                    <div class="stream" id="freebsd-stream" data-state="unknown">
+                        <span class="stream-name">FreeBSD</span>
+                        <span class="stream-label">Upstream</span>
+                        <span class="stream-line" aria-hidden="true"></span>
+                        <span class="stream-host mono" data-hostname=""></span>
+                        <span class="pill" data-state="unknown">
+                            <span class="pill-dot" aria-hidden="true"></span>
+                            <span class="status-text">Checking&hellip;</span>
+                        </span>
                     </div>
-                    <div class="stat-card loading">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <ellipse cx="12" cy="5" rx="9" ry="3"/>
-                                <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
-                                <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="statSize">Loading...</div>
-                        <div class="stat-label">Total Size</div>
+                    <div class="stream" id="netbsd-stream" data-state="unknown">
+                        <span class="stream-name">NetBSD</span>
+                        <span class="stream-label">Upstream</span>
+                        <span class="stream-line" aria-hidden="true"></span>
+                        <span class="stream-host mono" data-hostname=""></span>
+                        <span class="pill" data-state="unknown">
+                            <span class="pill-dot" aria-hidden="true"></span>
+                            <span class="status-text">Checking&hellip;</span>
+                        </span>
                     </div>
-                    <div class="stat-card loading">
-                        <div class="stat-icon">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="23 4 23 10 17 10"/>
-                                <polyline points="1 20 1 14 7 14"/>
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                            </svg>
-                        </div>
-                        <div class="stat-value" id="statLastSync">Loading...</div>
-                        <div class="stat-label">Last Updated</div>
+                    <div class="stream" id="openbsd-stream" data-state="unknown">
+                        <span class="stream-name">OpenBSD</span>
+                        <span class="stream-label">Upstream</span>
+                        <span class="stream-line" aria-hidden="true"></span>
+                        <span class="stream-host mono" data-hostname=""></span>
+                        <span class="pill" data-state="unknown">
+                            <span class="pill-dot" aria-hidden="true"></span>
+                            <span class="status-text">Checking&hellip;</span>
+                        </span>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- Mirrors Section -->
+        <!-- Mirrors -->
         <section class="mirrors" id="mirrors">
             <div class="container">
                 <h2 class="section-title">Available Mirrors</h2>
                 <p class="section-subtitle">Browse and sync from our high-speed BSD distribution mirrors</p>
-                <div class="mirrors-grid">
+                <div class="mirror-cards">
                     <!-- FreeBSD -->
-                    <div class="mirror-card" data-mirror="freebsd">
-                        <div class="mirror-header">
-                            <img src="/img/freebsd-logo.svg" alt="FreeBSD" class="mirror-logo">
-                            <div class="mirror-info">
-                                <h3 class="mirror-name">FreeBSD</h3>
-                                <span class="mirror-status" id="freebsd-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">Loading...</span>
-                                </span>
-                            </div>
+                    <article class="mirror-card" data-mirror="freebsd">
+                        <div class="mirror-card-header">
+                            <span class="mirror-logo-tile"><img src="/img/freebsd-logo.svg" alt="FreeBSD" class="mirror-logo"></span>
+                            <h3 class="mirror-name">FreeBSD</h3>
+                            <span class="pill" id="freebsd-status" data-state="unknown">
+                                <span class="pill-dot" aria-hidden="true"></span>
+                                <span class="status-text">Checking&hellip;</span>
+                            </span>
                         </div>
-                        <p class="mirror-description">
-                            The FreeBSD operating system - a powerful, flexible Unix-like OS for servers, desktops, and embedded platforms.
-                        </p>
-                        <div class="mirror-details">
-                            <div class="detail">
-                                <span class="detail-label">Size:</span>
-                                <span class="detail-value" id="freebsd-size">--</span>
+                        <p class="mirror-description">The FreeBSD operating system - a powerful, flexible Unix-like OS for servers, desktops, and embedded platforms.</p>
+                        <dl class="mirror-details">
+                            <div>
+                                <dt>Size:</dt>
+                                <dd class="mono" id="freebsd-size">--</dd>
                             </div>
-                            <div class="detail">
-                                <span class="detail-label">Last Sync:</span>
-                                <span class="detail-value" id="freebsd-sync">--</span>
+                            <div>
+                                <dt>Last Sync:</dt>
+                                <dd class="mono" id="freebsd-sync">--</dd>
                             </div>
-                        </div>
+                        </dl>
                         <div class="mirror-actions">
-                            <a href="/FreeBSD/" class="btn btn-primary">
-                                <span>Browse Files</span>
-                                <span class="btn-arrow">&rarr;</span>
-                            </a>
-                            <button class="btn btn-secondary" data-copy-rsync="FreeBSD">
-                                <span>Copy rsync URL</span>
-                            </button>
+                            <a href="/FreeBSD/" class="btn btn-primary">Browse files<span class="icon icon-arrow-right" aria-hidden="true"></span></a>
+                            <button class="btn btn-secondary" data-copy-rsync="FreeBSD"><span class="icon icon-copy" aria-hidden="true"></span>rsync URL</button>
                         </div>
-                    </div>
+                    </article>
 
                     <!-- NetBSD -->
-                    <div class="mirror-card" data-mirror="netbsd">
-                        <div class="mirror-header">
-                            <img src="/img/netbsd-logo.svg" alt="NetBSD" class="mirror-logo">
-                            <div class="mirror-info">
-                                <h3 class="mirror-name">NetBSD</h3>
-                                <span class="mirror-status" id="netbsd-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">Loading...</span>
-                                </span>
-                            </div>
+                    <article class="mirror-card" data-mirror="netbsd">
+                        <div class="mirror-card-header">
+                            <span class="mirror-logo-tile"><img src="/img/netbsd-logo.svg" alt="NetBSD" class="mirror-logo"></span>
+                            <h3 class="mirror-name">NetBSD</h3>
+                            <span class="pill" id="netbsd-status" data-state="unknown">
+                                <span class="pill-dot" aria-hidden="true"></span>
+                                <span class="status-text">Checking&hellip;</span>
+                            </span>
                         </div>
-                        <p class="mirror-description">
-                            NetBSD - "Of course it runs NetBSD". A highly portable, clean, and well-documented operating system.
-                        </p>
-                        <div class="mirror-details">
-                            <div class="detail">
-                                <span class="detail-label">Size:</span>
-                                <span class="detail-value" id="netbsd-size">--</span>
+                        <p class="mirror-description">NetBSD - "Of course it runs NetBSD". A highly portable, clean, and well-documented operating system.</p>
+                        <dl class="mirror-details">
+                            <div>
+                                <dt>Size:</dt>
+                                <dd class="mono" id="netbsd-size">--</dd>
                             </div>
-                            <div class="detail">
-                                <span class="detail-label">Last Sync:</span>
-                                <span class="detail-value" id="netbsd-sync">--</span>
+                            <div>
+                                <dt>Last Sync:</dt>
+                                <dd class="mono" id="netbsd-sync">--</dd>
                             </div>
-                        </div>
+                        </dl>
                         <div class="mirror-actions">
-                            <a href="/NetBSD/" class="btn btn-primary">
-                                <span>Browse Files</span>
-                                <span class="btn-arrow">&rarr;</span>
-                            </a>
-                            <button class="btn btn-secondary" data-copy-rsync="NetBSD">
-                                <span>Copy rsync URL</span>
-                            </button>
+                            <a href="/NetBSD/" class="btn btn-primary">Browse files<span class="icon icon-arrow-right" aria-hidden="true"></span></a>
+                            <button class="btn btn-secondary" data-copy-rsync="NetBSD"><span class="icon icon-copy" aria-hidden="true"></span>rsync URL</button>
                         </div>
-                    </div>
+                    </article>
 
                     <!-- OpenBSD -->
-                    <div class="mirror-card" data-mirror="openbsd">
-                        <div class="mirror-header">
-                            <img src="/img/openbsd-logo.svg" alt="OpenBSD" class="mirror-logo">
-                            <div class="mirror-info">
-                                <h3 class="mirror-name">OpenBSD</h3>
-                                <span class="mirror-status" id="openbsd-status">
-                                    <span class="status-dot"></span>
-                                    <span class="status-text">Loading...</span>
-                                </span>
-                            </div>
+                    <article class="mirror-card" data-mirror="openbsd">
+                        <div class="mirror-card-header">
+                            <span class="mirror-logo-tile"><img src="/img/openbsd-logo.svg" alt="OpenBSD" class="mirror-logo"></span>
+                            <h3 class="mirror-name">OpenBSD</h3>
+                            <span class="pill" id="openbsd-status" data-state="unknown">
+                                <span class="pill-dot" aria-hidden="true"></span>
+                                <span class="status-text">Checking&hellip;</span>
+                            </span>
                         </div>
-                        <p class="mirror-description">
-                            OpenBSD - Proactively secure. Free. Functional. The most security-focused BSD distribution.
-                        </p>
-                        <div class="mirror-details">
-                            <div class="detail">
-                                <span class="detail-label">Size:</span>
-                                <span class="detail-value" id="openbsd-size">--</span>
+                        <p class="mirror-description">OpenBSD - Proactively secure. Free. Functional. The most security-focused BSD distribution.</p>
+                        <dl class="mirror-details">
+                            <div>
+                                <dt>Size:</dt>
+                                <dd class="mono" id="openbsd-size">--</dd>
                             </div>
-                            <div class="detail">
-                                <span class="detail-label">Last Sync:</span>
-                                <span class="detail-value" id="openbsd-sync">--</span>
+                            <div>
+                                <dt>Last Sync:</dt>
+                                <dd class="mono" id="openbsd-sync">--</dd>
                             </div>
-                        </div>
+                        </dl>
                         <div class="mirror-actions">
-                            <a href="/OpenBSD/" class="btn btn-primary">
-                                <span>Browse Files</span>
-                                <span class="btn-arrow">&rarr;</span>
-                            </a>
-                            <button class="btn btn-secondary" data-copy-rsync="OpenBSD">
-                                <span>Copy rsync URL</span>
-                            </button>
+                            <a href="/OpenBSD/" class="btn btn-primary">Browse files<span class="icon icon-arrow-right" aria-hidden="true"></span></a>
+                            <button class="btn btn-secondary" data-copy-rsync="OpenBSD"><span class="icon icon-copy" aria-hidden="true"></span>rsync URL</button>
                         </div>
-                    </div>
+                    </article>
                 </div>
             </div>
         </section>
 
-        <!-- Status Section -->
+        <!-- Status -->
         <section class="status" id="status">
             <div class="container">
                 <h2 class="section-title">Mirror Status</h2>
                 <p class="section-subtitle">Real-time synchronization and availability overview</p>
-                <div class="status-overview">
-                    <div class="status-card" id="overallStatus">
-                        <div class="status-indicator healthy">
-                            <span class="pulse"></span>
-                        </div>
-                        <div class="status-info">
-                            <h3>All Systems Operational</h3>
-                            <p>All mirrors are synchronized and available.</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="access-methods">
-                    <h3>Access Methods</h3>
-                    <div class="method-grid">
-                        <div class="method-card">
-                            <div class="method-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <circle cx="12" cy="12" r="10"/>
-                                    <line x1="2" y1="12" x2="22" y2="12"/>
-                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                                </svg>
-                            </div>
-                            <h4>HTTP/HTTPS</h4>
-                            <code class="method-url">https://<span id="hostname">mirror.example.com</span>/</code>
-                            <p>Direct browser access and package managers</p>
-                        </div>
-                        <div class="method-card">
-                            <div class="method-icon">
-                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                    <polyline points="23 4 23 10 17 10"/>
-                                    <polyline points="1 20 1 14 7 14"/>
-                                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-                                </svg>
-                            </div>
-                            <h4>rsync</h4>
-                            <code class="method-url">rsync://<span id="rsynchost">mirror.example.com</span>/</code>
-                            <p>For efficient synchronization and other mirrors</p>
-                        </div>
+                <div class="status-card" id="overallStatus" data-state="unknown">
+                    <span class="status-dot" aria-hidden="true"></span>
+                    <div>
+                        <h3>Checking mirror status&hellip;</h3>
+                        <p></p>
                     </div>
                 </div>
             </div>
         </section>
 
-        <!-- About Section -->
+        <!-- Access -->
+        <section class="access" id="access">
+            <div class="container">
+                <h2 class="section-title">Access Methods</h2>
+                <div class="access-grid">
+                    <div class="access-row">
+                        <span class="access-label">HTTP/HTTPS</span>
+                        <code class="access-url mono">https://<span id="hostname">mirror.example.com</span>/</code>
+                        <button class="icon-btn" type="button" data-copy="https-root" aria-label="Copy HTTPS URL">
+                            <span class="icon icon-copy" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                    <div class="access-row">
+                        <span class="access-label">rsync</span>
+                        <code class="access-url mono">rsync://<span id="rsynchost">mirror.example.com</span>/</code>
+                        <button class="icon-btn" type="button" data-copy="rsync-root" aria-label="Copy rsync URL">
+                            <span class="icon icon-copy" aria-hidden="true"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- About -->
         <section class="about" id="about">
             <div class="container">
                 <div class="about-content">

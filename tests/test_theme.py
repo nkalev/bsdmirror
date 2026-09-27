@@ -9,8 +9,10 @@ localStorage is blocked.
 
 js/theme-init.js now runs from <head>, ahead of the stylesheets, and applies an
 explicit saved choice, else the system preference, else light. main.js's
-ThemeManager adopts that, keeps the toggle's icon and label in step, saves only
-explicit choices, and follows system changes until one is made.
+ThemeManager adopts that, keeps the toggle's label and its icon's data-icon
+attribute in step (docs/design/2026-09-25-reflection-redesign.md, section
+5.2's "Theme icon": no glyph is ever written), saves only explicit choices,
+and follows system changes until one is made.
 tests/js/theme_harness.mjs runs both real scripts in a Node vm with only the
 browser APIs they touch stubbed.
 """

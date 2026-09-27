@@ -25,31 +25,51 @@
  *     the real admin.css/tokens.css/fonts.css. The admin SPA needs a live
  *     backend to reach these views by clicking through the app; calling the
  *     renderers directly gets the real markup without one, the same
- *     trade-off escaping_harness.mjs already makes.
+ *     trade-off escaping_harness.mjs already makes. Unchanged by the public
+ *     palette switch.
  *
  * :hover states (.nav-link:hover, .btn-secondary:hover) are reached with a
  * genuine Input.dispatchMouseEvent mousemove, not a CSS class toggle, so the
  * browser's own hit-testing decides whether the pseudo-class applies.
  *
- * The mirror-status dots (.status-dot.*, .status-indicator.*::before) are a
- * UI-indicator pairing (WCAG 2.1 SC 1.4.11, 3:1), not text -- measureDot()
- * reads backgroundColor on both sides instead of color/backgroundColor, and
- * measurePseudoBackground() reaches the ::before dot's own fill the same way
- * measurePlaceholder() below already reaches ::placeholder's text colour:
- * getComputedStyle(el, pseudo), the only way to read a pseudo-element's
- * computed style at all. Both classes only exist once MirrorStatus has
- * fetched and applied real per-mirror statuses (the static markup ships a
- * bare, unclassed dot and a hardcoded "healthy" overall indicator) -- the
- * /api/ stub below seeds one mirror syncing and none erroring, which is
- * enough to reach .status-dot.healthy/.syncing and the "syncing" overall
- * indicator, but not .status-dot.error or the "degraded"/"healthy" indicator
- * states (main.js's status-priority order means any erroring mirror forces
- * "degraded", which would cost the syncing indicator instead); those three
- * stay static-only. test_contrast.py's own module docstring already states
- * what the dynamic half is for at all -- confirming the cascade agrees with
- * the parser, not re-proving arithmetic it already proved exactly -- and a
- * representative dot/indicator pair serves that purpose as well as all six
- * would.
+ * The public site's mirror status is data-state-keyed (main.js writes one
+ * attribute per element; nothing here reads a class -- spec section 5.2).
+ * The /api/ stub below seeds one mirror of each live state (FreeBSD online,
+ * NetBSD syncing, OpenBSD error), which the harness waits for by polling the
+ * real, stub-driven attribute values -- proving the real end-to-end paint,
+ * not just that some element exists. The neutral pill and three of the four
+ * status-dot states are not reachable through any single stub response (the
+ * overall card's data-state is one value at a time), so for those the
+ * harness sets data-state on the element itself immediately before
+ * measuring it, always AFTER that same element's naturally-stubbed
+ * measurement has already been taken -- CSS keys purely off the attribute,
+ * so this is exactly the cascade test_contrast.py's static half assumes,
+ * just reached a different way. Every element visited this way is
+ * re-measured fresh in each theme pass (see measurePublicProbes()), so a
+ * light-pass override is never still sitting there when the dark pass reads
+ * the same element "naturally".
+ *
+ * Colour/background-color changes on data-state (or class, or :hover) run
+ * through a CSS transition (--transition-fast, 150ms) -- a probe taken
+ * mid-fade once measured a pill's neutral colours moments after main.js had
+ * already set it to "online". Rather than guess a settle delay per probe,
+ * launchChrome() emulates `prefers-reduced-motion: reduce` for the whole
+ * session: style.css's own reduced-motion block (`transition: none
+ * !important` on `*, *::before, *::after`) then makes every one of these
+ * changes apply instantly, so getComputedStyle -- which forces a synchronous
+ * style recalculation regardless -- always reads the settled value with no
+ * wait at all. The 250ms hover settle and 450ms theme-switch wait stay as
+ * extra margin for the real event/click plumbing, not because a colour
+ * fade needs time to finish any more.
+ *
+ * Also fails loudly, instead of silently reporting whatever partial
+ * measurements it collected, if the public page raises an uncaught JS error
+ * or an unhandled promise rejection at any point: a main.js write that
+ * throws may break nothing a probe measures, so nothing else here would
+ * notice it. Runtime.exceptionThrown reports both categories once
+ * Runtime.enable is on; console.error() calls are also treated as failures.
+ * waitFor() checks on every poll, and main() once more at the end; see
+ * checkForPageErrors().
  *
  * No npm packages: node's built-in http/vm/WebSocket only, and whatever
  * Chrome is already installed. getComputedStyle always resolves to
@@ -97,7 +117,8 @@ const MIME = {
 };
 
 // ---------------------------------------------------------------------------
-// admin.js's real page renderers, loaded the way escaping_harness.mjs does
+// admin.js's real page renderers, loaded the way escaping_harness.mjs does.
+// Unchanged by the public palette switch.
 // ---------------------------------------------------------------------------
 function loadAdminRenderers(sourcePath) {
     const source = readFileSync(sourcePath, 'utf8');
@@ -158,21 +179,29 @@ function serve(fixtureHtml) {
             if (!file.startsWith(DOCROOT) || !existsSync(file)) {
                 if (rel.startsWith('/api/')) {
                     res.writeHead(200, { 'Content-Type': 'application/json' });
-                    // Real per-mirror statuses, not {} -- .status-dot only ever
-                    // gets a .healthy/.syncing/.error modifier class from
-                    // MirrorStatus.updateMirrorCards, driven by this response
-                    // (the static markup ships a bare, unclassed dot). One
-                    // mirror syncing and none erroring also drives the overall
-                    // .status-indicator to its "syncing" state (main.js checks
-                    // anyError before anySyncing), which is what
-                    // .status-indicator.syncing::before needs to exist at all.
+                    // One mirror in each live state -- online, syncing,
+                    // error -- so MirrorStatus.load() (main.js) paints every
+                    // pill/stream/status-dot variant the /api/ response can
+                    // reach on its own; the neutral pill and the other three
+                    // status-dot states are reached by the harness setting
+                    // data-state directly, see measurePublicProbes(). Any
+                    // /api/ path (including /health, for FooterVersion)
+                    // gets this same body: it has no "version" field, so
+                    // FooterVersion.load() leaves .footer-version empty,
+                    // which this harness never asserts text content on.
                     return res.end(JSON.stringify({
                         mirrors: {
-                            freebsd: { status: 'active' },
-                            netbsd: { status: 'syncing' },
-                            openbsd: { status: 'active' }
+                            freebsd: {
+                                status: 'active', size: '1.4 TB',
+                                last_updated: new Date(Date.now() - 3 * 60_000).toISOString()
+                            },
+                            netbsd: {
+                                status: 'syncing', size: '900 GB',
+                                last_updated: new Date(Date.now() - 3 * 60_000).toISOString()
+                            },
+                            openbsd: { status: 'error' }
                         },
-                        totals: {}
+                        totals: { size: '4.2 TB', files: '604,618' }
                     }));
                 }
                 res.writeHead(404);
@@ -186,15 +215,34 @@ function serve(fixtureHtml) {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal CDP client (identical shape to csp_click_harness.mjs's)
+// Minimal CDP client (identical shape to csp_click_harness.mjs's), plus a
+// standing collector for two kinds of page misbehaviour that no probe
+// otherwise notices: an uncaught JS error (or unhandled promise rejection --
+// Chrome reports both through the same event once Runtime.enable is on) and
+// a console.error() call. Both are queried on every waitFor() poll and once
+// more at the end of main(), so a bug anywhere in the run -- not just during
+// a specific probe -- is caught.
 // ---------------------------------------------------------------------------
 class CDP {
     constructor(ws) {
         this.ws = ws;
         this.id = 0;
         this.pending = new Map();
+        this.jsErrors = [];
+        this.consoleErrors = [];
         ws.addEventListener('message', (ev) => {
             const msg = JSON.parse(ev.data);
+            if (msg.method === 'Runtime.exceptionThrown') {
+                const d = msg.params.exceptionDetails;
+                const detail = d.exception?.description || d.exception?.value || d.text || JSON.stringify(d);
+                this.jsErrors.push(String(detail));
+                return;
+            }
+            if (msg.method === 'Runtime.consoleAPICalled' && msg.params.type === 'error') {
+                const parts = (msg.params.args || []).map((a) => a.value ?? a.description ?? String(a));
+                this.consoleErrors.push(parts.join(' '));
+                return;
+            }
             if (msg.id && this.pending.has(msg.id)) {
                 const { resolve, reject } = this.pending.get(msg.id);
                 this.pending.delete(msg.id);
@@ -216,6 +264,26 @@ class CDP {
         this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
         return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
     }
+}
+
+/** Throws, naming every collected error, if the public page misbehaved at
+ * any point in the run so far. Called on every waitFor() poll, so an error
+ * that stops the page from ever reaching the awaited state is reported as
+ * itself rather than as a timeout, and once more at the end of main(), for
+ * anything raised after the last wait -- a whole-session check, not a
+ * per-probe one. "Report it, don't hide it": the message carries the full
+ * detail rather than just a count, since this is the only place any of it is
+ * ever surfaced. */
+function checkForPageErrors(cdp) {
+    if (cdp.jsErrors.length === 0 && cdp.consoleErrors.length === 0) return;
+    const lines = [
+        ...cdp.jsErrors.map((e) => `uncaught JS error/rejection: ${e}`),
+        ...cdp.consoleErrors.map((e) => `console.error(): ${e}`)
+    ];
+    throw new Error(
+        `the public page misbehaved during this run (${cdp.jsErrors.length} JS error(s)/` +
+        `rejection(s), ${cdp.consoleErrors.length} console.error() call(s)):\n` + lines.join('\n')
+    );
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -279,8 +347,16 @@ async function launchChrome() {
     // The public site follows prefers-color-scheme until a visitor picks a
     // theme (js/theme-init.js), so main()'s first pass is only the light theme
     // if this Chrome says light. Pin it rather than inherit the host's default.
+    // prefers-reduced-motion: reduce turns every colour/background transition
+    // and every @keyframes animation off (style.css's own reduced-motion
+    // block) for the rest of the session -- see the module docstring for why
+    // that, not a per-probe sleep, is how this harness gets a settled colour
+    // after a data-state change.
     await cdp.send('Emulation.setEmulatedMedia', {
-        features: [{ name: 'prefers-color-scheme', value: 'light' }]
+        features: [
+            { name: 'prefers-color-scheme', value: 'light' },
+            { name: 'prefers-reduced-motion', value: 'reduce' }
+        ]
     }, sessionId);
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId);
@@ -289,10 +365,19 @@ async function launchChrome() {
 
 /** Polls `expression` in the page until it is truthy. For state a page only
  * reaches after its load event: navigate() waits for load, not for the
- * fetches a DOMContentLoaded handler starts. */
-async function waitFor(evaluate, expression, what, timeoutMs = 5000) {
+ * fetches a DOMContentLoaded handler starts.
+ *
+ * Checks for a page error on every poll, not just once at the end of
+ * main(): a synchronous throw early in main.js's DOMContentLoaded handler
+ * stops the rest of that handler from ever running, so MirrorStatus.load()
+ * is never called and the condition this function is waiting for is never
+ * going to become true no matter how long it waits. Left unchecked here,
+ * that surfaces as a generic "timed out" message five seconds later instead
+ * of the real cause, which checkForPageErrors() already has on hand. */
+async function waitFor(cdp, evaluate, expression, what, timeoutMs = 5000) {
     const deadline = Date.now() + timeoutMs;
     while (!(await evaluate(expression))) {
+        checkForPageErrors(cdp);
         if (Date.now() > deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${what}`);
         await sleep(50);
     }
@@ -346,10 +431,9 @@ async function measure(cdp, sessionId, evaluate, { selector, bgSelector, hover }
         })()`);
         if (!box) return { error: `no element for ${selector}` };
         await cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x, y: box.y }, sessionId);
-        // Hover-triggered colour/background changes run through `transition:
-        // all var(--transition-fast)` (150ms). Sampling mid-transition once
-        // measured a background partway between rest and hover state, which
-        // is a real value no user ever reads a colour off -- settle first.
+        // Under prefers-reduced-motion the hover colour/background applies
+        // instantly (no transition to settle); this margin is for the real
+        // input dispatch and hit-testing to land, not for a fade to finish.
         await sleep(250);
     }
 
@@ -366,12 +450,12 @@ async function measure(cdp, sessionId, evaluate, { selector, bgSelector, hover }
 }
 
 /** Like measure(), but for an element whose own identity is a fill colour,
- * not text -- .status-dot.healthy/.syncing/.error have no content, so the
- * pairing that matters is backgroundColor-vs-backgroundColor, not
- * colour-vs-backgroundColor. Reads backgroundColor on both sides and still
- * returns it under the `color` key, so the {color, backgroundColor} shape
- * test_contrast.py's _measured_ratio() already expects needs no change to
- * handle it. No hover: none of these probes are hover states. */
+ * not text -- .status-dot has no content, so the pairing that matters is
+ * backgroundColor-vs-backgroundColor, not colour-vs-backgroundColor. Reads
+ * backgroundColor on both sides and still returns it under the `color` key,
+ * so the {color, backgroundColor} shape test_contrast.py's _measured_ratio()
+ * already expects needs no change to handle it. No hover: none of these
+ * probes are hover states. */
 async function measureDot(evaluate, { selector, bgSelector }) {
     return evaluate(`(() => {
         const fg = document.querySelector(${JSON.stringify(selector)});
@@ -385,63 +469,105 @@ async function measureDot(evaluate, { selector, bgSelector }) {
     })()`);
 }
 
-/** Like measurePlaceholder below, for a ::before dot painted by a status-*
- * token (.status-indicator.syncing::before) rather than a placeholder's
- * text colour: getComputedStyle(el, pseudo) is the only way to reach a
- * pseudo-element's computed style at all (it has no node querySelector can
- * return). The comparison background is the host element's own
- * background -- .status-indicator.syncing's translucent tint sits directly
- * under its own ::before dot, not a separate ancestor -- so `el` supplies
- * both sides. */
-async function measurePseudoBackground(evaluate, selector, pseudo) {
+/** For a ::before pseudo-element painted by a background token (the online
+ * sync-stream's line) rather than a placeholder's text colour:
+ * getComputedStyle(el, pseudo) is the only way to reach a pseudo-element's
+ * computed style at all (it has no node querySelector can return). Unlike
+ * the admin-only ::placeholder case below, the comparison background here is
+ * a separate ancestor (.streams-inner), not the pseudo's own host element
+ * (.stream-line itself declares no background), so bgSelector is always
+ * required. */
+async function measurePseudoBackground(evaluate, selector, pseudo, bgSelector) {
     return evaluate(`(() => {
         const el = document.querySelector(${JSON.stringify(selector)});
-        if (!el) return { error: 'element not found: ' + ${JSON.stringify(selector)} };
+        const bg = document.querySelector(${JSON.stringify(bgSelector)});
+        if (!el || !bg) return { error: 'element(s) not found: ' +
+            (!el ? ${JSON.stringify(selector)} : ${JSON.stringify(bgSelector)}) };
         const style = getComputedStyle(el, ${JSON.stringify(pseudo)});
         const color = style && style.backgroundColor;
         if (!color) return { error: 'getComputedStyle(el, ' + ${JSON.stringify(pseudo)} +
             ') returned no backgroundColor in this Chrome build' };
-        return { color, backgroundColor: getComputedStyle(el).backgroundColor };
+        return { color, backgroundColor: getComputedStyle(bg).backgroundColor };
     })()`);
 }
 
+/** Sets data-state on `selector` directly, because CSS keys every pill,
+ * status-dot and stream-line purely off that attribute (spec section 5.2) --
+ * a probe does not need main.js to have painted a particular value, only for
+ * the value to be there when getComputedStyle reads it. Always applied
+ * immediately before the measurement it exists for; see PUBLIC_PROBES'
+ * ordering comment for why that order matters. */
+async function setDataState(evaluate, selector, value) {
+    const ok = await evaluate(`(() => {
+        const el = document.querySelector(${JSON.stringify(selector)});
+        if (!el) return false;
+        el.setAttribute('data-state', ${JSON.stringify(value)});
+        return true;
+    })()`);
+    if (!ok) throw new Error(`setDataState: no element for ${selector}`);
+}
+
 /** Dispatches a PUBLIC_PROBES entry to whichever of measure()/measureDot()/
- * measurePseudoBackground() its shape calls for, so both probe loops in
- * main() can stay a plain `for` over one list instead of three. */
+ * measurePseudoBackground() its shape calls for, applying setState first if
+ * the probe has one, so main()'s probe loop can stay a plain `for` over one
+ * list. */
 async function measureProbe(cdp, sessionId, evaluate, probe) {
-    if (probe.pseudo) return measurePseudoBackground(evaluate, probe.selector, probe.pseudo);
+    if (probe.setState) await setDataState(evaluate, probe.setState.selector, probe.setState.value);
+    if (probe.pseudo) return measurePseudoBackground(evaluate, probe.selector, probe.pseudo, probe.bgSelector);
     if (probe.dot) return measureDot(evaluate, probe);
     return measure(cdp, sessionId, evaluate, probe);
 }
 
 // ---------------------------------------------------------------------------
 // Probe lists -- mirrors the selectors test_contrast.py reasons about
-// statically. Keep the two in step; a mismatch is not caught automatically.
+// statically. Keep the two in step; a mismatch is not caught automatically
+// (test_dynamic_probe_list_matches_the_harness only compares the id sets,
+// not this ordering comment).
+//
+// Order matters for four entries: '#freebsd-status' and '#overallStatus'
+// are each probed twice, first at whatever /api/ naturally left them (the
+// online pill and the error dot, both real end-to-end paints) and then
+// again with data-state forced to a value the stub cannot reach on this
+// element (the neutral pill, the online/syncing/neutral dot). The forced
+// entries are listed after their element's natural one so the natural
+// measurement is never accidentally taken from an already-overridden
+// element -- see measurePublicProbes() in main(), which reruns this whole
+// list once per theme after a fresh natural paint.
 // ---------------------------------------------------------------------------
 const PUBLIC_PROBES = [
     { id: 'body', selector: 'body', bgSelector: 'body' },
-    { id: '.nav-link', selector: '.nav-link:not(.nav-admin)', bgSelector: '.header' },
-    { id: '.nav-link:hover', selector: '.nav-link:not(.nav-admin)', bgSelector: '.nav-link:not(.nav-admin)', hover: true },
+    { id: '.nav-link', selector: '.nav-link', bgSelector: '.header' },
+    { id: '.nav-link:hover', selector: '.nav-link', bgSelector: '.nav-link', hover: true },
     { id: '.nav-admin', selector: '.nav-admin', bgSelector: '.header' },
-    { id: '.stat-label', selector: '.stat-label', bgSelector: '.stat-card' },
-    { id: '.mirror-status', selector: '.mirror-status', bgSelector: '.mirror-card' },
-    { id: '.detail-label', selector: '.detail-label', bgSelector: '.mirror-details' },
+    { id: '.stat-label', selector: '.stat-label', bgSelector: 'body' },
+    { id: '.mirror-description', selector: '.mirror-description', bgSelector: '.mirror-card' },
+    { id: '.access-label', selector: '.access-label', bgSelector: '.access-row' },
     { id: '.btn-primary', selector: '.mirror-actions .btn-primary', bgSelector: '.mirror-actions .btn-primary' },
     { id: '.btn-secondary:hover', selector: '.mirror-actions .btn-secondary', bgSelector: '.mirror-actions .btn-secondary', hover: true },
     { id: '.footer-content p', selector: '.footer-content p:not(.footer-version)', bgSelector: '.footer' },
     { id: '.footer-content a', selector: '.footer-content p a', bgSelector: '.footer' },
     { id: '.about-text a', selector: '.about-text a', bgSelector: 'body' },
     { id: '.footer-version', selector: '.footer-version', bgSelector: '.footer' },
-    { id: '.method-card p', selector: '.method-card p', bgSelector: '.method-card' },
-    // Status dots (WCAG 2.1 SC 1.4.11, 3:1, not the 4.5:1 text pairs above):
-    // backgroundColor-vs-backgroundColor via measureDot(), not measure().
-    // Only .healthy and .syncing are reachable this way -- see the /api/
-    // stub above and this file's docstring update for why .error and the
-    // healthy/degraded indicator states are static-only.
-    { id: '.status-dot.healthy', selector: '.status-dot.healthy', bgSelector: '.mirror-card', dot: true },
-    { id: '.status-dot.syncing', selector: '.status-dot.syncing', bgSelector: '.mirror-card', dot: true },
-    // ::before pseudo-element, via measurePseudoBackground(), not measure().
-    { id: '.status-indicator.syncing::before', selector: '.status-indicator.syncing', pseudo: '::before' }
+    { id: '.section-subtitle', selector: '.section-subtitle', bgSelector: 'body' },
+    { id: '.toast', selector: '#toast', bgSelector: '#toast' },
+    // Pills, natural first (the stub's own online/syncing/error), then the
+    // neutral base rule forced onto the same element the online pill just
+    // used.
+    { id: '.pill[data-state="online"]', selector: '#freebsd-status', bgSelector: '#freebsd-status' },
+    { id: '.pill[data-state="syncing"]', selector: '#netbsd-status', bgSelector: '#netbsd-status' },
+    { id: '.pill[data-state="error"]', selector: '#openbsd-status', bgSelector: '#openbsd-status' },
+    { id: '.pill', selector: '#freebsd-status', bgSelector: '#freebsd-status', setState: { selector: '#freebsd-status', value: 'disabled' } },
+    // The one sync-stream state with a bare var() background (see
+    // test_contrast.py's PUBLIC_PAIRS comment on the syncing/error lines'
+    // gradients); natural, from the same stub entry as the pill above.
+    { id: '.stream[data-state="online"] .stream-line::before', selector: '#freebsd-stream .stream-line', pseudo: '::before', bgSelector: '.streams-inner' },
+    // The overall card's dot: natural (error, since any mirror erroring
+    // wins main.js's priority order), then the other three states forced
+    // onto the same element in turn.
+    { id: '.status-card[data-state="error"] .status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true },
+    { id: '.status-card[data-state="online"] .status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true, setState: { selector: '#overallStatus', value: 'online' } },
+    { id: '.status-card[data-state="syncing"] .status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true, setState: { selector: '#overallStatus', value: 'syncing' } },
+    { id: '.status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true, setState: { selector: '#overallStatus', value: 'disabled' } }
 ];
 
 const ADMIN_PROBES = [
@@ -465,7 +591,8 @@ const ADMIN_PROBES = [
  * a clearly-labelled error (rather than a silent skip) if a given Chrome
  * build does not support it -- test_contrast.py treats a missing/errored
  * measurement as "not dynamically confirmed" and falls back to its static
- * coverage of the same pairing, but it needs to see why. */
+ * coverage of the same pairing, but it needs to see why. Unchanged by the
+ * public palette switch. */
 async function measurePlaceholder(evaluate, selector, bgSelector) {
     return evaluate(`(() => {
         const input = document.querySelector(${JSON.stringify(selector)});
@@ -476,6 +603,36 @@ async function measurePlaceholder(evaluate, selector, bgSelector) {
         if (!color) return { error: 'getComputedStyle(el, "::placeholder") returned no colour in this Chrome build' };
         return { color, backgroundColor: getComputedStyle(bg).backgroundColor };
     })()`);
+}
+
+// The condition the /api/ stub's own response satisfies once main.js has
+// painted it for real: every element PUBLIC_PROBES measures "naturally"
+// (not via setState) at its expected, stub-driven value. Waited for once per
+// theme pass, before that pass's probe loop runs -- see measurePublicProbes().
+// That includes #freebsd-stream, whose own data-state is what the online
+// stream line's ::before keys off: the row's pill is painted separately, so
+// a pill reading "online" says nothing about the row.
+const NATURAL_STATE_READY = `(
+    document.getElementById('freebsd-status')?.getAttribute('data-state') === 'online' &&
+    document.getElementById('netbsd-status')?.getAttribute('data-state') === 'syncing' &&
+    document.getElementById('openbsd-status')?.getAttribute('data-state') === 'error' &&
+    document.getElementById('freebsd-stream')?.getAttribute('data-state') === 'online' &&
+    document.getElementById('overallStatus')?.getAttribute('data-state') === 'error'
+)`;
+
+/** Waits for a fresh, real, stub-driven paint (proving main.js's own wiring,
+ * not just that an element exists), then measures every PUBLIC_PROBES entry
+ * in order. Called once per theme; main() ensures each call sees a page
+ * that has just (re)run its DOMContentLoaded handler against the stub, so a
+ * setState override from a previous call is never still sitting on an
+ * element this one reads "naturally". */
+async function measurePublicProbes(cdp, sessionId, evaluate) {
+    await waitFor(cdp, evaluate, NATURAL_STATE_READY, 'the stubbed mirror statuses to paint');
+    const out = {};
+    for (const probe of PUBLIC_PROBES) {
+        out[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
+    }
+    return out;
 }
 
 async function main() {
@@ -524,19 +681,11 @@ async function main() {
     if (initialTheme !== 'light') {
         throw new Error(`index.html did not open in the light theme (got ${initialTheme})`);
     }
-    // The dot probes measure classes MirrorStatus applies once the /api/ stub
-    // has answered, which can be after the load event navigate() waited for.
-    const statusSelectors = PUBLIC_PROBES.filter((probe) => probe.dot || probe.pseudo).map((probe) => probe.selector);
-    await waitFor(
-        evaluate,
-        `${JSON.stringify(statusSelectors)}.every((selector) => document.querySelector(selector) !== null)`,
-        `the stubbed mirror statuses (${statusSelectors.join(', ')})`
-    );
-    for (const probe of PUBLIC_PROBES) {
-        out.public.light[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
-    }
+    out.public.light = await measurePublicProbes(cdp, sessionId, evaluate);
 
-    // A genuine click on the real toggle button, not setAttribute from here.
+    // A genuine click on the real toggle button, not setAttribute from here,
+    // so ThemeManager's own click handler and its localStorage write are
+    // what actually flips the theme.
     const toggleBox = await evaluate(`(() => {
         const b = document.getElementById('themeToggle');
         const r = b.getBoundingClientRect();
@@ -547,17 +696,25 @@ async function main() {
             type, x: toggleBox.x, y: toggleBox.y, button: 'left', clickCount: 1
         }, sessionId);
     }
-    // body's colour/background-color transition runs through
-    // --transition-base (300ms); 150ms here once sampled a colour partway
-    // through the fade (a real computed value, but not the settled one this
-    // harness means to check) -- settle well past it before reading anything.
+    // Extra margin for the click/attribute plumbing to land; the colour
+    // fade itself needs none of this under prefers-reduced-motion (see the
+    // module docstring).
     await sleep(450);
-    const theme = await evaluate('document.documentElement.getAttribute("data-theme")');
+    let theme = await evaluate('document.documentElement.getAttribute("data-theme")');
     if (theme !== 'dark') throw new Error(`clicking #themeToggle did not set data-theme=dark (got ${theme})`);
 
-    for (const probe of PUBLIC_PROBES) {
-        out.public.dark[probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
+    // Reload so the dynamic probes read a second, fresh, real paint rather
+    // than reusing whatever the light pass's setState calls left behind on
+    // shared elements (#freebsd-status, #overallStatus). ThemeManager just
+    // saved "dark" to localStorage; theme-init.js reads that choice and
+    // applies dark before first paint, so this reopens dark without
+    // clicking the toggle again -- the click above already proved that path.
+    await navigate(cdp, sessionId, `${origin}/index.html`);
+    theme = await evaluate('document.documentElement.getAttribute("data-theme")');
+    if (theme !== 'dark') {
+        throw new Error(`reloading did not keep data-theme=dark (got ${theme}); did the toggle's localStorage write fail?`);
     }
+    out.public.dark = await measurePublicProbes(cdp, sessionId, evaluate);
 
     await navigate(cdp, sessionId, `${origin}/__admin_fixture__.html`);
     for (const probe of ADMIN_PROBES) {
@@ -566,6 +723,8 @@ async function main() {
     out.admin['.form-input::placeholder'] = await measurePlaceholder(
         evaluate, '#login-fixture .form-input', '#login-fixture .form-input'
     );
+
+    checkForPageErrors(cdp);
 
     process.stdout.write(JSON.stringify(out, null, 2) + '\n');
     chrome.kill();

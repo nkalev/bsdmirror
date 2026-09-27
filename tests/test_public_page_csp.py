@@ -130,7 +130,9 @@ INLINE_HANDLER = re.compile(r"""\son([a-z]{3,})\s*=\s*["']""")
 
 
 @pytest.mark.parametrize(
-    "html_path", [INDEX_HTML, ADMIN_INDEX_HTML], ids=["index.html", "admin/index.html"]
+    "html_path",
+    [INDEX_HTML, ADMIN_INDEX_HTML, PUBLIC / "404.html", PUBLIC / "50x.html"],
+    ids=["index.html", "admin/index.html", "404.html", "50x.html"],
 )
 def test_no_inline_event_handlers(html_path):
     """script-src 'self' blocks these, so they are dead code that looks alive."""
@@ -141,6 +143,18 @@ def test_no_inline_event_handlers(html_path):
         f"{html_path.name} has inline event handler(s) {found}. The production "
         f"CSP blocks them; bind with addEventListener in the page's JS instead."
     )
+
+
+def test_index_html_has_no_inline_styles():
+    """style-src 'self' drops an inline style= or <style> block without a
+    word, so the element would silently render unstyled in production. The
+    click harness would log the violation, but only where Chrome runs; this
+    reads the file."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert not re.search(r"<style[\s>]", html, re.IGNORECASE), "index.html has a <style> block"
+    assert not re.search(
+        r"""\sstyle\s*=\s*["']""", html, re.IGNORECASE
+    ), "index.html has an inline style= attribute"
 
 
 def test_copy_buttons_carry_a_data_attribute():
@@ -190,6 +204,36 @@ def test_copy_button_responds_to_a_real_click(clicked, index, mirror):
     assert (
         f"/{mirror}/" in button["toast"]["text"]
     ), f"{mirror} button copied the wrong URL: {button['toast']['text']!r}"
+
+
+@requires_browser
+def test_all_data_copy_buttons_are_found(clicked):
+    """Document order: the hero's button, then the two access rows'
+    (docs/design/2026-09-25-reflection-redesign.md, section 5.1)."""
+    assert [b["dataCopy"] for b in clicked["dataCopyButtons"]] == [
+        "rsync-root",
+        "https-root",
+        "rsync-root",
+    ]
+
+
+@requires_browser
+@pytest.mark.parametrize(
+    "index,data_copy,scheme",
+    [(0, "rsync-root", "rsync"), (1, "https-root", "https"), (2, "rsync-root", "rsync")],
+)
+def test_data_copy_button_responds_to_a_real_click(clicked, index, data_copy, scheme):
+    """The click harness serves on 127.0.0.1, so that is the host each built
+    URL names. test_no_csp_violations_on_load already covers this same run,
+    clicks included."""
+    button = clicked["dataCopyButtons"][index]
+    assert button["dataCopy"] == data_copy
+    assert button["toast"][
+        "shown"
+    ], f"clicking the {data_copy} button produced no toast; the handler did not run"
+    assert (
+        button["toast"]["text"] == f"Copied: {scheme}://127.0.0.1/"
+    ), f"{data_copy} button copied the wrong URL: {button['toast']['text']!r}"
 
 
 # ---------------------------------------------------------------------------

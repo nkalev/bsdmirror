@@ -1,18 +1,23 @@
 /**
- * Does clicking "Copy rsync URL" do anything, under the production CSP?
+ * Does clicking a copy button do anything, under the production CSP?
  *
  * Static inspection is what missed this bug in the first place -- an
  * onclick="..." attribute looks like working code -- so this harness does not
  * inspect. It serves frontend/public over HTTP with the exact
  * Content-Security-Policy from nginx/nginx.conf, drives real headless Chrome
- * over the DevTools Protocol, dispatches a genuine trusted mouse click on each
- * button, and reports what the page did.
+ * over the DevTools Protocol, dispatches a genuine trusted mouse click on
+ * every copy button on the page, and reports what each one did:
+ *   - the three per-mirror "rsync URL" buttons (.mirror-actions button,
+ *     matched by index, as today);
+ *   - the three page-wide [data-copy] buttons: the hero's "Copy rsync URL"
+ *     button, then the two access-row icon buttons
+ *     (docs/design/2026-09-25-reflection-redesign.md, section 5.1).
  *
  * No npm packages: node's built-in http and WebSocket only, and whatever
  * Chrome is already installed.
  *
  * Usage:  node csp_click_harness.mjs <docroot> [chrome-binary]
- * Output: JSON {"buttons":[...], "cspViolations":[...]} on stdout.
+ * Output: JSON {"buttons":[...], "dataCopyButtons":[...], "cspViolations":[...]} on stdout.
  */
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, readFile as rf } from 'node:fs/promises';
@@ -267,8 +272,49 @@ async function main() {
         buttons.push({ ...wiring[i], toast });
     }
 
+    // After the per-mirror loop above: the page-wide [data-copy] buttons.
+    // Same mechanics -- clear the toast, hit-test the click point, dispatch a
+    // real trusted click, read the toast back -- just a different selector
+    // and no onclick/dataset-copyRsync wiring to report, since these buttons
+    // have no inline-handler history to guard against.
+    const dataCopyWiring = await evaluate(`
+        Array.from(document.querySelectorAll('[data-copy]')).map(b => ({
+            dataCopy: b.dataset.copy ?? null
+        }))
+    `);
+
+    const dataCopyButtons = [];
+    for (let i = 0; i < dataCopyWiring.length; i++) {
+        await evaluate(`(() => { const t = document.getElementById('toast');
+                                 if (t) { t.textContent = ''; t.classList.remove('show'); } })()`);
+
+        const box = await evaluate(`(() => {
+            const b = document.querySelectorAll('[data-copy]')[${i}];
+            b.scrollIntoView({ block: 'center', behavior: 'instant' });
+            const r = b.getBoundingClientRect();
+            const el = document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2);
+            return {
+                x: r.x + r.width / 2, y: r.y + r.height / 2,
+                hits: Boolean(el) && Boolean(el.closest('[data-copy], button'))
+            };
+        })()`);
+        if (!box.hits) throw new Error(`data-copy button ${i} is not under its own click point (${box.x}, ${box.y})`);
+
+        for (const type of ['mousePressed', 'mouseReleased']) {
+            await cdp.send('Input.dispatchMouseEvent', {
+                type, x: box.x, y: box.y, button: 'left', clickCount: 1
+            }, sessionId);
+        }
+        await sleep(350);
+
+        const toast = await evaluate(`(() => { const t = document.getElementById('toast');
+            return t ? { text: t.textContent, shown: t.classList.contains('show') } : null; })()`);
+
+        dataCopyButtons.push({ ...dataCopyWiring[i], toast });
+    }
+
     process.stdout.write(JSON.stringify({
-        docroot: DOCROOT, csp: CSP, buttons, cspViolations, consoleErrors
+        docroot: DOCROOT, csp: CSP, buttons, dataCopyButtons, cspViolations, consoleErrors
     }, null, 2) + '\n');
 
     chrome.kill();

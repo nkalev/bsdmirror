@@ -1,59 +1,163 @@
-/* BSD Mirror - Main Stylesheet */
-/* BSD-themed palette: Orange / Red / Dark Navy */
+/* BSD Mirror - Public Site Stylesheet ("Reflection") */
 /* Design tokens live in css/tokens.css, linked ahead of this file in index.html.
-   Do not declare custom properties here.
-   Web fonts are self-hosted in css/fonts.css, also linked ahead of this file. */
+   Do not declare custom properties here, with one exception: a property that
+   carries a value across a <use> boundary into the inline mark, where no
+   selector reaches (.hero-mark's --mark-glyph-fill, below).
+   Web fonts are self-hosted in css/fonts.css, also linked ahead of this file.
+   See docs/design/2026-09-25-reflection-redesign.md, sections 4.2-4.4, 4.7,
+   4.8 and 5.1 for the system this file implements. */
 
-/* Reset */
+/* ===========================================================================
+   Reset & base
+   =========================================================================== */
 *, *::before, *::after {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
 }
 
+/* A nav anchor scrolls its section's heading to 16px below the sticky
+   header, instead of under it. */
 html {
     scroll-behavior: smooth;
+    scroll-padding-top: calc(var(--header-height) + 16px);
 }
 
 body {
     font-family: var(--font-sans);
     background-color: var(--bg-primary);
     color: var(--text-primary);
-    line-height: 1.6;
+    font-size: 15px;
+    line-height: 1.5;
     min-height: 100vh;
-    transition: background-color var(--transition-base), color var(--transition-base);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-/* Background gradient effect - warm BSD glow */
-.background-gradient {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    height: 100vh;
-    background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(232, 93, 4, 0.1), transparent);
-    pointer-events: none;
-    z-index: -1;
+h1, h2, h3, h4 {
+    line-height: 1.15;
 }
 
-[data-theme="dark"] .background-gradient {
-    background: radial-gradient(ellipse 80% 50% at 50% -20%, rgba(244, 140, 6, 0.07), transparent);
+/* Visually hidden but still reachable by <use href="#mark">: an SVG holding
+   only <symbol>/<defs> content must stay in the render tree (unlike
+   display:none, which some engines exclude referenced content from), so this
+   is the standard clip-based hidden pattern rather than display:none. */
+.visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
 }
 
-/* Container */
 .container {
     max-width: var(--container-max);
     margin: 0 auto;
-    padding: 0 24px;
+    padding: 0 20px;
 }
 
-/* Header */
+.mono {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ===========================================================================
+   Icons -- CSS masks on spans (spec section 4.7), so no <img>/<svg> is
+   needed for a glyph that must take the surrounding text colour.
+   =========================================================================== */
+.icon {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    background-color: currentColor;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+.icon-copy {
+    -webkit-mask-image: url(/img/icons/copy.svg);
+    mask-image: url(/img/icons/copy.svg);
+}
+
+.icon-arrow-right {
+    -webkit-mask-image: url(/img/icons/arrow-right.svg);
+    mask-image: url(/img/icons/arrow-right.svg);
+}
+
+/* The theme toggle's icon swaps mask image by data-icon (set by main.js's
+   ThemeManager.apply), never a glyph or a class rewrite. */
+.theme-icon[data-icon="moon"] {
+    -webkit-mask-image: url(/img/icons/moon.svg);
+    mask-image: url(/img/icons/moon.svg);
+}
+
+.theme-icon[data-icon="sun"] {
+    -webkit-mask-image: url(/img/icons/sun.svg);
+    mask-image: url(/img/icons/sun.svg);
+}
+
+/* ===========================================================================
+   The b|d mark (spec section 4.5). One inline <symbol id="mark"> in
+   index.html holds the regular geometry; every <svg class="mark"><use
+   href="#mark"></use></svg> instance renders it. Colours are classes, not
+   presentation attributes, so they follow the theme.
+   =========================================================================== */
+.mark {
+    display: block;
+    width: 28px;
+    height: 28px;
+}
+
+/* --mark-glyph-fill is unset by default, so .mark-glyph falls back to the
+   flat --text-primary. A <use> instance's shadow content does not match a
+   compound selector rooted outside it (a .hero-mark .mark-glyph rule matches
+   nothing), but a custom property set on the <use>'s own ancestor DOES
+   inherit across that boundary -- the same mechanism that lets currentColor
+   reach into a referenced <symbol>. .hero-mark below sets the one property;
+   every plain <svg class="mark"> (the header/nav instance) never does, so it
+   keeps the flat fill. */
+.mark-glyph {
+    fill: var(--mark-glyph-fill, var(--text-primary));
+}
+
+.mark-axis {
+    fill: var(--accent-primary);
+}
+
+/* The hero's two mark instances (the standing glyph and its reflection) use
+   the vertical gradient instead of the flat --text-primary. The axis keeps
+   --accent-primary either way -- only .mark-glyph reads this property. */
+.hero-mark {
+    --mark-glyph-fill: url(#hero-mark-gradient);
+}
+
+.mark-gradient-from {
+    stop-color: var(--mark-gradient-from);
+}
+
+.mark-gradient-to {
+    stop-color: var(--mark-gradient-to);
+}
+
+/* ===========================================================================
+   Header
+   =========================================================================== */
 .header {
     position: sticky;
     top: 0;
     z-index: 100;
-    background: rgba(255, 251, 245, 0.85);
+    background: rgba(236, 238, 241, 0.85);
     backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
     border-bottom: 1px solid var(--border-color);
     height: var(--header-height);
     display: flex;
@@ -61,585 +165,618 @@ body {
 }
 
 [data-theme="dark"] .header {
-    background: rgba(13, 13, 26, 0.85);
+    background: rgba(7, 8, 11, 0.85);
 }
 
-.header-content {
+.header-inner {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     width: 100%;
 }
 
-.logo {
+.brand {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: var(--text-primary);
-}
-
-.logo-icon {
-    width: 32px;
-    height: 32px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    gap: 10px;
     flex-shrink: 0;
 }
 
-.logo-icon svg {
-    width: 32px;
-    height: 32px;
-    display: block;
-}
-
-.logo-text {
-    letter-spacing: -0.01em;
+.wordmark {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
 .nav {
     display: flex;
     align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+    gap: 2px;
+    margin: 0 auto;
 }
 
 .nav-link {
     color: var(--text-secondary);
     text-decoration: none;
     font-weight: 500;
-    font-size: 0.9375rem;
+    font-size: 14px;
     white-space: nowrap;
-    padding: 8px 16px;
+    padding: 8px 14px;
     border-radius: var(--radius-sm);
     transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .nav-link:hover {
-    /* text-primary, not accent-primary: accent-primary on bg-tertiary is
-       2.82:1 in light theme (needs 4.5:1 as normal-size text). Matches the
-       admin panel's equivalent hover state (.nav-item:hover in admin.css),
-       which already uses this same pairing. */
     color: var(--text-primary);
-    background-color: var(--bg-tertiary);
+    background-color: var(--bg-secondary);
+}
+
+.nav-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
 }
 
 .nav-admin {
-    /* accent-secondary, not accent-primary: accent-primary on the header's
-       effectively-bg-primary backdrop is 3.40:1 in light theme (needs 4.5:1
-       as normal-size text; it only clears 3:1, the large-text bar, which is
-       why it works fine at 3rem on .gradient-text below). accent-secondary
-       reaches 4.86:1 light / 5.12:1 dark here -- same fix as the 404/50x
-       error-page link (see css/error.css). */
-    color: var(--accent-secondary);
+    /* accent-primary reaches AA as normal-size text on the header's ambient
+       backdrop in both themes (4.84:1 light, 6.56:1 dark) -- see
+       docs/design/2026-09-25-reflection-redesign.md section 4.1: this
+       palette's accent was chosen to clear every pair in section 9 without
+       the secondary-accent workaround the previous palette needed here. */
+    color: var(--accent-primary);
+    text-decoration: none;
     font-weight: 600;
+    font-size: 14px;
+    padding: 8px 10px;
 }
 
-.theme-toggle {
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-sm);
-    padding: 8px 12px;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    color: var(--text-primary);
-    font-size: 1rem;
-}
-
-.theme-toggle:hover {
-    background: var(--bg-secondary);
-    border-color: var(--accent-primary);
-}
-
-/* Hero Section */
-.hero {
-    padding: 80px 0 60px;
-    text-align: center;
-}
-
-.hero-title {
-    font-size: clamp(2.5rem, 5vw, 3.5rem);
-    font-weight: 700;
-    margin-bottom: 24px;
-    letter-spacing: -0.02em;
-}
-
-.gradient-text {
-    background: var(--accent-gradient);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-}
-
-.hero-subtitle {
-    font-size: 1.125rem;
-    color: var(--text-secondary);
-    max-width: 600px;
-    margin: 0 auto 48px;
-}
-
-.hero-stats {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 24px;
-    max-width: 800px;
-    margin: 0 auto;
-}
-
-.stat-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 24px;
-    box-shadow: var(--shadow-card);
-    transition: all var(--transition-base);
-}
-
-.stat-card:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-card-hover);
-}
-
-.stat-card.loading .stat-value {
-    animation: pulse 2s infinite;
-}
-
-@keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
-}
-
-.stat-icon {
-    margin-bottom: 10px;
-    display: flex;
+.icon-btn {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-}
-
-.stat-icon svg {
-    width: 32px;
-    height: 32px;
-}
-
-.stat-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-}
-
-.stat-label {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-    margin-top: 4px;
-}
-
-/* Section titles */
-.section-title {
-    font-size: 2rem;
-    font-weight: 700;
-    margin-bottom: 12px;
-    text-align: center;
-}
-
-.section-subtitle {
-    text-align: center;
-    color: var(--text-secondary);
-    margin-bottom: 40px;
-    font-size: 1rem;
-}
-
-/* Mirrors Section */
-.mirrors {
-    padding: 60px 0;
-}
-
-.mirrors-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-    gap: 24px;
-}
-
-.mirror-card {
-    background: var(--bg-card);
-    border: 1px solid var(--border-color);
-    border-left: 4px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 28px;
-    box-shadow: var(--shadow-card);
-    transition: all var(--transition-base);
-}
-
-.mirror-card:hover {
-    transform: translateY(-4px);
-    box-shadow: var(--shadow-card-hover);
-}
-
-/* Per-BSD identity border colors */
-.mirror-card[data-mirror="freebsd"] {
-    border-left-color: var(--freebsd-color);
-}
-
-.mirror-card[data-mirror="freebsd"]:hover {
-    border-color: var(--freebsd-color);
-    border-left-color: var(--freebsd-color);
-}
-
-.mirror-card[data-mirror="netbsd"] {
-    border-left-color: var(--netbsd-color);
-}
-
-.mirror-card[data-mirror="netbsd"]:hover {
-    border-color: var(--netbsd-color);
-    border-left-color: var(--netbsd-color);
-}
-
-.mirror-card[data-mirror="openbsd"] {
-    border-left-color: var(--openbsd-color);
-}
-
-.mirror-card[data-mirror="openbsd"]:hover {
-    border-color: var(--openbsd-color);
-    border-left-color: var(--openbsd-color);
-}
-
-.mirror-header {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-bottom: 16px;
-}
-
-.mirror-logo {
-    width: 48px;
-    height: 48px;
-    border-radius: var(--radius-sm);
-}
-
-.mirror-name {
-    font-size: 1.25rem;
-    font-weight: 600;
-}
-
-.mirror-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.875rem;
-    color: var(--text-muted);
-}
-
-.status-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--text-muted);
-}
-
-.status-dot.healthy {
-    background: var(--status-healthy);
-    box-shadow: 0 0 8px var(--status-healthy);
-}
-
-.status-dot.syncing {
-    background: var(--status-syncing);
-    animation: pulse 1.5s infinite;
-}
-
-.status-dot.error {
-    background: var(--status-error);
-}
-
-.mirror-description {
-    color: var(--text-secondary);
-    font-size: 0.9375rem;
-    margin-bottom: 20px;
-}
-
-.mirror-details {
-    display: flex;
-    gap: 24px;
-    margin-bottom: 20px;
-    padding: 16px;
-    background: var(--bg-tertiary);
+    width: 34px;
+    height: 34px;
     border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast);
 }
 
-.detail {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
+.icon-btn:hover {
+    background: var(--bg-secondary);
+    border-color: var(--border-strong);
 }
 
-.detail-label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+.theme-toggle .theme-icon {
+    transition: transform var(--transition-lift);
 }
 
-.detail-value {
-    font-weight: 500;
-    font-family: var(--font-mono);
-    font-size: 0.9375rem;
+.theme-toggle:hover .theme-icon {
+    transform: rotate(-18deg);
 }
 
-.mirror-actions {
-    display: flex;
-    gap: 12px;
-}
-
-/* Buttons */
+/* ===========================================================================
+   Buttons
+   =========================================================================== */
 .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    padding: 12px 20px;
+    padding: 11px 18px;
     border-radius: var(--radius-md);
-    font-weight: 500;
-    font-size: 0.9375rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    border: none;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-weight: 600;
+    font-size: 14px;
+    font-family: var(--font-sans);
+    white-space: nowrap;
     text-decoration: none;
+    cursor: pointer;
+    transition: transform var(--transition-base), box-shadow var(--transition-base);
+}
+
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
 }
 
 .btn-primary {
-    /* Solid accent-primary, not the gradient, and text-on-accent, not white.
-       White on this gradient fails at one end or the other in every theme
-       (as low as 2.44:1 on accent-primary in dark theme), and there is no
-       single text colour that passes both gradient stops in light theme:
-       navy-900 clears accent-primary (5.51:1) but not accent-secondary
-       (3.85:1); white is the reverse (3.50:1 / 5.01:1). A solid fill removes
-       that conflict. --accent-gradient is untouched and still used by
-       .gradient-text below, where it is large enough (3rem) that both stops
-       already clear the 3:1 large-text bar. */
     background: var(--accent-primary);
+    border-color: transparent;
     color: var(--text-on-accent);
 }
 
-.btn-primary:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(232, 93, 4, 0.4);
-}
-
 .btn-secondary {
-    background: var(--bg-tertiary);
+    background: var(--bg-card);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border-color: var(--border-color);
 }
 
 .btn-secondary:hover {
     background: var(--bg-secondary);
-    border-color: var(--accent-primary);
-    /* text-primary, not accent-primary: accent-primary on bg-secondary is
-       3.09:1 in light theme (needs 4.5:1). Matches .theme-toggle:hover
-       above, which already pairs this same border/background combination
-       with text-primary rather than an accent text colour. */
+    border-color: var(--border-strong);
     color: var(--text-primary);
 }
 
-.btn-arrow {
-    transition: transform var(--transition-fast);
+/* Compact sizing for buttons inside a mirror card, applied by context so the
+   copy button's own opening tag can stay exactly
+   `<button class="btn btn-secondary" data-copy-rsync="...">`
+   (tests/test_public_page_csp.py's negative control matches that literal
+   string). */
+.mirror-actions .btn {
+    padding: 8px 13px;
+    font-size: 13px;
+    border-radius: var(--radius-sm);
 }
 
-.btn:hover .btn-arrow {
-    transform: translateX(4px);
+/* ===========================================================================
+   Section rhythm (spec section 4.3): 72px between sections, 48px under
+   640px (see Responsive). Each section carries the gap below itself, so a
+   nav anchor lands on the section's heading, not on padding above it.
+   =========================================================================== */
+.hero,
+.streams,
+.mirrors,
+.status,
+.access,
+.about {
+    padding-bottom: 72px;
 }
 
-/* Status Section */
-.status {
-    padding: 60px 0;
+/* ===========================================================================
+   Hero
+   =========================================================================== */
+.hero {
+    padding-top: 56px;
+}
+
+.hero-inner {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 32px;
+    align-items: center;
+}
+
+@media (min-width: 980px) {
+    .hero-inner {
+        grid-template-columns: minmax(0, 1.2fr) minmax(0, .8fr);
+        gap: 40px;
+    }
+}
+
+.hero-eyebrow {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+}
+
+.hero-title {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(32px, 7.4vw, 70px);
+    line-height: 0.98;
+    letter-spacing: -0.04em;
+    margin-bottom: 18px;
+}
+
+.hero-lede {
+    max-width: 46ch;
+    color: var(--text-secondary);
+    font-size: 15.5px;
+    margin-bottom: 28px;
+}
+
+.hero-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 30px;
+    margin-bottom: 28px;
+}
+
+.stat {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stat-value {
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+}
+
+.stat-label {
+    font-size: 12.5px;
+    color: var(--text-secondary);
+}
+
+.hero-ctas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.hero-art {
+    position: relative;
+    display: grid;
+    justify-items: center;
+    isolation: isolate;
+}
+
+.hero-art .mark {
+    width: min(230px, 42vw);
+    height: min(230px, 42vw);
+}
+
+.hero-floor {
+    width: 84%;
+    height: 1px;
+    margin: 6px 0 2px;
+    background: linear-gradient(90deg, transparent, var(--border-color) 18%, var(--border-color) 82%, transparent);
+}
+
+.hero-reflect {
+    height: calc(min(230px, 42vw) * .5);
+    overflow: hidden;
+    display: grid;
+    justify-items: center;
+}
+
+.hero-reflect .mark {
+    transform: scaleY(-1);
+    opacity: .3;
+    -webkit-mask-image: linear-gradient(to top, #000 0%, transparent 55%);
+    mask-image: linear-gradient(to top, #000 0%, transparent 55%);
+}
+
+/* At rest, the sheen sits off the art's left edge, where sheen-sweep starts,
+   so a still frame never shows part of it. */
+.hero-sheen {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    mix-blend-mode: var(--sheen-blend);
+    background: linear-gradient(105deg, transparent 38%, var(--sheen) 50%, transparent 62%) 130% 0 / 260% 100% no-repeat;
+    animation: sheen-sweep 7.5s cubic-bezier(.2, .8, .2, 1) infinite;
+}
+
+@keyframes sheen-sweep {
+    0% { background-position: 130% 0; }
+    55%, 100% { background-position: -30% 0; }
+}
+
+/* ===========================================================================
+   Sync streams -- one row per mirror, between the hero and the mirror cards.
+   =========================================================================== */
+.streams-inner {
+    display: grid;
+    gap: 2px;
+    padding: 8px 16px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-lg);
+}
+
+.stream {
+    display: grid;
+    grid-template-columns: 84px auto minmax(40px, 1fr) auto 104px;
+    align-items: center;
+    gap: 14px;
+    min-height: 40px;
+    font-size: 13px;
+}
+
+.stream-name {
+    font-weight: 600;
+}
+
+.stream-label,
+.stream-host {
+    color: var(--text-secondary);
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.stream-line {
+    position: relative;
+    height: 8px;
+}
+
+/* Online: a solid line, at least 3:1 against the surface -- see
+   docs/design/2026-09-25-reflection-redesign.md section 4.1, --stream-line. */
+.stream[data-state="online"] .stream-line::before {
+    content: '';
+    position: absolute;
+    inset: 50% 0 auto;
+    height: 1.5px;
+    background: var(--stream-line);
+}
+
+/* Syncing: dots flowing from upstream to mirror, in the same amber as the
+   row's syncing pill. */
+.stream[data-state="syncing"] .stream-line {
+    background: radial-gradient(circle, var(--status-syncing) 0 2px, transparent 2.6px) 0 50% / 16px 8px repeat-x;
+    animation: stream-flow .9s linear infinite;
+}
+
+@keyframes stream-flow {
+    to { background-position: 16px 50%; }
+}
+
+/* Error: a broken dashed line with a × where the sync stopped. */
+.stream[data-state="error"] .stream-line {
+    background:
+        repeating-linear-gradient(90deg, var(--status-error) 0 6px, transparent 6px 11px) 0 50% / 42% 1.5px no-repeat,
+        repeating-linear-gradient(90deg, var(--status-error) 0 6px, transparent 6px 11px) 100% 50% / 42% 1.5px no-repeat;
+}
+
+.stream[data-state="error"] .stream-line::after {
+    content: '\00d7';
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -54%);
+    color: var(--status-error);
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+/* ===========================================================================
+   Pills -- shared by every mirror state (spec section 4.8). Keyed only by
+   data-state, never a class rewrite, so main.js only ever needs to set one
+   attribute.
+   =========================================================================== */
+.pill {
+    display: inline-flex;
+    align-items: center;
+    /* Content width, even in a stream row's fixed grid column. */
+    justify-self: start;
+    gap: 6px;
+    padding: 4px 10px 4px 8px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    transition: color var(--transition-fast), background-color var(--transition-fast);
+}
+
+.pill-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+.pill[data-state="online"] {
+    color: var(--status-healthy);
+    background: var(--status-healthy-bg);
+}
+
+.pill[data-state="syncing"] {
+    color: var(--status-syncing);
+    background: var(--status-syncing-bg);
+}
+
+.pill[data-state="syncing"] .pill-dot {
+    animation: pill-ring 1.5s cubic-bezier(.2, .8, .2, 1) infinite;
+}
+
+@keyframes pill-ring {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+    100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+.pill[data-state="error"] {
+    color: var(--status-error);
+    background: var(--status-error-bg);
+}
+
+/* ===========================================================================
+   Mirror cards
+   =========================================================================== */
+.mirror-cards {
+    display: grid;
+    gap: 20px;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+@media (min-width: 980px) {
+    .mirror-cards {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}
+
+.mirror-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-xl);
+    padding: 22px;
+    box-shadow: var(--shadow-card);
+    transition: transform var(--transition-lift), box-shadow var(--transition-lift);
+}
+
+.mirror-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-card-hover);
+}
+
+.mirror-card-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.mirror-logo-tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
     background: var(--bg-secondary);
 }
 
-.status-overview {
-    margin-bottom: 40px;
+.mirror-logo {
+    display: block;
+    width: 26px;
+    height: 26px;
 }
 
+.mirror-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 18px;
+    letter-spacing: -0.02em;
+    flex: 1;
+}
+
+.mirror-description {
+    color: var(--text-secondary);
+    font-size: 13.5px;
+}
+
+.mirror-details {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+}
+
+.mirror-details dt {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.mirror-details dd {
+    margin-top: 2px;
+    font-size: 13.5px;
+    color: var(--text-primary);
+}
+
+.mirror-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: auto;
+    padding-top: 4px;
+}
+
+/* ===========================================================================
+   Status & access
+   =========================================================================== */
 .status-card {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 16px;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
-    padding: 24px;
-    max-width: 500px;
-    margin: 0 auto;
+    border-radius: var(--radius-xl);
+    padding: 22px;
 }
 
-.status-indicator {
-    position: relative;
-    width: 48px;
-    height: 48px;
+.status-dot {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
     border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    background: var(--text-secondary);
 }
 
-.status-indicator.healthy {
-    background: var(--status-healthy-tint);
-}
-
-.status-indicator.healthy::before {
-    content: '';
-    width: 20px;
-    height: 20px;
+.status-card[data-state="online"] .status-dot {
     background: var(--status-healthy);
-    border-radius: 50%;
 }
 
-.status-indicator.degraded {
-    background: var(--status-error-tint);
+.status-card[data-state="syncing"] .status-dot {
+    background: var(--status-syncing);
 }
 
-.status-indicator.degraded::before {
-    content: '';
-    width: 20px;
-    height: 20px;
-    /* --status-error is always defined (tokens.css layer 2, INVARIANTS), so
-       the literal fallback was dead weight -- and a hardcoded hex besides. */
+.status-card[data-state="error"] .status-dot {
     background: var(--status-error);
-    border-radius: 50%;
 }
 
-.status-indicator.syncing {
-    /* --status-syncing-tint, not a plain 15% --accent-primary tint: see the
-       comment on that token in tokens.css -- the dot on top of this tint is
-       --accent-primary (unchanged), so the fix for this pairing's contrast
-       had to come from lightening the tint instead. */
-    background: var(--status-syncing-tint);
-}
-
-.status-indicator.syncing::before {
-    content: '';
-    width: 20px;
-    height: 20px;
-    /* Was var(--primary, #e85d04) -- --primary is not a token defined
-       anywhere (grep confirms), so this always rendered the literal
-       fallback and never actually varied with theme. Fixed to the token
-       every sibling rule in this block uses; matches .healthy/.degraded
-       above, which already reference their status token directly. */
-    background: var(--accent-primary);
-    border-radius: 50%;
-}
-
-.pulse {
-    position: absolute;
-    width: 100%;
-    height: 100%;
-    border-radius: 50%;
-    background: var(--status-healthy);
-    opacity: 0.3;
-    animation: pulse-ring 2s infinite;
-}
-
-@keyframes pulse-ring {
-    0% { transform: scale(0.8); opacity: 0.5; }
-    100% { transform: scale(1.2); opacity: 0; }
-}
-
-.status-info h3 {
-    font-size: 1.125rem;
+/* A card title, so the display face (spec section 4.2), sized like
+   .mirror-name. */
+.status-card h3 {
+    font-family: var(--font-display);
+    font-size: 18px;
     font-weight: 600;
+    letter-spacing: -0.02em;
     margin-bottom: 4px;
 }
 
-.status-info p {
+.status-card p {
     color: var(--text-secondary);
-    font-size: 0.875rem;
+    font-size: 13.5px;
 }
 
-.access-methods h3 {
-    font-size: 1.25rem;
-    font-weight: 600;
-    margin-bottom: 20px;
-    text-align: center;
+/* Access has no subtitle, so its title keeps the 36px a subtitle leaves
+   above a section's content, instead of its own 10px. */
+.access .section-title {
+    margin-bottom: 36px;
 }
 
-.method-grid {
+.access-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-    gap: 20px;
-    max-width: 800px;
-    margin: 0 auto;
+    gap: 14px;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
-.method-card {
+.access-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 24px;
-    text-align: center;
+    padding: 10px 10px 10px 16px;
 }
 
-.method-icon {
-    margin-bottom: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.access-label {
+    flex-shrink: 0;
+    width: 76px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-secondary);
 }
 
-.method-icon svg {
-    width: 36px;
-    height: 36px;
-}
-
-.method-card h4 {
-    font-size: 1.125rem;
-    margin-bottom: 12px;
-}
-
-/* Terminal-style URL blocks */
-.method-url {
-    display: block;
-    background: var(--terminal-bg);
-    color: var(--terminal-text);
-    padding: 14px 18px;
-    border-radius: var(--radius-sm);
-    font-family: var(--font-mono);
-    font-size: 0.875rem;
-    margin-bottom: 12px;
-    white-space: nowrap;
+.access-url {
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
-    text-align: left;
-    border: 1px solid rgba(255, 255, 255, 0.05);
+    white-space: nowrap;
+    font-size: 13px;
 }
 
-.method-url::before {
-    content: '$ ';
-    color: var(--terminal-prompt);
-    font-weight: 500;
-}
-
-.method-card p {
-    color: var(--text-muted);
-    font-size: 0.875rem;
-}
-
-/* About Section */
-.about {
-    padding: 60px 0;
-}
-
+/* ===========================================================================
+   About
+   =========================================================================== */
 .about-content {
     max-width: 700px;
     margin: 0 auto;
 }
 
-/* .section-title / .section-subtitle default to text-align: center (see
-   above); Mirrors and Mirror Status keep that. The About heading now lives
-   inside .about-content, on the same 700px measure as .about-text below,
-   so it reads on one left-aligned axis with the body copy instead of
-   floating centred above ragged-left prose. Scoped to this section's own
-   wrapper via the child combinator, not by editing the shared classes'
-   text-align -- Mirrors/Status are untouched. */
 .about-content > .section-title,
 .about-content > .section-subtitle {
     text-align: left;
@@ -647,13 +784,9 @@ body {
 
 .about-text p {
     color: var(--text-secondary);
-    margin-bottom: 24px;
+    margin-bottom: 20px;
 }
 
-/* Links in running text keep the colour of the text around them, which is
-   already held to AA in both themes, and are told apart by the underline
-   rather than a hue. With no rule at all they fell back to the browser's
-   default blue, well under AA on the dark theme. */
 .about-text a {
     color: var(--text-secondary);
     text-decoration: underline;
@@ -661,15 +794,42 @@ body {
 }
 
 .about-text h4 {
-    font-size: 1rem;
+    font-size: 15px;
     font-weight: 600;
     margin-bottom: 8px;
     color: var(--text-primary);
 }
 
-/* Footer */
+/* The last paragraph's margin would add to the section's own 72px gap
+   below it. */
+.about-text > :last-child {
+    margin-bottom: 0;
+}
+
+/* ===========================================================================
+   Section headings shared by Mirrors, Status, Access and About
+   =========================================================================== */
+.section-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 30px;
+    letter-spacing: -0.03em;
+    margin-bottom: 10px;
+    text-align: center;
+}
+
+.section-subtitle {
+    text-align: center;
+    color: var(--text-secondary);
+    margin-bottom: 36px;
+    font-size: 14.5px;
+}
+
+/* ===========================================================================
+   Footer
+   =========================================================================== */
 .footer {
-    padding: 32px 0;
+    padding: 28px 0;
     border-top: 1px solid var(--border-color);
     background: var(--bg-secondary);
 }
@@ -679,49 +839,45 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 8px;
+    text-align: center;
 }
 
 .footer-content p {
-    color: var(--text-muted);
-    font-size: 0.875rem;
+    color: var(--text-secondary);
+    font-size: 13.5px;
 }
 
-/* Same treatment as .about-text a: the footer's own muted colour, underlined. */
 .footer-content a {
-    color: var(--text-muted);
+    color: var(--text-secondary);
     text-decoration: underline;
     text-underline-offset: 2px;
 }
 
 .footer-version {
     font-family: var(--font-mono);
-    font-size: 0.75rem !important;
-    /* No opacity here: it multiplies straight through whatever --text-muted
-       resolves to (inherited from .footer-content p above). At 0.6 it took
-       an already-compliant text-muted back down to ~1.8:1 against
-       bg-secondary in both themes. --text-muted alone (now 5.38:1 light /
-       5.89:1 dark against this element's actual background) already reads
-       as de-emphasised; the extra fade is not needed to achieve that and
-       cannot be applied without breaking contrast. */
+    font-size: 12px !important;
 }
 
-/* Toast notification */
+/* ===========================================================================
+   Toast
+   =========================================================================== */
 .toast {
     position: fixed;
     bottom: 24px;
     left: 50%;
     transform: translateX(-50%) translateY(100px);
-    background: var(--terminal-bg);
-    color: var(--terminal-text);
-    padding: 12px 24px;
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border: 1px solid var(--border-color);
+    padding: 12px 20px;
     border-radius: var(--radius-md);
-    font-size: 0.875rem;
+    font-size: 13.5px;
     font-weight: 500;
     font-family: var(--font-mono);
+    box-shadow: var(--shadow-card-hover);
     opacity: 0;
-    transition: all var(--transition-base);
+    transition: transform var(--transition-base), opacity var(--transition-base);
     z-index: 1000;
-    border: 1px solid rgba(232, 93, 4, 0.3);
 }
 
 .toast.show {
@@ -729,21 +885,65 @@ body {
     opacity: 1;
 }
 
-/* Responsive */
-@media (max-width: 768px) {
+/* ===========================================================================
+   Focus
+   =========================================================================== */
+:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+
+/* ===========================================================================
+   Reduced motion -- every animation and transition off. No animation is ever
+   set as an inline style, so this rule always wins.
+   =========================================================================== */
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+    }
+
+    /* A sheen that never moves is only a smudge on the art. */
+    .hero-sheen {
+        display: none;
+    }
+}
+
+/* ===========================================================================
+   Responsive
+   =========================================================================== */
+@media (max-width: 639.98px) {
     .nav {
         display: none;
     }
 
-    .mirrors-grid {
-        grid-template-columns: 1fr;
+    .hero,
+    .streams,
+    .mirrors,
+    .status,
+    .access,
+    .about {
+        padding-bottom: 48px;
     }
 
-    .hero-stats {
-        grid-template-columns: 1fr;
+    .hero-art {
+        order: -1;
     }
 
-    .mirror-actions {
-        flex-direction: column;
+    .stream {
+        grid-template-columns: 70px minmax(30px, 1fr) 88px;
+    }
+
+    .stream-label,
+    .stream-host {
+        display: none;
+    }
+
+    .access-grid {
+        grid-template-columns: 1fr;
     }
 }

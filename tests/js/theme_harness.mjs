@@ -16,8 +16,8 @@ import vm from 'node:vm';
 const [initPath, mainPath] = process.argv.slice(2);
 const INIT_SOURCE = fs.readFileSync(initPath, 'utf8');
 const MAIN_SOURCE = fs.readFileSync(mainPath, 'utf8');
-const MOON = '☾';
-const SUN = '☀';
+const MOON = 'moon';
+const SUN = 'sun';
 
 /** A fresh, browser-shaped global for one page view. */
 function makePage({ saved = null, storageThrows = false, writeThrows = false, prefersDark = false, matchMedia = true } = {}) {
@@ -36,7 +36,12 @@ function makePage({ saved = null, storageThrows = false, writeThrows = false, pr
     const htmlAttrs = new Map();
     const toggleAttrs = new Map([['aria-label', 'Toggle theme']]);
     const clickListeners = [];
-    const icon = { textContent: MOON };
+    const iconAttrs = new Map([['data-icon', MOON]]);
+    const icon = {
+        textContent: '',
+        setAttribute: (name, value) => iconAttrs.set(name, String(value)),
+        getAttribute: (name) => (iconAttrs.has(name) ? iconAttrs.get(name) : null),
+    };
     const toggle = {
         setAttribute: (name, value) => toggleAttrs.set(name, String(value)),
         getAttribute: (name) => (toggleAttrs.has(name) ? toggleAttrs.get(name) : null),
@@ -88,7 +93,8 @@ function makePage({ saved = null, storageThrows = false, writeThrows = false, pr
     return {
         writes,
         theme: () => (htmlAttrs.has('data-theme') ? htmlAttrs.get('data-theme') : null),
-        icon: () => icon.textContent,
+        icon: () => icon.getAttribute('data-icon'),
+        iconText: () => icon.textContent,
         label: () => toggleAttrs.get('aria-label'),
         click: () => clickListeners.forEach((fn) => fn()),
         systemChanges: (dark) => {
@@ -170,7 +176,8 @@ check('ThemeManager.init adopts the theme theme-init applied and syncs the toggl
     page.loadThemeManager().init();
     return all(
         expect(page.theme(), 'dark', 'data-theme'),
-        expect(page.icon(), SUN, 'icon'),
+        expect(page.icon(), SUN, 'data-icon'),
+        expect(page.iconText(), '', 'icon textContent'),
         expect(page.label(), 'Switch to light theme', 'aria-label'),
         expect(page.writes.length, 0, 'storage writes'),
     );
@@ -179,7 +186,11 @@ check('ThemeManager.init adopts the theme theme-init applied and syncs the toggl
 check('ThemeManager.init alone falls back to the saved or system theme', () => {
     const page = makePage({ saved: 'dark' });
     page.loadThemeManager().init();
-    return all(expect(page.theme(), 'dark', 'data-theme'), expect(page.icon(), SUN, 'icon'));
+    return all(
+        expect(page.theme(), 'dark', 'data-theme'),
+        expect(page.icon(), SUN, 'data-icon'),
+        expect(page.iconText(), '', 'icon textContent'),
+    );
 });
 
 check('clicking the toggle flips the theme and saves the choice', () => {
@@ -189,7 +200,8 @@ check('clicking the toggle flips the theme and saves the choice', () => {
     page.click();
     return all(
         expect(page.theme(), 'light', 'data-theme'),
-        expect(page.icon(), MOON, 'icon'),
+        expect(page.icon(), MOON, 'data-icon'),
+        expect(page.iconText(), '', 'icon textContent'),
         expect(page.label(), 'Switch to dark theme', 'aria-label'),
         expect(JSON.stringify(page.writes), JSON.stringify([['theme', 'light']]), 'storage writes'),
     );
@@ -208,7 +220,11 @@ check('a system change is followed until the visitor chooses', () => {
     page.runThemeInit();
     page.loadThemeManager().init();
     page.systemChanges(true);
-    return all(expect(page.theme(), 'dark', 'data-theme'), expect(page.icon(), SUN, 'icon'));
+    return all(
+        expect(page.theme(), 'dark', 'data-theme'),
+        expect(page.icon(), SUN, 'data-icon'),
+        expect(page.iconText(), '', 'icon textContent'),
+    );
 });
 
 check('a system change is ignored once a choice is saved', () => {
