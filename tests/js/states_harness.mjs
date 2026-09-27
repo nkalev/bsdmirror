@@ -19,12 +19,11 @@
  * epilogue exposes it alongside MirrorStatus and the hostname check below
  * calls it directly on its own fake page, rather than going through load().
  *
- * The fake DOM matches the *future* markup section 5.1 describes (a stream
- * row and pill per mirror, #statFiles, [data-hostname] elements), since that
- * is the contract main.js implements ahead of the stylesheet and markup
- * switch later in this PR. One check (see "does not throw against today's
- * markup" below) instead builds today's sparser real markup, to prove every
- * lookup is null-safe against it.
+ * The fake DOM matches the markup section 5.1 describes and index.html ships
+ * (a stream row and pill per mirror, #statFiles, [data-hostname] elements).
+ * One check (see "does not throw against markup with no stream rows" below)
+ * instead builds a sparser page without them, to prove every lookup is
+ * null-safe against it.
  *
  * Usage:  node states_harness.mjs <path-to-main.js>
  */
@@ -35,62 +34,90 @@ const [mainPath] = process.argv.slice(2);
 const MAIN_SOURCE = fs.readFileSync(mainPath, 'utf8');
 
 /** One fake element: setAttribute/getAttribute (data-state), textContent,
- * className and a plain style object (legacy .pulse writes), plus a flat,
- * non-recursive querySelector into a caller-supplied child map -- the same
- * trade-off theme_harness.mjs's icon/toggle stubs make. `state`, given,
- * seeds data-state the way the shipped HTML does (section 5.2: "As shipped
- * in the HTML, before any data" is data-state="unknown"). */
-function makeEl({ text = '', state = null, children = {} } = {}) {
+ * className, classList and style (all write-tracking, see `writes` below),
+ * plus a flat, non-recursive querySelector into a caller-supplied child map
+ * -- the same trade-off theme_harness.mjs's icon/toggle stubs make. `state`,
+ * given, seeds data-state the way the shipped HTML does (section 5.2: "As
+ * shipped in the HTML, before any data" is data-state="unknown").
+ *
+ * `writes`, when given, is one array shared by every element `makePage`
+ * builds for a page. The className setter, classList.remove (the element's
+ * own, and the one on the ancestor closest() finds) and a Proxy around style
+ * each push a description onto it, so a check can assert that a whole
+ * page's worth of elements were never written to -- not just that the final
+ * value still looks untouched, which a write of the same value would hide. */
+function makeEl({ text = '', state = null, children = {}, writes = null } = {}) {
     const attrs = new Map();
     if (state !== null) attrs.set('data-state', state);
     let textContent = text;
     let className = '';
+    const style = new Proxy({}, {
+        set(target, prop, value) {
+            writes?.push(`style.${String(prop)} = ${JSON.stringify(value)}`);
+            target[prop] = value;
+            return true;
+        }
+    });
+    // Records each call instead of tracking classes: no check reads a class
+    // back, they only need to know whether one was ever touched.
+    const recordingClassList = (owner) => ({
+        remove: (name) => { writes?.push(`${owner}classList.remove(${JSON.stringify(name)})`); }
+    });
     return {
         get textContent() { return textContent; },
         set textContent(v) { textContent = v; },
         get className() { return className; },
-        set className(v) { className = v; },
-        style: {},
-        // .stat-card's ancestor and its "loading" class: the legacy
-        // .stat-card loading removal does not need a real DOM tree to land
-        // on, just something with a working classList so the call does not
-        // throw.
-        classList: { remove: () => {} },
-        closest: () => ({ classList: { remove: () => {} } }),
+        set className(v) {
+            writes?.push(`className = ${JSON.stringify(v)}`);
+            className = v;
+        },
+        style,
+        classList: recordingClassList(''),
+        // The ancestor a closest() lookup lands on, such as the .stat-card
+        // whose "loading" class main.js used to remove: a stand-in with a
+        // recording classList of its own.
+        closest: (sel) => ({ classList: recordingClassList(`closest(${JSON.stringify(sel)}).`) }),
         setAttribute: (name, value) => attrs.set(name, String(value)),
         getAttribute: (name) => (attrs.has(name) ? attrs.get(name) : null),
         querySelector: (sel) => children[sel] ?? null
     };
 }
 
-/** A fresh page. `minimal` builds today's real markup -- no stream rows, no
- * [data-hostname], no #statFiles -- everything else builds the future markup
- * section 5.1 describes, which is what most checks below drive. */
+/** A fresh page. `minimal` builds a sparser page -- no stream rows, no
+ * [data-hostname], no #statFiles, as index.html was before section 5.1's
+ * redesign -- everything else builds the markup section 5.1 describes, which
+ * is what most checks below drive. */
 function makePage({ minimal = false, hostname = 'mirror.test' } = {}) {
+    // Shared by every element this page builds, so one check can assert that
+    // no className, classList or style write happened anywhere on the page.
+    const writes = [];
     const mirrors = {};
     for (const id of ['freebsd', 'netbsd', 'openbsd']) {
-        const statusText = makeEl({ text: 'Checking…' });
-        const dot = makeEl({});
-        const statusEl = makeEl({ state: 'unknown', children: { '.status-dot': dot, '.status-text': statusText } });
+        const statusText = makeEl({ text: 'Checking…', writes });
+        const dot = makeEl({ writes });
+        const statusEl = makeEl({
+            state: 'unknown', writes,
+            children: { '.status-dot': dot, '.status-text': statusText }
+        });
 
-        const pillStatusText = makeEl({ text: 'Checking…' });
-        const pill = makeEl({ state: 'unknown', children: { '.status-text': pillStatusText } });
-        const stream = makeEl({ state: 'unknown', children: { '.pill': pill } });
+        const pillStatusText = makeEl({ text: 'Checking…', writes });
+        const pill = makeEl({ state: 'unknown', writes, children: { '.status-text': pillStatusText } });
+        const stream = makeEl({ state: 'unknown', writes, children: { '.pill': pill } });
 
         mirrors[id] = {
             statusEl, dot, statusText, stream, pill, pillStatusText,
-            size: makeEl({ text: '--' }),
-            sync: makeEl({ text: '--' }),
-            dataHostname: makeEl({ text: '' })
+            size: makeEl({ text: '--', writes }),
+            sync: makeEl({ text: '--', writes }),
+            dataHostname: makeEl({ text: '', writes })
         };
     }
 
-    const overallTitle = makeEl({ text: 'Checking mirror status…' });
-    const overallDesc = makeEl({ text: '' });
-    const indicator = makeEl({});
-    const pulse = makeEl({});
+    const overallTitle = makeEl({ text: 'Checking mirror status…', writes });
+    const overallDesc = makeEl({ text: '', writes });
+    const indicator = makeEl({ writes });
+    const pulse = makeEl({ writes });
     const overall = makeEl({
-        state: 'unknown',
+        state: 'unknown', writes,
         children: { h3: overallTitle, p: overallDesc, '.status-indicator': indicator, '.pulse': pulse }
     });
     overall.h3 = overallTitle;
@@ -98,11 +125,11 @@ function makePage({ minimal = false, hostname = 'mirror.test' } = {}) {
     overall.indicator = indicator;
     overall.pulse = pulse;
 
-    const statSize = makeEl({ text: '—' });
-    const statFiles = makeEl({ text: '—' });
-    const statLastSync = makeEl({ text: '—' });
-    const hostnameEl = makeEl({ text: '' });
-    const rsynchostEl = makeEl({ text: '' });
+    const statSize = makeEl({ text: '—', writes });
+    const statFiles = makeEl({ text: '—', writes });
+    const statLastSync = makeEl({ text: '—', writes });
+    const hostnameEl = makeEl({ text: '', writes });
+    const rsynchostEl = makeEl({ text: '', writes });
 
     const byId = { overallStatus: overall, statSize, statLastSync, hostname: hostnameEl, rsynchost: rsynchostEl };
     if (!minimal) byId.statFiles = statFiles;
@@ -170,7 +197,8 @@ function makePage({ minimal = false, hostname = 'mirror.test' } = {}) {
         statLastSync,
         hostnameEl,
         rsynchostEl,
-        dataHostnameEls
+        dataHostnameEls,
+        writes
     };
 }
 
@@ -522,9 +550,9 @@ await check("hostname fill sets #hostname, #rsynchost and every stream row's dat
 });
 
 // ---------------------------------------------------------------------------
-// Null-safety against today's real markup, and the legacy writes kept for now.
+// Null-safety against sparser markup, and the retired legacy writes.
 // ---------------------------------------------------------------------------
-await check("load does not throw against today's markup, which has no stream rows", async () => {
+await check('load does not throw against markup with no stream rows', async () => {
     // setHostname() is no longer part of load()'s call graph (see the file
     // header), so this is purely about load() itself against sparse markup.
     const page = makePage({ minimal: true });
@@ -545,28 +573,28 @@ await check("load does not throw against today's markup, which has no stream row
     );
 });
 
-await check('an active mirror still gets the legacy status-dot healthy class', async () => {
-    const page = makePage();
-    page.setFetch(async () => ok({
-        mirrors: { FreeBSD: { status: 'active' }, NetBSD: { status: 'active' }, OpenBSD: { status: 'active' } },
-        totals: {}
-    }));
-    await page.load();
-    return expect(page.mirrors.freebsd.dot.className, 'status-dot healthy', 'dot className');
-});
-
-await check('a syncing mirror still drives the legacy status-indicator and pulse colour', async () => {
-    const page = makePage();
-    page.setFetch(async () => ok({
-        mirrors: { FreeBSD: { status: 'active' }, NetBSD: { status: 'syncing' }, OpenBSD: { status: 'active' } },
-        totals: {}
-    }));
-    await page.load();
-    return all(
-        expect(page.mirrors.netbsd.dot.className, 'status-dot syncing', 'dot className'),
-        expect(page.overall.indicator.className, 'status-indicator syncing', 'indicator className'),
-        expect(page.overall.pulse.style.background, 'var(--accent-primary)', 'pulse background')
-    );
-});
+await check(
+    'the legacy status-dot, status-indicator, pulse and stat-card elements are present but never written',
+    async () => {
+        // One response that would reach every retired path: an active, a
+        // syncing and an error mirror for the dot, indicator and pulse
+        // writes, and totals.size plus a last_updated for the two .stat-card
+        // "loading" removals.
+        const page = makePage();
+        const now = new Date().toISOString();
+        page.setFetch(async () => ok({
+            mirrors: {
+                FreeBSD: { status: 'active', last_updated: now },
+                NetBSD: { status: 'syncing' },
+                OpenBSD: { status: 'error' }
+            },
+            totals: { size: '2.1 TB', files: '604,618' }
+        }));
+        await page.load();
+        return page.writes.length === 0
+            ? true
+            : `unexpected className, classList or style writes: ${page.writes.join(', ')}`;
+    }
+);
 
 process.stdout.write(JSON.stringify(results));

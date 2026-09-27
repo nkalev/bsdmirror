@@ -86,9 +86,8 @@ const API = {
 // Mirror status manager
 //
 // docs/design/2026-09-25-reflection-redesign.md, section 5.2. Each mirror's
-// card pill (#<id>-status), its stream row (#<id>-stream -- markup PR 2 adds
-// later; on today's page the lookup is simply null) and the row's own .pill
-// child all carry a data-state the stylesheet keys off, plus a worded
+// card pill (#<id>-status), its stream row (#<id>-stream) and the row's own
+// .pill child all carry a data-state the stylesheet keys off, plus a worded
 // .status-text. The overall card gets the same treatment, with its own
 // data-state and a title/sentence chosen from every mirror's state at once --
 // including the "API failed" and "no mirror online" cases the old
@@ -133,8 +132,8 @@ const isAre = (count) => (count === 1 ? 'is' : 'are');
 
 // Writes data-state and, where the element has one, its .status-text. Used
 // for a mirror's card pill, its stream row, and the row's own .pill child
-// alike -- every argument may be null or undefined, since the stream row and
-// its pill do not exist until PR 2's new markup ships.
+// alike. Any of them may be missing (null or undefined), and is skipped: a
+// page without stream rows still gets its card pills painted.
 function paintState(el, state, text) {
     if (!el) return;
     el.setAttribute('data-state', state);
@@ -152,13 +151,6 @@ const MirrorStatus = {
 
         this.updateMirrorStates(data.mirrors);
         this.updateStats(data);
-
-        // --- Legacy, removed in Task 5: keeps today's .status-dot,
-        // .status-indicator and .pulse writes going, alongside the
-        // data-state model above, until the stylesheet that reads them is
-        // replaced later in this PR. ---
-        this.updateMirrorCards(data.mirrors);
-        this.updateOverallStatus(data.mirrors);
     },
 
     // The data-state model, section 5.2's first table.
@@ -257,10 +249,6 @@ const MirrorStatus = {
         const statSize = document.getElementById('statSize');
         if (statSize && data.totals?.size) {
             statSize.textContent = data.totals.size;
-            // --- Legacy, removed in Task 5: today's markup starts this
-            // stat-card "loading"; the new markup this PR ships later
-            // will not. ---
-            statSize.closest('.stat-card')?.classList.remove('loading');
         }
 
         const statFiles = document.getElementById('statFiles');
@@ -277,65 +265,7 @@ const MirrorStatus = {
                 .reverse();
             if (syncs.length > 0) {
                 statLastSync.textContent = this.formatRelativeTime(new Date(syncs[0]));
-                // --- Legacy, removed in Task 5: see above. ---
-                statLastSync.closest('.stat-card')?.classList.remove('loading');
             }
-        }
-    },
-
-    // --- Legacy: rewrites .status-dot's className, exactly as today.
-    // Removed in Task 5 (docs/design/2026-09-25-reflection-redesign.md,
-    // section 5.2 "Changes": "Data attributes, not class rewrites"). The
-    // data-state model above already recomputes every mirror's state and its
-    // .status-text; #<id>-size and #<id>-sync moved there too, so this keeps
-    // only the one write nothing else needs. ---
-    updateMirrorCards(mirrors) {
-        for (const [name, mirror] of Object.entries(mirrors)) {
-            const lowerName = name.toLowerCase();
-            const statusEl = document.getElementById(`${lowerName}-status`);
-            const dot = statusEl?.querySelector('.status-dot');
-            if (!dot) continue;
-
-            const statusClassMap = {
-                'active': 'healthy',
-                'syncing': 'syncing',
-                'error': 'error',
-                'disabled': ''
-            };
-            const statusClass = statusClassMap[mirror.status] || '';
-            dot.className = 'status-dot' + (statusClass ? ' ' + statusClass : '');
-        }
-    },
-
-    // --- Legacy: rewrites .status-indicator's className and .pulse's inline
-    // background, exactly as today -- including today's own "all mirrors
-    // online" logic, not the fixed table updateOverallState uses above.
-    // Removed in Task 5. ---
-    updateOverallStatus(mirrors) {
-        const statusCard = document.getElementById('overallStatus');
-        if (!statusCard) return;
-
-        const statuses = Object.values(mirrors).map(m => m.status);
-        const anyError = statuses.includes('error');
-        const anySyncing = statuses.includes('syncing');
-        const allActive = statuses.every(s => s === 'active');
-
-        const indicator = statusCard.querySelector('.status-indicator');
-        const pulse = statusCard.querySelector('.pulse');
-        if (!indicator) return;
-
-        if (anyError) {
-            indicator.className = 'status-indicator degraded';
-            if (pulse) pulse.style.background = 'var(--status-error, #ef4444)';
-        } else if (anySyncing) {
-            indicator.className = 'status-indicator syncing';
-            if (pulse) pulse.style.background = 'var(--accent-primary)';
-        } else if (allActive) {
-            indicator.className = 'status-indicator healthy';
-            if (pulse) pulse.style.background = 'var(--status-healthy)';
-        } else {
-            indicator.className = 'status-indicator healthy';
-            if (pulse) pulse.style.background = 'var(--status-healthy)';
         }
     },
 

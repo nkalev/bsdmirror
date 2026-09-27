@@ -9,22 +9,23 @@ an empty mirror list also read as true, so a response with no mirrors in it
 showed that same false all-clear.
 
 MirrorStatus now writes only a `data-state` attribute and a `.status-text`
-word, on a mirror's card pill (#<id>-status), its stream row (#<id>-stream,
-markup this PR ships later -- the lookup is null against today's page) and
-the row's own .pill child alike, plus the overall card (#overallStatus),
+word, on a mirror's card pill (#<id>-status), its stream row (#<id>-stream)
+and the row's own .pill child alike, plus the overall card (#overallStatus),
 whose title and sentence are chosen from every mirror's computed state at
 once -- including the API-failure and no-mirror-online cases the old
-className-only version could not represent. The three old writes stay for
-now, because today's stylesheet and tests/js/contrast_harness.mjs still key
-off them.
+className-only version could not represent. The three old writes are gone,
+and so is the .stat-card "loading" removal: style.css and
+tests/js/contrast_harness.mjs key off data-state alone.
 
 tests/js/states_harness.mjs runs the real main.js in a Node vm with a small
 fake DOM (in tests/js/theme_harness.mjs's style) and stubbed fetch responses,
 one per row of section 5.2's two tables plus these edge cases: an absent
 mirror, an empty mirrors object, an API failure on the first load and after a
 success, sentences naming two or three mirrors, the new #statFiles stat, the
-[data-hostname] fill, and a run against today's sparser real markup to prove
-every lookup is null-safe.
+[data-hostname] fill, a run against sparser markup with no stream rows to
+prove every lookup is null-safe, and a run with the retired .status-dot,
+.status-indicator, .pulse and .stat-card elements present to prove none of
+them is ever written.
 """
 
 import json
@@ -69,10 +70,9 @@ CHECKS = [
     "statSize and statFiles are left untouched when totals is empty",
     "statLastSync reflects the most recently updated mirror",
     "hostname fill sets #hostname, #rsynchost and every stream row's data-hostname element",
-    # Null-safety against today's markup, and the legacy writes kept for now.
-    "load does not throw against today's markup, which has no stream rows",
-    "an active mirror still gets the legacy status-dot healthy class",
-    "a syncing mirror still drives the legacy status-indicator and pulse colour",
+    # Null-safety against sparser markup, and the retired legacy writes.
+    "load does not throw against markup with no stream rows",
+    "the legacy status-dot, status-indicator, pulse and stat-card elements are present but never written",
 ]
 
 

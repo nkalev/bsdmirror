@@ -607,9 +607,11 @@ def test_no_interpolation_into_script_or_style_elements():
 # ---------------------------------------------------------------------------
 # CSS custom properties read from JavaScript
 #
-# Both files set inline styles from var(--token). A token defined nowhere
-# silently falls back to the inherited value, or to the literal fallback --
-# which pins one theme's colour in both themes.
+# Neither file reads a var(--token) any more: admin.js's inline styles moved
+# into classes, and main.js's last reads went with its .pulse writes (spec
+# section 5.2). The check stays for any read either file adds: a token
+# defined nowhere silently falls back to the inherited value, or to the
+# literal fallback -- which pins one theme's colour in both themes.
 # ---------------------------------------------------------------------------
 CSS_VAR_READ = re.compile(r"var\(\s*(--[a-zA-Z0-9-]+)")
 
