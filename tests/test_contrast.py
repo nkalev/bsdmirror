@@ -557,12 +557,14 @@ def test_footer_version_declares_no_opacity():
 # The token-level pairs spec section 9 names, resolved directly from
 # tokens.css in both themes -- independent of whether a component rule in
 # style.css happens to consume a given pair today. Two of these
-# (--status-info, --status-incomplete) are admin-only today (spec section
-# 4.8's table); --border-strong reaches the public site only as two hover
-# borders (a border-color, which no selector pair above reads), and the disk
-# meter's fills have no consumer yet (spec section 4.8, "Disk meter") -- all
-# of them are pinned here, so each is checked wherever it is consumed,
-# including by the admin console's own redesign (spec section 6.1).
+# (--status-info, --status-incomplete) have no consumer until the admin
+# console's redesign, which spec section 4.8's table gives them to (admin.css
+# reads the LEGACY ADMIN block's pinned tokens until then); --border-strong
+# reaches the public site only as two hover borders (a border-color, which no
+# selector pair above reads), and the disk meter's fills have no consumer yet
+# either (spec section 4.8, "Disk meter") -- all of them are pinned here, so
+# each is checked wherever it is consumed, including by the admin console's
+# own redesign (spec section 6.1).
 # ===========================================================================
 TOKEN_PAIRS = [
     ("--text-primary", "--bg-primary", 4.5),

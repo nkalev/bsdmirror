@@ -163,12 +163,12 @@ body {
 /* ---------------------------------------------------------------------------
    OS dark preference
    ---------------------------------------------------------------------------
-   These pages ship no <script>, and the rest of the site picks its theme in
+   These pages ship no <script>, and the public site picks its theme in
    JavaScript: js/theme-init.js sets data-theme on <html> before the first
-   paint, and main.js keeps it in step. So without this block
-   an error page renders tokens.css's :root (light) on every machine, including
-   one whose entire desktop is dark. That is not "theme-aware"; it is "always
-   light, in tokens", which is a different and less useful thing.
+   paint, and main.js keeps it in step. So without this block an error page
+   renders tokens.css's :root (light) on every machine, including one whose
+   entire desktop is dark. That is not "theme-aware"; it is "always light, in
+   tokens", which is a different and less useful thing.
 
    The four tokens below are exactly the colour tokens these pages consume --
    by body, .error-title, .error-text, .error-link, .mark-glyph/.mark-axis and

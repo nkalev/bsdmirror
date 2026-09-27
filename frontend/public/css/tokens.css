@@ -20,7 +20,8 @@
                            component rule -- semantic tokens reference these.
    2. INVARIANTS           Semantics that do not change with theme or surface.
    3. LIGHT THEME          Semantics for :root, i.e. the public site's default.
-   4. DARK THEME           Semantics for [data-theme="dark"], set by main.js.
+   4. DARK THEME           Semantics for [data-theme="dark"], set by
+                           theme-init.js and main.js.
    5. ADMIN SURFACE        Frozen ahead of the admin console's own redesign
                            (spec section 6). See the note at that block.
 
@@ -30,13 +31,13 @@
    Theme and surface are independent axes, both expressed on <html>:
 
      <html>                                    public site, light
-     <html data-theme="dark">                  public site, dark  (main.js)
+     <html data-theme="dark">                  public site, dark  (theme-init.js, main.js)
      <html data-theme="dark" data-surface="admin">   admin panel
 
    The admin panel has no theme toggle yet (spec section 6.2 adds one); it is
    dark-only and carries data-theme="dark" statically. Until its own redesign
-   (spec section 7) its colours come from the LEGACY group in the admin layer
-   below, not from this file's dark theme.
+   (spec section 7) its colours come from the LEGACY ADMIN group in the admin
+   layer below, not from this file's dark theme.
 
    Layers 3-5 all have specificity (0,1,0), so ordering in this file decides:
    dark overrides light, admin overrides dark. Keep them in this order.
@@ -207,7 +208,8 @@
 
 /* ===========================================================================
    4. DARK THEME
-   Applied by main.js on the public site; static on the admin panel.
+   Applied by theme-init.js and main.js on the public site; static on the
+   admin panel.
    =========================================================================== */
 
 [data-theme="dark"] {

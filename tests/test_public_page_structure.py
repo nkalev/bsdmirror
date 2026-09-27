@@ -242,6 +242,22 @@ def test_hero_ctas():
 
 
 # ===========================================================================
+# Hero mark: one gradient across the whole glyph (spec section 4.5).
+# ===========================================================================
+def test_the_hero_gradient_spans_the_whole_glyph():
+    """Spec section 4.5: the hero glyph is filled with one vertical gradient.
+    In the default objectBoundingBox units each shape gets its own gradient, so
+    the bowls (y 34-58) and the stems (y 6-58) shade differently where they
+    overlap, and a seam shows. User-space units from the glyph's top to its
+    bottom give every shape the same continuous gradient."""
+    gradient = find_one(ROOT, tag="lineargradient", id="hero-mark-gradient")
+    attrs = gradient.attrs  # HTMLParser lowercases attribute names
+    assert attrs.get("gradientunits") == "userSpaceOnUse"
+    assert (attrs.get("x1"), attrs.get("x2")) == ("0", "0"), "the gradient must be vertical"
+    assert (attrs.get("y1"), attrs.get("y2")) == ("6", "58"), "from the glyph's top to its bottom"
+
+
+# ===========================================================================
 # Sync streams: one row per mirror, each with a pill and a hostname hook
 # (spec section 5.2's new markup).
 # ===========================================================================
@@ -362,6 +378,20 @@ def test_footer_version_literal_class_and_toast_hook():
 
 
 # ===========================================================================
+# New-tab links: none hands the opened page a handle on this one.
+# ===========================================================================
+def test_new_tab_links_carry_noopener():
+    """A target="_blank" link without rel="noopener" hands the opened page a
+    handle on this one (window.opener). Current browsers imply it, but the
+    markup should not rely on that."""
+    new_tab = [n for n in ROOT.walk() if n.tag == "a" and n.attrs.get("target") == "_blank"]
+    assert new_tab, "expected the About and footer links to open in a new tab"
+    for link in new_tab:
+        rel = set((link.attrs.get("rel") or "").split())
+        assert "noopener" in rel, f"{link} opens a new tab without rel=noopener"
+
+
+# ===========================================================================
 # Accessibility: the mark, the hero art and every icon span are aria-hidden,
 # and every .icon span names a real file under /img/icons/ (spec section 9).
 # ===========================================================================
@@ -380,30 +410,6 @@ def test_hero_art_is_aria_hidden():
     assert art.attrs.get("aria-hidden") == "true"
     marks = list(find_all(art, tag="svg", class_="mark"))
     assert len(marks) == 2, "the hero art holds the standing mark and its reflection"
-
-
-def test_new_tab_links_carry_noopener():
-    """A target="_blank" link without rel="noopener" hands the opened page a
-    handle on this one (window.opener). Current browsers imply it, but the
-    markup should not rely on that."""
-    new_tab = [n for n in ROOT.walk() if n.tag == "a" and n.attrs.get("target") == "_blank"]
-    assert new_tab, "expected the About and footer links to open in a new tab"
-    for link in new_tab:
-        rel = set((link.attrs.get("rel") or "").split())
-        assert "noopener" in rel, f"{link} opens a new tab without rel=noopener"
-
-
-def test_the_hero_gradient_spans_the_whole_glyph():
-    """Spec section 4.5: the hero glyph is filled with one vertical gradient.
-    In the default objectBoundingBox units each shape gets its own gradient, so
-    the bowls (y 34-58) and the stems (y 6-58) shade differently where they
-    overlap, and a seam shows. User-space units from the glyph's top to its
-    bottom give every shape the same continuous gradient."""
-    gradient = find_one(ROOT, tag="lineargradient", id="hero-mark-gradient")
-    attrs = gradient.attrs  # HTMLParser lowercases attribute names
-    assert attrs.get("gradientunits") == "userSpaceOnUse"
-    assert (attrs.get("x1"), attrs.get("x2")) == ("0", "0"), "the gradient must be vertical"
-    assert (attrs.get("y1"), attrs.get("y2")) == ("6", "58"), "from the glyph's top to its bottom"
 
 
 ICON_CLASS_PREFIX = "icon-"
