@@ -382,6 +382,17 @@ def test_hero_art_is_aria_hidden():
     assert len(marks) == 2, "the hero art holds the standing mark and its reflection"
 
 
+def test_new_tab_links_carry_noopener():
+    """A target="_blank" link without rel="noopener" hands the opened page a
+    handle on this one (window.opener). Current browsers imply it, but the
+    markup should not rely on that."""
+    new_tab = [n for n in ROOT.walk() if n.tag == "a" and n.attrs.get("target") == "_blank"]
+    assert new_tab, "expected the About and footer links to open in a new tab"
+    for link in new_tab:
+        rel = set((link.attrs.get("rel") or "").split())
+        assert "noopener" in rel, f"{link} opens a new tab without rel=noopener"
+
+
 def test_the_hero_gradient_spans_the_whole_glyph():
     """Spec section 4.5: the hero glyph is filled with one vertical gradient.
     In the default objectBoundingBox units each shape gets its own gradient, so

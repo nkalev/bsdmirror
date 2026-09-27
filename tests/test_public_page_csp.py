@@ -130,7 +130,9 @@ INLINE_HANDLER = re.compile(r"""\son([a-z]{3,})\s*=\s*["']""")
 
 
 @pytest.mark.parametrize(
-    "html_path", [INDEX_HTML, ADMIN_INDEX_HTML], ids=["index.html", "admin/index.html"]
+    "html_path",
+    [INDEX_HTML, ADMIN_INDEX_HTML, PUBLIC / "404.html", PUBLIC / "50x.html"],
+    ids=["index.html", "admin/index.html", "404.html", "50x.html"],
 )
 def test_no_inline_event_handlers(html_path):
     """script-src 'self' blocks these, so they are dead code that looks alive."""
@@ -141,6 +143,18 @@ def test_no_inline_event_handlers(html_path):
         f"{html_path.name} has inline event handler(s) {found}. The production "
         f"CSP blocks them; bind with addEventListener in the page's JS instead."
     )
+
+
+def test_index_html_has_no_inline_styles():
+    """style-src 'self' drops an inline style= or <style> block without a
+    word, so the element would silently render unstyled in production. The
+    click harness would log the violation, but only where Chrome runs; this
+    reads the file."""
+    html = INDEX_HTML.read_text(encoding="utf-8")
+    assert not re.search(r"<style[\s>]", html, re.IGNORECASE), "index.html has a <style> block"
+    assert not re.search(
+        r"""\sstyle\s*=\s*["']""", html, re.IGNORECASE
+    ), "index.html has an inline style= attribute"
 
 
 def test_copy_buttons_carry_a_data_attribute():

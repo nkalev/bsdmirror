@@ -57,6 +57,7 @@ CHECKS = [
     "a bound data-copy button copies its built URL and shows the toast",
     "a data-copy click with no navigator.clipboard toasts Failed to copy URL instead of throwing",
     "an unrecognised data-copy value is left unbound rather than throwing",
+    "an inherited object key as the data-copy value is left unbound",
 ]
 
 

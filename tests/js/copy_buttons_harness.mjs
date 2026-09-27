@@ -171,6 +171,19 @@ const run = async () => {
                 : `clipboardCalledWith=${JSON.stringify(r.clipboardCalledWith)} toastShown=${r.toastShown}`
         );
     }
+    {
+        // An inherited Object.prototype name is not one of the builders:
+        // looked up naively, 'constructor' would copy a bare hostname and
+        // 'valueOf' would throw on the click.
+        const bad = [];
+        for (const dataCopy of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+            const r = await runScenario({ dataCopy, hasClipboard: true, hostname: 'mirror.test' });
+            if (r.threw !== null || r.clipboardCalledWith !== null || r.toastShown) {
+                bad.push(`${dataCopy}: threw=${r.threw} clipboardCalledWith=${JSON.stringify(r.clipboardCalledWith)} toastShown=${r.toastShown}`);
+            }
+        }
+        check('an inherited object key as the data-copy value is left unbound', bad.length === 0, bad.join('; '));
+    }
 };
 
 let loadError = null;
