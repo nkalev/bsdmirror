@@ -390,11 +390,13 @@ function copyUrl(url) {
 // Wire up the page-wide copy buttons, the same way bindCopyRsyncButtons()
 // above wires the per-mirror ones. A data-copy value that is not one of the
 // builders' own keys -- including an inherited name such as 'constructor' --
-// is left unbound rather than wired to a builder that does not exist.
+// is left unbound rather than wired to a builder that does not exist. Not
+// Object.hasOwn: Chrome before 93 and Safari before 15.4 lack it, and a throw
+// here would stop the DOMContentLoaded handler before MirrorStatus.load().
 function bindDataCopyButtons() {
     document.querySelectorAll('[data-copy]').forEach(btn => {
         const key = btn.dataset.copy;
-        if (!Object.hasOwn(COPY_URL_BUILDERS, key)) return;
+        if (!Object.prototype.hasOwnProperty.call(COPY_URL_BUILDERS, key)) return;
         const build = COPY_URL_BUILDERS[key];
         btn.addEventListener('click', () => copyUrl(build(window.location.hostname)));
     });

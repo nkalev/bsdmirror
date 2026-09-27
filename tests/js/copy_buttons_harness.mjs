@@ -69,10 +69,13 @@ function makeButton(dataCopy) {
  *     unrecognised data-copy value that was never bound at all.
  *   - toastText/toastShown: #toast's state once the click's microtasks have
  *     settled. toastText is null if its setter was never touched.
- *   - threw: the error the click raised synchronously, if any -- the guard
- *     this harness exists to check is precisely what keeps this null.
+ *   - threw: the error binding or the click raised synchronously, if any --
+ *     the guard this harness exists to check is precisely what keeps this
+ *     null.
+ * hasObjectHasOwn: false deletes Object.hasOwn from the vm's own built-ins
+ * first, as in Chrome before 93, Firefox before 92 and Safari before 15.4.
  */
-async function runScenario({ dataCopy, hasClipboard, hostname = 'mirror.test' }) {
+async function runScenario({ dataCopy, hasClipboard, hostname = 'mirror.test', hasObjectHasOwn = true }) {
     const button = makeButton(dataCopy);
 
     let toastText = null;
@@ -104,12 +107,18 @@ async function runScenario({ dataCopy, hasClipboard, hostname = 'mirror.test' })
         navigator
     };
     sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    // The vm has its own built-ins, so this leaves the harness's Object alone.
+    if (!hasObjectHasOwn) vm.runInContext('delete Object.hasOwn;', sandbox);
 
-    const mod = vm.runInNewContext(source + EPILOGUE, sandbox, { filename: sourcePath });
-    mod.bindDataCopyButtons();
+    const mod = vm.runInContext(source + EPILOGUE, sandbox, { filename: sourcePath });
 
     let threw = null;
     try {
+        // Binding sits inside the try too: a binder that throws is what a
+        // browser without Object.hasOwn would hit, and it must fail its own
+        // check rather than read as the harness failing to load main.js.
+        mod.bindDataCopyButtons();
         button.click();
         // copyUrl's toast comes out of a Promise .then()/.catch(), which
         // settles on a microtask -- after click() returns, not during it.
@@ -183,6 +192,26 @@ const run = async () => {
             }
         }
         check('an inherited object key as the data-copy value is left unbound', bad.length === 0, bad.join('; '));
+    }
+    {
+        // Chrome before 93, Firefox before 92 and Safari before 15.4 have no
+        // Object.hasOwn. bindDataCopyButtons() runs in the DOMContentLoaded
+        // handler ahead of MirrorStatus.load(), so a binder that needed it
+        // would leave every status on "Checking..." in those browsers, not
+        // just these buttons dead. Without it, a builder's key must still
+        // copy and an inherited name must still be left unbound.
+        const bad = [];
+        const bound = await runScenario({ dataCopy: 'rsync-root', hasClipboard: true, hasObjectHasOwn: false });
+        if (bound.threw !== null || bound.clipboardCalledWith !== 'rsync://mirror.test/') {
+            bad.push(`rsync-root: threw=${bound.threw} clipboardCalledWith=${JSON.stringify(bound.clipboardCalledWith)}`);
+        }
+        for (const dataCopy of ['constructor', 'toString', 'valueOf', 'hasOwnProperty']) {
+            const r = await runScenario({ dataCopy, hasClipboard: true, hasObjectHasOwn: false });
+            if (r.threw !== null || r.clipboardCalledWith !== null || r.toastShown) {
+                bad.push(`${dataCopy}: threw=${r.threw} clipboardCalledWith=${JSON.stringify(r.clipboardCalledWith)} toastShown=${r.toastShown}`);
+            }
+        }
+        check('with no Object.hasOwn, a builder key still copies and an inherited key stays unbound', bad.length === 0, bad.join('; '));
     }
 };
 

@@ -58,6 +58,7 @@ CHECKS = [
     "a data-copy click with no navigator.clipboard toasts Failed to copy URL instead of throwing",
     "an unrecognised data-copy value is left unbound rather than throwing",
     "an inherited object key as the data-copy value is left unbound",
+    "with no Object.hasOwn, a builder key still copies and an inherited key stays unbound",
 ]
 
 
