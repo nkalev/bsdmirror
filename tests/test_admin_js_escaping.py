@@ -136,6 +136,8 @@ HARNESS_CHECKS = [
     "renderMirrors escapes name, url_path and status end-to-end",
     "renderSettings escapes setting values in attribute context",
     "renderLayout escapes the logged-in username in the sidebar",
+    "renderLayout renders exactly one theme toggle button",
+    "renderLoginPage renders exactly one theme toggle button",
     "Toast.show escapes a hostile server error string",
     "Modal.show escapes a hostile title and trusts SafeHtml body",
     "filesDeletedBadge marks a count at the large-deletion threshold",

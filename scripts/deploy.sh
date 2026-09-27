@@ -1896,7 +1896,7 @@ verify_cache_headers() {
     local immutable=/fonts/jetbrains-mono-latin.woff2
     # What a browser requests to show the console once its fonts and images
     # are cached; they are immutable, so a reload does not ask for them again.
-    local -a console=(/admin/ /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
+    local -a console=(/admin/ /js/theme-init.js /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
     local path code values opts round dump fails=0
     dump=$(mktemp)
 

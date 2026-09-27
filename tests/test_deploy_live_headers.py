@@ -10,6 +10,7 @@ it looks for. Driven by the stubs in tests/deploy_probe.py, with no network.
 
 import re
 import shutil
+from html.parser import HTMLParser
 
 import pytest
 
@@ -174,6 +175,7 @@ REVALIDATED = ["/", "/css/style.css", "/admin/", "/admin/css/admin.css", "/admin
 FONT = "/fonts/jetbrains-mono-latin.woff2"
 CONSOLE = [
     "/admin/",
+    "/js/theme-init.js",
     "/css/fonts.css",
     "/css/tokens.css",
     "/admin/css/admin.css",
@@ -259,13 +261,36 @@ def test_the_console_is_loaded_twice_after_a_pause_without_retries(workdir):
     assert result.calls == probes + load + load
 
 
+class _ConsoleAssetCollector(HTMLParser):
+    """Collects stylesheet hrefs and script srcs, in document order.
+
+    A regex anchored on `<link rel="stylesheet" href="...">` breaks the
+    moment the two attributes swap order, and a link's rel is a
+    space-separated token list, not a single value to equal literally.
+    Parsing the markup instead makes both non-issues.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.assets = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "link" and "stylesheet" in (attrs.get("rel") or "").split():
+            if attrs.get("href"):
+                self.assets.append(attrs["href"])
+        elif tag == "script" and attrs.get("src"):
+            self.assets.append(attrs["src"])
+
+
 def test_the_console_list_is_what_admin_index_html_loads():
     # deploy.sh runs one deploy behind itself, so when the console's page
     # gains or renames a stylesheet or script, its list must change a deploy
     # ahead. This test is what notices.
     html = (REPO_ROOT / "frontend" / "public" / "admin" / "index.html").read_text(encoding="utf-8")
-    assets = re.findall(r'<link rel="stylesheet" href="([^"]+)"|<script src="([^"]+)"', html)
-    assert ["/admin/", *(css or js for css, js in assets)] == CONSOLE
+    collector = _ConsoleAssetCollector()
+    collector.feed(html)
+    assert ["/admin/", *collector.assets] == CONSOLE
 
 
 def test_a_503_while_loading_the_console_fails_and_is_not_retried(workdir):

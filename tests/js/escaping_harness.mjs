@@ -45,7 +45,7 @@ sandbox.globalThis = sandbox;
 // is how we get at them.
 const EPILOGUE = `
 ;({ html, escapeHtml, interpolateHtml, trustedHtml, setHtml, SafeHtml,
-    renderLayout, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
+    renderLayout, renderLoginPage, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
     renderDashboard, renderSyncFailures, renderProtectedPaths, renderHealthChecksCard,
     filesDeletedBadge,
     LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
@@ -389,6 +389,28 @@ async function main() {
         assert(badTags(out).length === 0, `injected tags: ${badTags(out)}`);
         assert(badAttrs(out).length === 0, `injected attrs: ${badAttrs(out)}`);
         assert(out.includes('<p>body</p>'), 'SafeHtml body was escaped instead of passed through');
+        return '';
+    });
+
+    // --- Theme toggle (docs/design/2026-09-25-reflection-redesign.md, 6.2) --
+    //
+    // Both render functions call AdminTheme.current(), which reads
+    // document.documentElement -- absent from this sandbox's document stub
+    // above on purpose. These two checks are the guard that the access is
+    // properly wrapped: an unguarded read would throw here and fail every
+    // check below as a side effect, not just these two.
+
+    await check('renderLayout renders exactly one theme toggle button', () => {
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        const count = (out.match(/data-action="toggleTheme"/g) || []).length;
+        assert(count === 1, `expected exactly one theme toggle, found ${count} in ${JSON.stringify(out)}`);
+        return '';
+    });
+
+    await check('renderLoginPage renders exactly one theme toggle button', () => {
+        const out = String(mod.renderLoginPage());
+        const count = (out.match(/data-action="toggleTheme"/g) || []).length;
+        assert(count === 1, `expected exactly one theme toggle, found ${count} in ${JSON.stringify(out)}`);
         return '';
     });
 

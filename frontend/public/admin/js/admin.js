@@ -54,6 +54,88 @@ const DISK_USAGE_WARNING_PERCENT = 85;
 const LARGE_DELETION_THRESHOLD = 1000;
 
 // ===========================================
+// Theme
+// ===========================================
+//
+// One 'theme' key in localStorage across the site and the console (spec
+// 6.2). js/theme-init.js has already applied it to <html> before the first
+// paint; AdminTheme adopts that, keeps every rendered toggle in step, and
+// saves only an explicit choice -- the same contract as main.js's
+// ThemeManager. Every document.documentElement access is guarded: the
+// escaping and contrast harnesses load this file into a vm with no
+// documentElement and no matchMedia, and admin.js must still load and render
+// there.
+const AdminTheme = {
+    STORAGE_KEY: 'theme',
+    SYSTEM_DARK: '(prefers-color-scheme: dark)',
+
+    current() {
+        const theme = document.documentElement && document.documentElement.getAttribute('data-theme');
+        return theme === 'light' || theme === 'dark' ? theme : 'light';
+    },
+
+    apply(theme) {
+        if (document.documentElement) {
+            document.documentElement.setAttribute('data-theme', theme);
+        }
+    },
+
+    save(theme) {
+        try {
+            localStorage.setItem(AdminTheme.STORAGE_KEY, theme);
+        } catch {
+            // Storage unavailable: the choice lasts for this page view only.
+        }
+    },
+
+    saved() {
+        try {
+            const value = localStorage.getItem(AdminTheme.STORAGE_KEY);
+            return value === 'light' || value === 'dark' ? value : null;
+        } catch {
+            return null;
+        }
+    },
+
+    init() {
+        const media = typeof window.matchMedia === 'function' ? window.matchMedia(AdminTheme.SYSTEM_DARK) : null;
+        media?.addEventListener?.('change', (event) => {
+            if (AdminTheme.saved() === null) {
+                AdminTheme.apply(event.matches ? 'dark' : 'light');
+                updateThemeToggles();
+            }
+        });
+    }
+};
+
+/** The button rendered in .header-actions and on the login card. */
+function renderThemeToggle() {
+    const theme = AdminTheme.current();
+    return html`
+        <button type="button" class="theme-toggle" data-action="toggleTheme" aria-label="${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}">
+            <span class="${theme === 'dark' ? 'icon icon-sun' : 'icon icon-moon'}" aria-hidden="true"></span>
+        </button>
+    `;
+}
+
+// Only the dashboard re-renders on its own (the 30s refresh below), so
+// actions.toggleTheme and the matchMedia listener above both update every
+// rendered toggle in place instead of waiting for a re-render that may never
+// come.
+function updateThemeToggles() {
+    const theme = AdminTheme.current();
+    const label = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    const iconClass = theme === 'dark' ? 'icon icon-sun' : 'icon icon-moon';
+    document.querySelectorAll('.theme-toggle').forEach((toggle) => {
+        toggle.setAttribute('aria-label', label);
+        const icon = toggle.querySelector('.icon');
+        if (icon) {
+            icon.className = iconClass;
+        }
+    });
+}
+
+// ===========================================
 // API Client
 // ===========================================
 
@@ -295,6 +377,7 @@ function renderLayout(content, title) {
                 <header class="header">
                     <h1 class="header-title">${title}</h1>
                     <div class="header-actions">
+                        ${renderThemeToggle()}
                         <a href="/" class="btn btn-secondary btn-sm" target="_blank">
                             View Public Site
                         </a>
@@ -375,6 +458,7 @@ function renderLoginPage() {
     return html`
         <div class="login-page">
             <div class="login-card">
+                ${renderThemeToggle()}
                 <div class="login-header">
                     <div class="login-logo">🔄</div>
                     <h1 class="login-title">BSD Mirror Admin</h1>
@@ -1276,6 +1360,13 @@ const actions = {
         Toast.show('Logged out', 'success');
     },
 
+    toggleTheme() {
+        const theme = AdminTheme.current() === 'dark' ? 'light' : 'dark';
+        AdminTheme.apply(theme);
+        AdminTheme.save(theme);
+        updateThemeToggles();
+    },
+
     async syncMirror(mirrorId) {
         try {
             await api.post(`/admin/mirrors/${mirrorId}/sync`);
@@ -1809,6 +1900,11 @@ function getActivityIcon(action) {
 // ===========================================
 
 async function init() {
+    // Follow the operating system's theme preference until the visitor
+    // chooses (spec 6.2); must run before the first render so the toggle's
+    // icon and aria-label are correct immediately, not one render late.
+    AdminTheme.init();
+
     // Set up global event delegation once — catches all future clicks on
     // [data-action] and [data-nav] elements, including those inside modals
     setupGlobalEventDelegation();
