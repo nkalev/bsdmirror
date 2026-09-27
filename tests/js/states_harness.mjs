@@ -553,7 +553,7 @@ await check("hostname fill sets #hostname, #rsynchost and every stream row's dat
 // Null-safety against sparser markup, and the retired legacy writes.
 // ---------------------------------------------------------------------------
 await check('load does not throw against markup with no stream rows', async () => {
-    // setHostname() is no longer part of load()'s call graph (see the file
+    // setHostname() is not part of load()'s call graph (see the file
     // header), so this is purely about load() itself against sparse markup.
     const page = makePage({ minimal: true });
     const now = new Date().toISOString();

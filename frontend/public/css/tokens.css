@@ -34,8 +34,9 @@
      <html data-theme="dark" data-surface="admin">   admin panel
 
    The admin panel has no theme toggle yet (spec section 6.2 adds one); it is
-   dark-only and carries data-theme="dark" statically so it consumes the same
-   dark theme the public site does, instead of maintaining a second copy.
+   dark-only and carries data-theme="dark" statically. Until its own redesign
+   (spec section 7) its colours come from the LEGACY group in the admin layer
+   below, not from this file's dark theme.
 
    Layers 3-5 all have specificity (0,1,0), so ordering in this file decides:
    dark overrides light, admin overrides dark. Keep them in this order.
@@ -164,8 +165,9 @@
     /* Control border, at least 3:1 against --bg-card (WCAG 2.1 SC 1.4.11).
        --border-color above is a hairline only (1.36:1 here) -- fine for a
        card edge or divider, not for a boundary that is the only way to see a
-       control. Not yet consumed on the public site (no form fields); the
-       admin console's own redesign (spec section 6.1) is its first user. */
+       control. On the public site it edges the icon and secondary buttons
+       on hover; the admin console's own redesign (spec section 6.1) adds
+       its form fields. */
     --border-strong: var(--c-graphite-500);
 
     --accent-primary: var(--c-red-600);
