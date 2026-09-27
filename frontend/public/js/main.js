@@ -87,24 +87,234 @@ const API = {
 };
 
 // Mirror status manager
+//
+// docs/design/2026-09-25-reflection-redesign.md, section 5.2. Each mirror's
+// card pill (#<id>-status), its stream row (#<id>-stream -- markup PR 2 adds
+// later; on today's page the lookup is simply null) and the row's own .pill
+// child all carry a data-state the stylesheet keys off, plus a worded
+// .status-text. The overall card gets the same treatment, with its own
+// data-state and a title/sentence chosen from every mirror's state at once --
+// including the "API failed" and "no mirror online" cases the old
+// className-only version could not represent (every() over an empty mirror
+// list used to read as "all active").
+//
+// MIRRORS fixes the three cards the page ships. The API's own keys
+// (Mirror.name, e.g. "FreeBSD") are matched to them case-insensitively: the
+// real API sends that casing, the contrast harness's stub sends lower-case,
+// and both must resolve to the same element ids.
+const MIRRORS = ['freebsd', 'netbsd', 'openbsd'];
+
+// API status -> this page's data-state and the word shown next to it.
+// "disabled" covers both an explicit disabled status and a mirror missing
+// entirely from a successful response: the backend omits disabled mirrors
+// outright, so "absent" and "disabled" are the same fact here.
+const STATE_TEXT = {
+    online: 'Online',
+    syncing: 'Syncing',
+    error: 'Error',
+    disabled: 'Offline',
+    unknown: 'Unknown'
+};
+
+function mirrorState(apiStatus) {
+    if (apiStatus === 'active') return 'online';
+    if (apiStatus === 'syncing') return 'syncing';
+    if (apiStatus === 'error') return 'error';
+    if (apiStatus === 'disabled' || apiStatus === undefined) return 'disabled';
+    return 'unknown';
+}
+
+// "A", "A and B", "A, B and C" -- for the overall card's sentence, in the
+// API's own key casing and in MIRRORS order (not response order).
+function joinNames(names) {
+    if (names.length < 2) return names[0] || '';
+    if (names.length === 2) return `${names[0]} and ${names[1]}`;
+    return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
+const isAre = (count) => (count === 1 ? 'is' : 'are');
+
+// Writes data-state and, where the element has one, its .status-text. Used
+// for a mirror's card pill, its stream row, and the row's own .pill child
+// alike -- every argument may be null or undefined, since the stream row and
+// its pill do not exist until PR 2's new markup ships.
+function paintState(el, state, text) {
+    if (!el) return;
+    el.setAttribute('data-state', state);
+    const label = el.querySelector('.status-text');
+    if (label) label.textContent = text;
+}
+
 const MirrorStatus = {
     async load() {
         const data = await API.get('/stats/overview');
-        if (!data) return;
+        if (!data || !data.mirrors) {
+            this.showUnavailable();
+            return;
+        }
 
-        // Update hero stats
-        this.updateHeroStats(data);
+        this.updateMirrorStates(data.mirrors);
+        this.updateStats(data);
 
-        // Update mirror cards
+        // --- Legacy, removed in Task 5: keeps today's .status-dot,
+        // .status-indicator and .pulse writes going, alongside the
+        // data-state model above, until the stylesheet that reads them is
+        // replaced later in this PR. ---
         this.updateMirrorCards(data.mirrors);
-
-        // Update overall status
         this.updateOverallStatus(data.mirrors);
     },
 
-    updateOverallStatus(mirrors) {
-        if (!mirrors) return;
+    // The data-state model, section 5.2's first table.
+    updateMirrorStates(mirrors) {
+        const byLowerKey = {};
+        for (const [key, mirror] of Object.entries(mirrors)) {
+            byLowerKey[key.toLowerCase()] = { key, mirror };
+        }
 
+        const named = { online: [], syncing: [], error: [] };
+
+        for (const id of MIRRORS) {
+            const found = byLowerKey[id];
+            const mirror = found?.mirror;
+            const state = mirrorState(mirror?.status);
+            const text = STATE_TEXT[state];
+
+            paintState(document.getElementById(`${id}-status`), state, text);
+            const row = document.getElementById(`${id}-stream`);
+            paintState(row, state, text);
+            paintState(row?.querySelector('.pill'), state, text);
+
+            if (found && state in named) {
+                named[state].push(found.key);
+            }
+
+            const sizeEl = document.getElementById(`${id}-size`);
+            if (sizeEl && mirror?.size) {
+                sizeEl.textContent = mirror.size;
+            }
+
+            const syncEl = document.getElementById(`${id}-sync`);
+            if (syncEl && mirror?.last_updated) {
+                syncEl.textContent = this.formatRelativeTime(new Date(mirror.last_updated));
+            }
+        }
+
+        this.updateOverallState(named);
+    },
+
+    // The overall card, after a successful load (section 5.2's second table).
+    updateOverallState(named) {
+        const card = document.getElementById('overallStatus');
+        if (!card) return;
+
+        const title = card.querySelector('h3');
+        const desc = card.querySelector('p');
+        const onlineCount = named.online.length;
+
+        let state;
+        let titleText;
+        let sentence;
+        if (named.error.length > 0) {
+            state = 'error';
+            titleText = 'Degraded service';
+            sentence = `${joinNames(named.error)} ${isAre(named.error.length)} experiencing issues.`;
+        } else if (named.syncing.length > 0) {
+            state = 'syncing';
+            titleText = 'Sync in progress';
+            sentence = `${joinNames(named.syncing)} ${isAre(named.syncing.length)} syncing now.`;
+        } else if (onlineCount === MIRRORS.length) {
+            state = 'online';
+            titleText = 'All systems operational';
+            sentence = 'All mirrors are synchronized and available.';
+        } else if (onlineCount > 0) {
+            state = 'online';
+            titleText = 'Systems operational';
+            sentence = 'Some mirrors are offline; the rest are available.';
+        } else {
+            state = 'disabled';
+            titleText = 'No mirrors online';
+            sentence = 'No mirror is reporting as online right now.';
+        }
+
+        card.setAttribute('data-state', state);
+        if (title) title.textContent = titleText;
+        if (desc) desc.textContent = sentence;
+    },
+
+    // The API request itself failed, or answered without a mirrors object:
+    // the overall card says so; every mirror pill is left exactly as it was.
+    showUnavailable() {
+        const card = document.getElementById('overallStatus');
+        if (!card) return;
+        card.setAttribute('data-state', 'unknown');
+        const title = card.querySelector('h3');
+        const desc = card.querySelector('p');
+        if (title) title.textContent = 'Status unavailable';
+        if (desc) {
+            desc.textContent =
+                "The status service didn't answer. The mirrors themselves may still be reachable.";
+        }
+    },
+
+    updateStats(data) {
+        const statSize = document.getElementById('statSize');
+        if (statSize && data.totals?.size) {
+            statSize.textContent = data.totals.size;
+            // --- Legacy, removed in Task 5: today's markup starts this
+            // stat-card "loading"; the new markup this PR ships later
+            // will not. ---
+            statSize.closest('.stat-card')?.classList.remove('loading');
+        }
+
+        const statFiles = document.getElementById('statFiles');
+        if (statFiles && data.totals?.files) {
+            statFiles.textContent = data.totals.files;
+        }
+
+        const statLastSync = document.getElementById('statLastSync');
+        if (statLastSync && data.mirrors) {
+            const syncs = Object.values(data.mirrors)
+                .map(m => m.last_updated)
+                .filter(Boolean)
+                .sort()
+                .reverse();
+            if (syncs.length > 0) {
+                statLastSync.textContent = this.formatRelativeTime(new Date(syncs[0]));
+                // --- Legacy, removed in Task 5: see above. ---
+                statLastSync.closest('.stat-card')?.classList.remove('loading');
+            }
+        }
+    },
+
+    // --- Legacy: rewrites .status-dot's className, exactly as today.
+    // Removed in Task 5 (docs/design/2026-09-25-reflection-redesign.md,
+    // section 5.2 "Changes": "Data attributes, not class rewrites"). The
+    // data-state model above already recomputes every mirror's state and its
+    // .status-text; #<id>-size and #<id>-sync moved there too, so this keeps
+    // only the one write nothing else needs. ---
+    updateMirrorCards(mirrors) {
+        for (const [name, mirror] of Object.entries(mirrors)) {
+            const lowerName = name.toLowerCase();
+            const statusEl = document.getElementById(`${lowerName}-status`);
+            const dot = statusEl?.querySelector('.status-dot');
+            if (!dot) continue;
+
+            const statusClassMap = {
+                'active': 'healthy',
+                'syncing': 'syncing',
+                'error': 'error',
+                'disabled': ''
+            };
+            const statusClass = statusClassMap[mirror.status] || '';
+            dot.className = 'status-dot' + (statusClass ? ' ' + statusClass : '');
+        }
+    },
+
+    // --- Legacy: rewrites .status-indicator's className and .pulse's inline
+    // background, exactly as today -- including today's own "all mirrors
+    // online" logic, not the fixed table updateOverallState uses above.
+    // Removed in Task 5. ---
+    updateOverallStatus(mirrors) {
         const statusCard = document.getElementById('overallStatus');
         if (!statusCard) return;
 
@@ -114,114 +324,22 @@ const MirrorStatus = {
         const allActive = statuses.every(s => s === 'active');
 
         const indicator = statusCard.querySelector('.status-indicator');
-        const title = statusCard.querySelector('h3');
-        const desc = statusCard.querySelector('p');
         const pulse = statusCard.querySelector('.pulse');
+        if (!indicator) return;
 
         if (anyError) {
             indicator.className = 'status-indicator degraded';
             if (pulse) pulse.style.background = 'var(--status-error, #ef4444)';
-            title.textContent = 'Degraded Service';
-            const errorMirrors = Object.entries(mirrors)
-                .filter(([, m]) => m.status === 'error')
-                .map(([name]) => name);
-            desc.textContent = `${errorMirrors.join(', ')} ${errorMirrors.length === 1 ? 'is' : 'are'} experiencing issues.`;
         } else if (anySyncing) {
             indicator.className = 'status-indicator syncing';
             if (pulse) pulse.style.background = 'var(--accent-primary)';
-            title.textContent = 'Sync In Progress';
-            const syncingMirrors = Object.entries(mirrors)
-                .filter(([, m]) => m.status === 'syncing')
-                .map(([name]) => name);
-            desc.textContent = `${syncingMirrors.join(', ')} ${syncingMirrors.length === 1 ? 'is' : 'are'} currently syncing.`;
         } else if (allActive) {
             indicator.className = 'status-indicator healthy';
             if (pulse) pulse.style.background = 'var(--status-healthy)';
-            title.textContent = 'All Systems Operational';
-            desc.textContent = 'All mirrors are synchronized and available.';
         } else {
             indicator.className = 'status-indicator healthy';
             if (pulse) pulse.style.background = 'var(--status-healthy)';
-            title.textContent = 'Systems Operational';
-            desc.textContent = 'Mirrors are available.';
         }
-    },
-
-    updateHeroStats(data) {
-        const statSize = document.getElementById('statSize');
-        const statLastSync = document.getElementById('statLastSync');
-
-        if (statSize && data.totals) {
-            statSize.textContent = data.totals.size;
-            statSize.closest('.stat-card')?.classList.remove('loading');
-        }
-
-        // Find most recent sync
-        if (data.mirrors) {
-            const syncs = Object.values(data.mirrors)
-                .map(m => m.last_updated)
-                .filter(Boolean)
-                .sort()
-                .reverse();
-
-            if (syncs.length > 0 && statLastSync) {
-                const lastSync = new Date(syncs[0]);
-                statLastSync.textContent = this.formatRelativeTime(lastSync);
-                statLastSync.closest('.stat-card')?.classList.remove('loading');
-            }
-        }
-    },
-
-    updateMirrorCards(mirrors) {
-        if (!mirrors) return;
-
-        for (const [name, mirror] of Object.entries(mirrors)) {
-            const lowerName = name.toLowerCase();
-
-            // Update status
-            const statusEl = document.getElementById(`${lowerName}-status`);
-            if (statusEl) {
-                const dot = statusEl.querySelector('.status-dot');
-                const text = statusEl.querySelector('.status-text');
-
-                if (dot) {
-                    const statusClassMap = {
-                        'active': 'healthy',
-                        'syncing': 'syncing',
-                        'error': 'error',
-                        'disabled': ''
-                    };
-                    const statusClass = statusClassMap[mirror.status] || '';
-                    dot.className = 'status-dot' + (statusClass ? ' ' + statusClass : '');
-                }
-                if (text) {
-                    text.textContent = this.formatStatus(mirror.status);
-                }
-            }
-
-            // Update size
-            const sizeEl = document.getElementById(`${lowerName}-size`);
-            if (sizeEl && mirror.size) {
-                sizeEl.textContent = mirror.size;
-            }
-
-            // Update last sync
-            const syncEl = document.getElementById(`${lowerName}-sync`);
-            if (syncEl && mirror.last_updated) {
-                const date = new Date(mirror.last_updated);
-                syncEl.textContent = this.formatRelativeTime(date);
-            }
-        }
-    },
-
-    formatStatus(status) {
-        const statusMap = {
-            'active': 'Online',
-            'syncing': 'Syncing...',
-            'error': 'Error',
-            'disabled': 'Offline'
-        };
-        return statusMap[status] || status;
     },
 
     formatRelativeTime(date) {
@@ -318,7 +436,7 @@ function bindCopyRsyncButtons() {
 // Set hostname in UI
 function setHostname() {
     const hostname = window.location.hostname;
-    document.querySelectorAll('#hostname, #rsynchost').forEach(el => {
+    document.querySelectorAll('#hostname, #rsynchost, [data-hostname]').forEach(el => {
         el.textContent = hostname;
     });
 }
