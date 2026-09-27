@@ -382,6 +382,19 @@ def test_hero_art_is_aria_hidden():
     assert len(marks) == 2, "the hero art holds the standing mark and its reflection"
 
 
+def test_the_hero_gradient_spans_the_whole_glyph():
+    """Spec section 4.5: the hero glyph is filled with one vertical gradient.
+    In the default objectBoundingBox units each shape gets its own gradient, so
+    the bowls (y 34-58) and the stems (y 6-58) shade differently where they
+    overlap, and a seam shows. User-space units from the glyph's top to its
+    bottom give every shape the same continuous gradient."""
+    gradient = find_one(ROOT, tag="lineargradient", id="hero-mark-gradient")
+    attrs = gradient.attrs  # HTMLParser lowercases attribute names
+    assert attrs.get("gradientunits") == "userSpaceOnUse"
+    assert (attrs.get("x1"), attrs.get("x2")) == ("0", "0"), "the gradient must be vertical"
+    assert (attrs.get("y1"), attrs.get("y2")) == ("6", "58"), "from the glyph's top to its bottom"
+
+
 ICON_CLASS_PREFIX = "icon-"
 
 
