@@ -63,10 +63,7 @@ const ThemeManager = {
         document.getElementById('themeToggle')?.setAttribute(
             'aria-label', theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'
         );
-        const icon = document.querySelector('.theme-icon');
-        if (icon) {
-            icon.textContent = theme === 'dark' ? '☀' : '☾';
-        }
+        document.querySelector('.theme-icon')?.setAttribute('data-icon', theme === 'dark' ? 'sun' : 'moon');
     }
 };
 
