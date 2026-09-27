@@ -192,6 +192,36 @@ def test_copy_button_responds_to_a_real_click(clicked, index, mirror):
     ), f"{mirror} button copied the wrong URL: {button['toast']['text']!r}"
 
 
+@requires_browser
+def test_all_data_copy_buttons_are_found(clicked):
+    """Document order: the hero's button, then the two access rows'
+    (docs/design/2026-09-25-reflection-redesign.md, section 5.1)."""
+    assert [b["dataCopy"] for b in clicked["dataCopyButtons"]] == [
+        "rsync-root",
+        "https-root",
+        "rsync-root",
+    ]
+
+
+@requires_browser
+@pytest.mark.parametrize(
+    "index,data_copy,scheme",
+    [(0, "rsync-root", "rsync"), (1, "https-root", "https"), (2, "rsync-root", "rsync")],
+)
+def test_data_copy_button_responds_to_a_real_click(clicked, index, data_copy, scheme):
+    """The click harness serves on 127.0.0.1, so that is the host each built
+    URL names. test_no_csp_violations_on_load already covers this same run,
+    clicks included."""
+    button = clicked["dataCopyButtons"][index]
+    assert button["dataCopy"] == data_copy
+    assert button["toast"][
+        "shown"
+    ], f"clicking the {data_copy} button produced no toast; the handler did not run"
+    assert (
+        button["toast"]["text"] == f"Copied: {scheme}://127.0.0.1/"
+    ), f"{data_copy} button copied the wrong URL: {button['toast']['text']!r}"
+
+
 # ---------------------------------------------------------------------------
 # Negative control
 #

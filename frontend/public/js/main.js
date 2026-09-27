@@ -360,6 +360,44 @@ function bindCopyRsyncButtons() {
     });
 }
 
+// Copy helper shared by the page-wide [data-copy] buttons: the hero's "Copy
+// rsync URL" button and the two access-row icon buttons
+// (docs/design/2026-09-25-reflection-redesign.md, section 5.1). Each maps to
+// a URL builder keyed by its data-copy value.
+const COPY_URL_BUILDERS = {
+    'rsync-root': hostname => `rsync://${hostname}/`,
+    'https-root': hostname => `https://${hostname}/`
+};
+
+// Same toasts as copyRsync above, plus a guard for a missing Clipboard API:
+// outside a secure context and in older browsers, navigator.clipboard itself
+// is undefined rather than a rejected promise. Without this check that reads
+// as a thrown error, not one the .catch() below ever sees. copyRsync has the
+// same gap, left alone because spec section 5.2 keeps the per-mirror buttons
+// unchanged.
+function copyUrl(url) {
+    if (!navigator.clipboard) {
+        Toast.show('Failed to copy URL');
+        return;
+    }
+    navigator.clipboard.writeText(url).then(() => {
+        Toast.show(`Copied: ${url}`);
+    }).catch(() => {
+        Toast.show('Failed to copy URL');
+    });
+}
+
+// Wire up the page-wide copy buttons, the same way bindCopyRsyncButtons()
+// above wires the per-mirror ones. An unrecognised data-copy value is left
+// unbound rather than wired to a builder that does not exist.
+function bindDataCopyButtons() {
+    document.querySelectorAll('[data-copy]').forEach(btn => {
+        const build = COPY_URL_BUILDERS[btn.dataset.copy];
+        if (!build) return;
+        btn.addEventListener('click', () => copyUrl(build(window.location.hostname)));
+    });
+}
+
 // Set hostname in UI
 function setHostname() {
     const hostname = window.location.hostname;
@@ -373,6 +411,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ThemeManager.init();
     setHostname();
     bindCopyRsyncButtons();
+    bindDataCopyButtons();
     MirrorStatus.load();
     FooterVersion.load();
 
