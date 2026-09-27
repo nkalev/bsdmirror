@@ -15,8 +15,8 @@
    2. INVARIANTS           Semantics that do not change with theme or surface.
    3. LIGHT THEME          Semantics for :root, i.e. the public site's default.
    4. DARK THEME           Semantics for [data-theme="dark"], set by main.js.
-   5. ADMIN SURFACE        The five tokens where the admin panel genuinely
-                           disagrees with the public site. See notes below.
+   5. ADMIN SURFACE        Frozen ahead of the admin console's own redesign
+                           (spec section 6). See the note at that block.
 
    ---------------------------------------------------------------------------
    How a surface picks its values
@@ -27,27 +27,29 @@
      <html data-theme="dark">                  public site, dark  (main.js)
      <html data-theme="dark" data-surface="admin">   admin panel
 
-   The admin panel has no theme toggle; it is dark-only and always has been.
-   It carries data-theme="dark" statically so it consumes the same dark theme
-   the public site does, instead of maintaining a second copy of those values.
+   The admin panel has no theme toggle yet (spec section 6.2 adds one); it is
+   dark-only and carries data-theme="dark" statically so it consumes the same
+   dark theme the public site does, instead of maintaining a second copy.
 
    Layers 3-5 all have specificity (0,1,0), so ordering in this file decides:
    dark overrides light, admin overrides dark. Keep them in this order.
 
    ---------------------------------------------------------------------------
-   Deliberate divergence (layer 5)
+   Layer 5, frozen ahead of the admin redesign
    ---------------------------------------------------------------------------
-   These are design decisions, not merge accidents. The admin panel is a denser,
-   more utilitarian surface than the marketing-oriented public site:
+   The admin console must keep looking exactly as it does today until its own
+   redesign (spec section 6), even though this file's primitives and light/dark
+   semantics are about to change under it. [data-surface="admin"] pins the
+   values admin.css reads directly, as literals, so none of them can resolve
+   through the shared layers above once they do. That admin redesign deletes
+   the LEGACY ADMIN group and folds admin's colours back into the shared
+   light/dark layers, checked in both themes; see spec section 7.
 
-     --header-height   72px -> 64px   admin chrome is tighter
-     --radius-md       12px -> 10px   smaller corners suit dense controls
-     --radius-lg       16px -> 14px   ditto
-     --accent-secondary  red -> orange  admin's gradient stays inside the orange
-                                        family; the public site's runs orange->red
-
-   --accent-gradient is derived from --accent-primary and --accent-secondary, so
-   overriding the latter is enough to retune the gradient for the admin surface.
+   --accent-secondary is the one admin override the freeze leaves alone: it
+   still resolves through PRIMITIVES rather than a raw hex value, and
+   --accent-gradient is derived from --accent-primary and --accent-secondary,
+   so overriding the latter here is enough to retune the gradient for the
+   admin surface. PR 2 retires both --accent-secondary and --accent-gradient.
 */
 
 /* ===========================================================================
@@ -362,15 +364,55 @@
 
 /* ===========================================================================
    5. ADMIN SURFACE
-   Only the tokens the admin panel deliberately disagrees on. Everything else
-   it inherits from layers 1-4. Must stay after layer 4 to win the cascade.
+   Frozen ahead of the admin console's own redesign (spec section 6), which
+   deletes the LEGACY ADMIN group below and folds admin's colours back into
+   the shared light/dark layers above (spec section 7).
    =========================================================================== */
 
 [data-surface="admin"] {
+    /* ===== ADMIN SURFACE: NON-COLOUR TOKENS =====
+       admin.css's own values for the non-colour tokens, declared here so a
+       change to the INVARIANTS layer above never reaches the admin console.
+       The admin console's own redesign revisits these; until then they keep
+       today's numbers (spec section 7: "the admin layer then holds only
+       non-colour tokens"). */
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
     --header-height: 64px;
-
+    --radius-sm: 6px;
     --radius-md: 10px;
     --radius-lg: 14px;
+    --sidebar-width: 260px;
+    --transition-fast: 150ms ease;
+    --transition-base: 300ms ease;
+
+    /* ===== LEGACY ADMIN =====
+       Pins every colour token admin.css consumes at its value today, as a
+       literal rather than a var() reference, so none of them can resolve
+       through a shared layer when this file's primitives and light/dark
+       semantics change under it. Raw hex, so these do not follow the shared
+       primitives, which the Reflection palette replaces. The admin console's
+       own redesign deletes this whole group.
+       Verified against admin.css by tests/test_legacy_admin_tokens.py. */
+    --accent-primary: #F48C06;
+    --bg-card: #1A1A2E;
+    --bg-primary: #0D0D1A;
+    --bg-secondary: #1A1A2E;
+    --bg-tertiary: #2A2A40;
+    --border-color: #2A2A40;
+    --status-error: #EF4444;
+    --status-error-bg: #462B3B;
+    --status-error-text: #F87171;
+    --status-healthy: #22C55E;
+    --status-healthy-bg: #1C3C38;
+    --status-info-bg: #203B56;
+    --status-info-text: #38BDF8;
+    --status-syncing: #F59E0B;
+    --status-syncing-bg: #463427;
+    --text-muted: #9696AC;
+    --text-on-accent: #0D0D1A;
+    --text-primary: #E8E8F0;
+    --text-secondary: #A0A0B8;
 
     /* Gradient stays within the orange family instead of running orange->red. */
     --accent-secondary: var(--c-orange-600);

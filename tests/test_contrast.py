@@ -604,15 +604,21 @@ TOKEN_MUTATIONS = [
         ".detail-label [dark]",
     ),
     (
+        # Targets the LEGACY ADMIN line, not the INVARIANTS var() reference:
+        # since the admin block now pins its own --text-on-accent, mutating
+        # the invariant no longer reaches ADMIN at all.
         "text_on_accent_reverts_to_white",
-        "--text-on-accent: var(--c-navy-900);",
-        "--text-on-accent: var(--c-white);",
+        "--text-on-accent: #0D0D1A;",
+        "--text-on-accent: #FFFFFF;",
         None,  # asserted separately: this breaks an ADMIN_CHECKS id, checked below
     ),
     (
+        # Same shape as the mutation above: the admin block pins its own
+        # --status-error-text now, so this targets that line instead of the
+        # INVARIANTS var() reference, which no longer reaches ADMIN.
         "status_error_text_reverts_to_status_error",
-        "--status-error-text: var(--c-red-400);",
-        "--status-error-text: var(--c-red-500);",
+        "--status-error-text: #F87171;",
+        "--status-error-text: #EF4444;",
         None,  # breaks an ADMIN_CHECKS id, checked below
     ),
     (
@@ -666,9 +672,7 @@ def test_text_on_accent_mutation_breaks_an_admin_fill():
     break *something* concrete -- named here instead of folded into the
     parametrised case so a failure points at a specific, checkable claim
     rather than "some id or other went red"."""
-    mutated_text = TOKENS_TEXT.replace(
-        "--text-on-accent: var(--c-navy-900);", "--text-on-accent: var(--c-white);"
-    )
+    mutated_text = TOKENS_TEXT.replace("--text-on-accent: #0D0D1A;", "--text-on-accent: #FFFFFF;")
     _, _, admin = build_themes(mutated_text)
     results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
     assert results[".nav-item.active"] < 4.5
@@ -679,7 +683,7 @@ def test_text_on_accent_mutation_breaks_an_admin_fill():
 
 def test_status_error_text_mutation_breaks_the_error_badge():
     mutated_text = TOKENS_TEXT.replace(
-        "--status-error-text: var(--c-red-400);", "--status-error-text: var(--c-red-500);"
+        "--status-error-text: #F87171;", "--status-error-text: #EF4444;"
     )
     _, _, admin = build_themes(mutated_text)
     results = {cid: ratio for cid, ratio, *_ in compute_admin_checks(ADMIN_CSS_TEXT, admin)}
