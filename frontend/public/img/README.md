@@ -32,12 +32,17 @@ glyph painted in `--text-primary`, the axis in `--accent-primary`.
 
 ## Icons
 
-`icons/NAME.svg` holds 15 icons on a 24-unit grid. Each is drawn with 1.6-unit
+`icons/NAME.svg` holds one file per name listed in `ICON_NAMES`
+(`tests/test_images.py`), each on a 24-unit grid and drawn with 1.6-unit
 round strokes, set once on the root `<svg>`. They are drawn for CSS masks, the
 way the redesigned pages are to use them (design section 4.7), so each takes
 the text colour of the element it sits in:
 
     <span class="icon icon-copy" aria-hidden="true"></span>
+
+The eleven added for the admin console -- `warning`, `clock`, `disk`,
+`log-out`, `plus`, `edit`, `trash`, `user`, `lock`, `unlock` and `skip` --
+join the nav icons already here.
 
 To add an icon, draw it on the same grid with the same root attributes, and add
 its name to `ICON_NAMES` in `tests/test_images.py`.

@@ -52,6 +52,17 @@ ICON_NAMES = {
     "check",
     "close",
     "info",
+    "warning",
+    "clock",
+    "disk",
+    "log-out",
+    "plus",
+    "edit",
+    "trash",
+    "user",
+    "lock",
+    "unlock",
+    "skip",
 }
 ICON_STROKE = {
     "viewBox": "0 0 24 24",
@@ -148,10 +159,13 @@ def test_every_svg_here_is_inert(path):
     assert_inert(path, svg_root(path))
 
 
-def test_the_icon_set_is_the_fifteen_the_design_names():
-    assert {path.stem for path in ICONS.glob("*.svg")} == ICON_NAMES
+def test_the_icon_set_is_exactly_the_names_the_design_lists():
+    on_disk = {path.stem for path in ICONS.glob("*.svg")}
+    assert (
+        on_disk == ICON_NAMES
+    ), f"icons/*.svg must match ICON_NAMES exactly; missing {sorted(ICON_NAMES - on_disk)}, extra {sorted(on_disk - ICON_NAMES)}"
     others = [p.name for p in ICONS.iterdir() if p.suffix != ".svg" and not p.name.startswith(".")]
-    assert others == []
+    assert others == [], f"non-svg files in icons/: {others}"
 
 
 @pytest.mark.parametrize("name", sorted(ICON_NAMES))
