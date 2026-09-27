@@ -47,6 +47,12 @@ const state = {
 // ETA is shown.
 const DISK_USAGE_WARNING_PERCENT = 85;
 
+// The meter's second severity band (spec 4.8: "Fill from 95%"). A sibling of
+// the constant above rather than a replacement for it -- 85% is "keep an eye
+// on this", 95% is "act now" -- so both stay named constants instead of one
+// magic number appearing twice.
+const DISK_USAGE_CRITICAL_PERCENT = 95;
+
 // rsync's --delete (always on; see sync/sync_service.py) removes a handful
 // of stale files on almost every ordinary sync. A files_deleted count this
 // large is well outside that and is the signature of a mass removal -- most
@@ -316,7 +322,7 @@ function renderLayout(content, title) {
                 <nav class="sidebar-nav">
                     <div class="nav-section">
                         <div class="nav-section-title">Overview</div>
-                        <a class="nav-item ${state.currentPage === 'dashboard' ? 'active' : ''}" data-nav="dashboard">
+                        <a class="nav-item ${state.currentPage === 'dashboard' ? 'active' : ''}" href="#dashboard" data-nav="dashboard" aria-current="${state.currentPage === 'dashboard' ? 'page' : 'false'}">
                             <span class="nav-item-icon">📊</span>
                             <span>Dashboard</span>
                         </a>
@@ -324,20 +330,20 @@ function renderLayout(content, title) {
                     
                     <div class="nav-section">
                         <div class="nav-section-title">Management</div>
-                        <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" data-nav="mirrors">
+                        <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" href="#mirrors" data-nav="mirrors" aria-current="${state.currentPage === 'mirrors' ? 'page' : 'false'}">
                             <span class="nav-item-icon">💾</span>
                             <span>Mirrors</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" data-nav="sync-failures">
+                        <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" href="#sync-failures" data-nav="sync-failures" aria-current="${state.currentPage === 'sync-failures' ? 'page' : 'false'}">
                             <span class="nav-item-icon">⚠️</span>
                             <span>Sync Failures</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" data-nav="protected-paths">
+                        <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" href="#protected-paths" data-nav="protected-paths" aria-current="${state.currentPage === 'protected-paths' ? 'page' : 'false'}">
                             <span class="nav-item-icon">🔒</span>
                             <span>Protected Paths</span>
                         </a>
                         ${isAdmin ? html`
-                        <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" data-nav="users">
+                        <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" href="#users" data-nav="users" aria-current="${state.currentPage === 'users' ? 'page' : 'false'}">
                             <span class="nav-item-icon">👥</span>
                             <span>Users</span>
                         </a>
@@ -347,11 +353,11 @@ function renderLayout(content, title) {
                     ${isAdmin ? html`
                     <div class="nav-section">
                         <div class="nav-section-title">System</div>
-                        <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" data-nav="audit-logs">
+                        <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" href="#audit-logs" data-nav="audit-logs" aria-current="${state.currentPage === 'audit-logs' ? 'page' : 'false'}">
                             <span class="nav-item-icon">📋</span>
                             <span>Audit Logs</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'settings' ? 'active' : ''}" data-nav="settings">
+                        <a class="nav-item ${state.currentPage === 'settings' ? 'active' : ''}" href="#settings" data-nav="settings" aria-current="${state.currentPage === 'settings' ? 'page' : 'false'}">
                             <span class="nav-item-icon">⚙️</span>
                             <span>Settings</span>
                         </a>
@@ -390,9 +396,9 @@ function renderLayout(content, title) {
             </main>
         </div>
         
-        <div class="toast-container" id="toastContainer"></div>
+        <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
         <div class="modal-overlay" id="modalOverlay">
-            <div class="modal" id="modal"></div>
+            <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></div>
         </div>
     `;
 }
@@ -416,7 +422,7 @@ const Toast = {
         container.appendChild(toast);
 
         setTimeout(() => {
-            toast.style.animation = 'slideIn 0.3s ease reverse';
+            toast.classList.add('is-leaving');
             setTimeout(() => toast.remove(), 300);
         }, 4000);
     }
@@ -433,7 +439,7 @@ const Modal = {
 
         setHtml(modal, html`
             <div class="modal-header">
-                <h3 class="modal-title">${title}</h3>
+                <h3 class="modal-title" id="modalTitle">${title}</h3>
                 <button class="modal-close" data-action="closeModal">×</button>
             </div>
             <div class="modal-body">
@@ -480,6 +486,7 @@ function renderLoginPage() {
                 </form>
             </div>
         </div>
+        <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
     `;
 }
 
@@ -1522,20 +1529,20 @@ const actions = {
         Modal.show('Add User', html`
             <form id="addUserForm">
                 <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" name="username" required>
+                    <label class="form-label" for="addUserUsername">Username</label>
+                    <input type="text" id="addUserUsername" class="form-input" name="username" required>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Email (optional)</label>
-                    <input type="email" class="form-input" name="email">
+                    <label class="form-label" for="addUserEmail">Email (optional)</label>
+                    <input type="email" id="addUserEmail" class="form-input" name="email">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-input" name="password" required>
+                    <label class="form-label" for="addUserPassword">Password</label>
+                    <input type="password" id="addUserPassword" class="form-input" name="password" required>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Role</label>
-                    <select class="form-input" name="role">
+                    <label class="form-label" for="addUserRole">Role</label>
+                    <select class="form-input" id="addUserRole" name="role">
                         <option value="readonly">Read Only</option>
                         <option value="operator">Operator</option>
                         <option value="admin">Admin</option>
@@ -1610,24 +1617,24 @@ const actions = {
         Modal.show('Edit User', html`
             <form id="editUserForm">
                 <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" value="${user.username}" disabled>
+                    <label class="form-label" for="editUserUsername">Username</label>
+                    <input type="text" id="editUserUsername" class="form-input" value="${user.username}" disabled>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Email</label>
-                    <input type="email" class="form-input" name="email" value="${user.email || ''}">
+                    <label class="form-label" for="editUserEmail">Email</label>
+                    <input type="email" id="editUserEmail" class="form-input" name="email" value="${user.email || ''}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Role</label>
-                    <select class="form-input" name="role">
+                    <label class="form-label" for="editUserRole">Role</label>
+                    <select class="form-input" id="editUserRole" name="role">
                         <option value="readonly" ${user.role === 'readonly' ? 'selected' : ''}>Read Only</option>
                         <option value="operator" ${user.role === 'operator' ? 'selected' : ''}>Operator</option>
                         <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Status</label>
-                    <select class="form-input" name="is_active">
+                    <label class="form-label" for="editUserStatus">Status</label>
+                    <select class="form-input" id="editUserStatus" name="is_active">
                         <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
                         <option value="false" ${!user.is_active ? 'selected' : ''}>Disabled</option>
                     </select>

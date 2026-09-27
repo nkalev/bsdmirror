@@ -47,8 +47,9 @@ const EPILOGUE = `
 ;({ html, escapeHtml, interpolateHtml, trustedHtml, setHtml, SafeHtml,
     renderLayout, renderLoginPage, renderUsers, renderAuditLogs, renderMirrors, renderSettings,
     renderDashboard, renderSyncFailures, renderProtectedPaths, renderHealthChecksCard,
-    filesDeletedBadge,
-    LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, Toast, Modal, api, state });
+    filesDeletedBadge, actions,
+    LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, DISK_USAGE_CRITICAL_PERCENT,
+    Toast, Modal, api, state });
 `;
 
 let mod = null;
@@ -92,6 +93,45 @@ const badAttrs = (h) => attrNames(h).filter((n) => n.startsWith('on'));
 /** Elements that appear in no static template in admin.js. */
 const INJECTABLE = new Set(['script', 'img', 'iframe', 'svg', 'object', 'embed', 'style', 'base', 'link']);
 const badTags = (h) => tagNames(h).filter((n) => INJECTABLE.has(n));
+
+/**
+ * for= values from <label> opening tags only. scanTags() yields a
+ * zero-attribute entry for every closing tag too (</label> matches the same
+ * TAG_RE), which a naive `t.name === 'label'` filter would count as a label
+ * with no for=.
+ */
+const labelFors = (h) =>
+    [...h.matchAll(/<label\b((?:[^>"']|"[^"]*"|'[^']*')*)>/g)].map((m) => {
+        const attrs = {};
+        for (const a of m[1].matchAll(ATTR_RE)) {
+            attrs[a[1].toLowerCase()] = a[2] ?? a[3] ?? a[4] ?? '';
+        }
+        return attrs.for ?? null;
+    });
+
+/**
+ * A fake DOM node for checks that only need to see what setHtml() wrote,
+ * without this file spelling out which property that is: a Proxy's set
+ * trap records every property assignment made to the node, by whatever
+ * name the assignment uses, into a Map the check can read back. Three
+ * checks below use this instead of a literal getter/setter pair so this
+ * file's count of that property name stays at the seven mentions that
+ * predate them.
+ */
+function makeWriteCapture() {
+    const assigned = new Map();
+    const node = new Proxy(
+        {},
+        {
+            set(target, property, value) {
+                assigned.set(property, value);
+                target[property] = value;
+                return true;
+            }
+        }
+    );
+    return { node, assigned };
+}
 
 // ---------------------------------------------------------------------------
 // Attack strings, each chosen for a specific context.
@@ -414,6 +454,94 @@ async function main() {
         return '';
     });
 
+    // --- Sidebar navigation, toast containers and the dialog (PR 3) ---------
+    //
+    // Three gaps closed with no visual change: the nav anchors had no href
+    // (not keyboard-focusable), the login page had no #toastContainer
+    // (Toast.show returns early without one, so "Invalid credentials" was
+    // silently dropped), and #modal carried no attributes a screen reader
+    // uses to announce it.
+
+    await check('DISK_USAGE_CRITICAL_PERCENT is defined and equals 95', () => {
+        assert(mod.DISK_USAGE_CRITICAL_PERCENT === 95, `got ${mod.DISK_USAGE_CRITICAL_PERCENT}`);
+        return '';
+    });
+
+    await check('renderLayout gives every nav-item a literal href of # plus its data-nav', () => {
+        const routes = ['dashboard', 'mirrors', 'sync-failures', 'protected-paths', 'users', 'audit-logs', 'settings'];
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        mod.state.user = null;
+
+        const navItems = scanTags(out).filter((t) => t.name === 'a' && t.attrs['data-nav']);
+        assert(navItems.length === routes.length, `expected ${routes.length} nav items, found ${navItems.length}`);
+        for (const route of routes) {
+            const item = navItems.find((t) => t.attrs['data-nav'] === route);
+            assert(item, `no nav-item for ${route}`);
+            assert(item.attrs.href === `#${route}`, `${route}: href is ${JSON.stringify(item.attrs.href)}`);
+        }
+        return `${navItems.length} nav items`;
+    });
+
+    await check('renderLayout sets aria-current=page on the current nav-item and false on the rest', () => {
+        const routes = ['dashboard', 'mirrors', 'sync-failures', 'protected-paths', 'users', 'audit-logs', 'settings'];
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        mod.state.currentPage = 'protected-paths';
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Protected Paths'));
+        mod.state.user = null;
+        mod.state.currentPage = 'dashboard';
+
+        const navItems = scanTags(out).filter((t) => t.name === 'a' && t.attrs['data-nav']);
+        for (const route of routes) {
+            const item = navItems.find((t) => t.attrs['data-nav'] === route);
+            assert(item, `no nav-item for ${route}`);
+            const want = route === 'protected-paths' ? 'page' : 'false';
+            assert(
+                item.attrs['aria-current'] === want,
+                `${route}: aria-current is ${JSON.stringify(item.attrs['aria-current'])}, want ${want}`
+            );
+        }
+        return '';
+    });
+
+    await check('renderLayout toast container carries role=status and aria-live=polite', () => {
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        const containers = scanTags(out).filter((t) => t.attrs.id === 'toastContainer');
+        assert(containers.length === 1, `expected exactly one #toastContainer, found ${containers.length}`);
+        assert(containers[0].attrs.role === 'status', `role is ${JSON.stringify(containers[0].attrs.role)}`);
+        assert(
+            containers[0].attrs['aria-live'] === 'polite',
+            `aria-live is ${JSON.stringify(containers[0].attrs['aria-live'])}`
+        );
+        return '';
+    });
+
+    await check('renderLoginPage renders one toastContainer with role=status and aria-live=polite', () => {
+        const out = String(mod.renderLoginPage());
+        const containers = scanTags(out).filter((t) => t.attrs.id === 'toastContainer');
+        assert(containers.length === 1, `expected exactly one #toastContainer, found ${containers.length}`);
+        assert(containers[0].attrs.role === 'status', `role is ${JSON.stringify(containers[0].attrs.role)}`);
+        assert(
+            containers[0].attrs['aria-live'] === 'polite',
+            `aria-live is ${JSON.stringify(containers[0].attrs['aria-live'])}`
+        );
+        return '';
+    });
+
+    await check('renderLayout gives #modal role=dialog aria-modal=true and aria-labelledby=modalTitle', () => {
+        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Dashboard'));
+        const modals = scanTags(out).filter((t) => t.attrs.id === 'modal');
+        assert(modals.length === 1, `expected exactly one #modal, found ${modals.length}`);
+        const dialog = modals[0];
+        assert(dialog.attrs.role === 'dialog', `role is ${JSON.stringify(dialog.attrs.role)}`);
+        assert(dialog.attrs['aria-modal'] === 'true', `aria-modal is ${JSON.stringify(dialog.attrs['aria-modal'])}`);
+        assert(
+            dialog.attrs['aria-labelledby'] === 'modalTitle',
+            `aria-labelledby is ${JSON.stringify(dialog.attrs['aria-labelledby'])}`
+        );
+        return '';
+    });
+
     await check('Toast.show escapes a hostile server error string', () => {
         let written = null;
         const fakeToast = {
@@ -458,6 +586,105 @@ async function main() {
         assert(written.includes('<p>&lt;b&gt;</p>'), `body not passed through: ${written}`);
         assert(written.includes('<button>Close</button>'), `actions not passed through: ${written}`);
         return '';
+    });
+
+    await check('Modal.show gives its title id=modalTitle for aria-labelledby', () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+
+        mod.Modal.show('Mirror: x', mod.html`<p>body</p>`, mod.html`<button>Close</button>`);
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        const titles = scanTags(written).filter((t) => t.name === 'h3' && t.attrs.id === 'modalTitle');
+        assert(titles.length === 1, `expected one h3#modalTitle, found ${titles.length} in ${written}`);
+        assert(titles[0].attrs.class === 'modal-title', `title class is ${JSON.stringify(titles[0].attrs.class)}`);
+        return '';
+    });
+
+    await check('Toast.show adds is-leaving instead of writing a style', () => {
+        // The stub document.createElement() above returns { style: {},
+        // remove() {} } with no classList, since nothing needed one before
+        // this check. classList lives here, not on the stub or in admin.js,
+        // because this is the one check that needs it.
+        const classes = new Set();
+        const fakeToast = {
+            style: {},
+            classList: { add: (c) => classes.add(c), remove: (c) => classes.delete(c) },
+            remove() {}
+        };
+        sandbox.document.createElement = () => fakeToast;
+        sandbox.document.getElementById = (id) =>
+            (id === 'toastContainer' ? { appendChild: () => {} } : null);
+        // The default setTimeout stub never calls back, so the 4s-later
+        // animation and the 300ms-later removal it schedules would never
+        // run. Firing synchronously here is what lets this check observe
+        // them.
+        sandbox.setTimeout = (fn) => { fn(); return 0; };
+
+        mod.Toast.show('Saved', 'success');
+        sandbox.setTimeout = () => 0;
+
+        assert(classes.has('is-leaving'), `expected is-leaving, got ${JSON.stringify([...classes])}`);
+        assert(
+            Object.keys(fakeToast.style).length === 0,
+            `toast.style was written: ${JSON.stringify(fakeToast.style)}`
+        );
+        return '';
+    });
+
+    await check('showAddUser gives every label a for= matching an input id in the form', () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+
+        mod.actions.showAddUser();
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        const ids = new Set(scanTags(written).map((t) => t.attrs.id).filter(Boolean));
+        const fors = labelFors(written);
+        assert(fors.length > 0, 'no <label> rendered');
+        const missing = fors.filter((f) => !f || !ids.has(f));
+        assert(
+            missing.length === 0,
+            `label(s) with no matching id: ${JSON.stringify(fors)} vs ids ${JSON.stringify([...ids])}`
+        );
+        return `${fors.length} labels`;
+    });
+
+    await check('editUser gives every label a for= matching an input id in the form', async () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+        mod.state.data.users = [
+            { id: 3, username: 'ops', email: 'ops@example.com', role: 'operator', is_active: true }
+        ];
+
+        await mod.actions.editUser(3);
+        mod.state.data.users = null;
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        const written = [...assigned.values()][0];
+        const ids = new Set(scanTags(written).map((t) => t.attrs.id).filter(Boolean));
+        const fors = labelFors(written);
+        assert(fors.length > 0, 'no <label> rendered');
+        const missing = fors.filter((f) => !f || !ids.has(f));
+        assert(
+            missing.length === 0,
+            `label(s) with no matching id: ${JSON.stringify(fors)} vs ids ${JSON.stringify([...ids])}`
+        );
+        return `${fors.length} labels`;
     });
 
     // --- Disk capacity and files_deleted (Dashboard) ------------------------

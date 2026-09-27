@@ -805,6 +805,12 @@ tr:hover td {
     border-left: 3px solid var(--status-syncing);
 }
 
+/* Toast.show adds this class instead of writing toast.style.animation
+   (nginx.conf's CSP comment on style-src). */
+.toast.is-leaving {
+    animation: slideIn 0.3s ease reverse;
+}
+
 /* Theme toggle (spec 6.2). The .icon base rule is copied from
    css/style.css:72-85 -- admin does not load that sheet -- with absolute
    /img/icons/ URLs, since url() in a linked stylesheet resolves against that

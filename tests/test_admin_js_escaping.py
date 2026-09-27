@@ -138,8 +138,18 @@ HARNESS_CHECKS = [
     "renderLayout escapes the logged-in username in the sidebar",
     "renderLayout renders exactly one theme toggle button",
     "renderLoginPage renders exactly one theme toggle button",
+    "DISK_USAGE_CRITICAL_PERCENT is defined and equals 95",
+    "renderLayout gives every nav-item a literal href of # plus its data-nav",
+    "renderLayout sets aria-current=page on the current nav-item and false on the rest",
+    "renderLayout toast container carries role=status and aria-live=polite",
+    "renderLoginPage renders one toastContainer with role=status and aria-live=polite",
+    "renderLayout gives #modal role=dialog aria-modal=true and aria-labelledby=modalTitle",
     "Toast.show escapes a hostile server error string",
     "Modal.show escapes a hostile title and trusts SafeHtml body",
+    "Modal.show gives its title id=modalTitle for aria-labelledby",
+    "Toast.show adds is-leaving instead of writing a style",
+    "showAddUser gives every label a for= matching an input id in the form",
+    "editUser gives every label a for= matching an input id in the form",
     "filesDeletedBadge marks a count at the large-deletion threshold",
     "filesDeletedBadge leaves a count below the threshold unmarked",
     "renderDashboard escapes recent activity action and sync status end-to-end",
@@ -517,6 +527,16 @@ def test_no_other_html_sinks():
     source = admin_js_source()
     for sink in OTHER_SINKS:
         assert sink not in source, f"{sink} bypasses setHtml()"
+
+
+def test_no_style_property_writes():
+    """admin.js writes no element style anywhere. The toast's animation is a
+    class, is-leaving, applied through classList -- not a CSSOM assignment --
+    so a *-src 'self' style-src policy with no 'unsafe-inline' has nothing to
+    block here."""
+    source = admin_js_source()
+    found = [line_of(source, m.start()) for m in re.finditer(r"\.style\.", source)]
+    assert not found, f".style. found on line(s) {found}; use a class instead"
 
 
 def test_no_template_literal_join_remains():

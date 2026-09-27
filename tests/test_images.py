@@ -365,14 +365,25 @@ FAVICON_LINKS = [
 ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed"}
 
 
-class LinkCollector(HTMLParser):
+class HeadLinkCollector(HTMLParser):  # direct children of <head> only
     def __init__(self):
         super().__init__()
-        self.links = []
+        self.links, self.open = [], []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "link":
-            self.links.append(dict(attrs))
+        if tag == "head":
+            self.open = ["head"]
+        elif self.open:
+            if tag == "link" and self.open == ["head"]:
+                self.links.append(dict(attrs))
+            elif tag not in ("link", "meta", "base"):
+                self.open.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self.open = []
+        elif self.open and self.open[-1] == tag:
+            self.open.pop()
 
 
 def test_pages_lists_every_html_page():
@@ -381,7 +392,7 @@ def test_pages_lists_every_html_page():
 
 @pytest.mark.parametrize("page", PAGES, ids=rel)
 def test_every_page_links_the_favicon_set(page):
-    collector = LinkCollector()
+    collector = HeadLinkCollector()
     collector.feed(page.read_text(encoding="utf-8"))
     icons = [
         link for link in collector.links if ICON_RELS & set((link.get("rel") or "").lower().split())
@@ -389,3 +400,26 @@ def test_every_page_links_the_favicon_set(page):
     assert icons == FAVICON_LINKS
     for link in icons:
         assert (PUBLIC / link["href"].lstrip("/")).is_file(), f"{link['href']} does not exist"
+
+
+def test_head_link_collector_ignores_links_outside_head_and_inside_noscript():
+    """Characterises the bug this collector exists to fix: a <link> is only
+    meaningful as a direct child of <head>. One inside <body> is inert, and
+    one inside a <head><noscript> only applies with JavaScript disabled --
+    admin.js and main.js both require it, so that copy never actually
+    applies either. A <link> placed between </head> and <body> is not
+    collected here either, even though a browser's forgiving parser still
+    relocates it into <head> and honours it there: a real page shaped that
+    way fails test_every_page_links_the_favicon_set, and the fix is to move
+    the link, not to loosen this collector. The old, unscoped collector
+    counted the first two as real."""
+    page = (
+        "<html><head>"
+        '<noscript><link rel="icon" href="/noscript-favicon.ico"></noscript>'
+        "</head><body>"
+        '<link rel="icon" href="/body-favicon.ico">'
+        "</body></html>"
+    )
+    collector = HeadLinkCollector()
+    collector.feed(page)
+    assert collector.links == [], f"expected no links collected, got {collector.links}"
