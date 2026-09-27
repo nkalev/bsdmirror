@@ -1,17 +1,23 @@
 /* BSD Mirror - Design Tokens */
-/* Single source of truth for colour, type, spacing, radius and motion.
-   Consumed by both surfaces via <link>, ahead of the page stylesheet:
+/* "Reflection" palette: chrome greys, one accent ("daemon red"), a light and
+   a dark theme. Single source of truth for colour, type, spacing, radius and
+   motion. Consumed by both surfaces via <link>, ahead of the page stylesheet:
 
      public site   frontend/public/index.html        -> tokens.css, then css/style.css
      admin panel   frontend/public/admin/index.html  -> tokens.css, then admin/css/admin.css
 
    Do not declare custom properties in style.css or admin.css. Add them here.
+   The one exception is a property that carries a value across a <use>
+   boundary, where no selector reaches: style.css sets --mark-glyph-fill on
+   .hero-mark for the inline mark's glyph, per element, not as a token.
+   See docs/design/2026-09-25-reflection-redesign.md, sections 4.1 and 7.
 
    ---------------------------------------------------------------------------
    Layers
    ---------------------------------------------------------------------------
-   1. PRIMITIVES (--c-*)   Raw palette. No meaning attached, never used directly
-                           by a component rule — semantic tokens reference these.
+   1. PRIMITIVES (--c-*)   Raw palette, named by hue family and step. No
+                           meaning attached, never used directly by a
+                           component rule -- semantic tokens reference these.
    2. INVARIANTS           Semantics that do not change with theme or surface.
    3. LIGHT THEME          Semantics for :root, i.e. the public site's default.
    4. DARK THEME           Semantics for [data-theme="dark"], set by main.js.
@@ -39,17 +45,11 @@
    ---------------------------------------------------------------------------
    The admin console must keep looking exactly as it does today until its own
    redesign (spec section 6), even though this file's primitives and light/dark
-   semantics are about to change under it. [data-surface="admin"] pins the
-   values admin.css reads directly, as literals, so none of them can resolve
-   through the shared layers above once they do. That admin redesign deletes
-   the LEGACY ADMIN group and folds admin's colours back into the shared
-   light/dark layers, checked in both themes; see spec section 7.
-
-   --accent-secondary is the one admin override the freeze leaves alone: it
-   still resolves through PRIMITIVES rather than a raw hex value, and
-   --accent-gradient is derived from --accent-primary and --accent-secondary,
-   so overriding the latter here is enough to retune the gradient for the
-   admin surface. PR 2 retires both --accent-secondary and --accent-gradient.
+   semantics changed under it. [data-surface="admin"] pins the values admin.css
+   reads directly, as literals, so none of them can resolve through the shared
+   layers above. That admin redesign deletes the LEGACY ADMIN group and folds
+   admin's colours back into the shared light/dark layers, checked in both
+   themes; see spec section 7.
 */
 
 /* ===========================================================================
@@ -58,71 +58,58 @@
    =========================================================================== */
 
 :root {
-    /* Warm neutrals - the public site's light surfaces */
+    /* Neutrals ("chrome grey"): one ramp, lightest to darkest, spanning both
+       themes' surfaces, text and hairlines. */
     --c-white: #FFFFFF;
-    --c-sand-50: #FFFBF5;
-    --c-sand-100: #F5F0E8;
-    --c-sand-200: #EDE6D9;
-    --c-sand-300: #E0D8CC;
+    --c-graphite-50: #F4F5F7;
+    --c-graphite-75: #EDEFF3;
+    --c-graphite-100: #ECEEF1;
+    --c-graphite-200: #D9DDE3;
+    --c-graphite-400: #A2A9B6;
+    --c-graphite-450: #8D95A3;
+    --c-graphite-500: #8A919D;
+    --c-graphite-550: #7F8794;
+    --c-graphite-600: #5F6673;
+    --c-graphite-650: #5C6370;
+    --c-graphite-700: #4E5563;
+    --c-graphite-750: #4A515E;
+    --c-graphite-850: #252932;
+    --c-graphite-900: #161920;
+    --c-graphite-925: #101217;
+    --c-graphite-950: #0C0E12;
+    --c-graphite-975: #07080B;
 
-    /* Cool neutrals - dark surfaces, and text on light surfaces */
-    --c-navy-900: #0D0D1A;
-    --c-navy-800: #1A1A2E;
-    --c-navy-700: #2A2A40;
-    --c-slate-600: #4A4E69;
-    --c-slate-500: #606078;
-    --c-slate-400: #8D8DA0;
-    /* Exact midpoint of slate-400/slate-300. Added for dark-theme --text-muted,
-       which needs something lighter than slate-400 (fails at 4.29:1 on the
-       admin surface's --bg-tertiary) without being as bright as slate-300
-       (already spoken for by --text-secondary -- reusing it here would make
-       "muted" and "secondary" the same colour). See the WCAG note on
-       --text-muted below. */
-    --c-slate-350: #9696AC;
-    --c-slate-300: #A0A0B8;
-    --c-slate-50: #E8E8F0;
+    /* Accent ("daemon red") and its ink. */
+    --c-red-50: #FBE4E2;
+    --c-red-300: #FF7B72;
+    --c-red-400: #FF5A60;
+    --c-red-600: #C8232C;
+    --c-red-650: #B42318;
+    --c-red-900: #2D1415;
+    --c-red-975: #16060A;
 
-    /* Brand accents */
-    --c-orange-500: #F48C06;
-    --c-orange-600: #E85D04;
-    /* Lighter than --c-red-500 on purpose: red-500 only reaches ~3.6-3.7:1
-       against the admin surface's dark backgrounds -- enough for a 3px
-       border or a small dot (3:1) but not for text (4.5:1). Text duty only;
-       see --status-error-text below. Matches Tailwind's red-400, chosen
-       because it is a known-legible shade rather than an arbitrary one. */
-    --c-red-400: #F87171;
-    --c-red-500: #EF4444;
-    --c-red-700: #D62828;
-    --c-amber-400: #E8B059;
+    /* Status hues: online (green), syncing (amber), info (blue), incomplete
+       (purple). Each carries a light-theme text step, a dark-theme text
+       step, and a tint for each theme's pill/card background. */
+    --c-green-50: #E3F4EA;
+    --c-green-400: #5AD69A;
+    --c-green-700: #1B7A48;
+    --c-green-925: #0F2A1D;
 
-    /* Feedback hues */
-    --c-green-500: #22c55e;
-    /* Darker than --c-green-500 on purpose: green-500 only reaches 2.28:1
-       against the light theme's --bg-card (needs 3:1 for a UI indicator,
-       WCAG 2.1 SC 1.4.11) -- see --status-healthy's light-theme override
-       below, in LIGHT THEME. Matches Tailwind's green-700, chosen the same
-       way --c-red-400 and --c-sky-400 below already were: a known-legible
-       shade rather than an arbitrary one. */
-    --c-green-700: #15803D;
-    --c-amber-500: #F59E0B;
-    /* Same reasoning as --c-green-700 above: amber-500 only reaches 2.15:1
-       against the light theme's --bg-card (needs 3:1) -- see
-       --status-syncing's light-theme override below. Exact midpoint of
-       Tailwind's amber-600/amber-700, the same technique --c-slate-350 above
-       uses for --text-muted's dark-theme value: neither named step alone
-       lands where this needs to. */
-    --c-amber-650: #C66508;
-    --c-sky-500: #0ea5e9;
-    /* Lighter than --c-sky-500 on purpose, same reasoning as --c-red-400
-       above: sky-500 only reaches 4.16:1 against --status-info-bg below
-       (needs 4.5:1 as text). Text duty only; see --status-info-text below.
-       Matches Tailwind's sky-400. */
-    --c-sky-400: #38BDF8;
+    --c-amber-50: #FBF0DA;
+    --c-amber-400: #F2C14E;
+    --c-amber-800: #8C5A00;
+    --c-amber-925: #2A2210;
 
-    /* BSD distribution identity */
-    --c-freebsd: #AB2B28;
-    --c-netbsd: #FF6600;
-    --c-openbsd: #F2CA30;
+    --c-blue-50: #E3EEFA;
+    --c-blue-400: #7CB7F2;
+    --c-blue-700: #1F5FA8;
+    --c-blue-925: #10233A;
+
+    --c-purple-50: #EFE7F8;
+    --c-purple-400: #C4A3F0;
+    --c-purple-700: #6B3FA0;
+    --c-purple-925: #241A33;
 }
 
 /* ===========================================================================
@@ -131,100 +118,33 @@
    =========================================================================== */
 
 :root {
-    /* Typography.
-       The Inter / JetBrains Mono faces are self-hosted and declared in
-       css/fonts.css, which every page links ahead of this file. The fallback
-       chains below still matter: they cover the swap period before the
-       webfont arrives, and any glyph outside the shipped unicode-ranges. */
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    /* Typography. Unbounded, Instrument Sans and JetBrains Mono are
+       self-hosted and declared in css/fonts.css, which every page links
+       ahead of this file. The fallback chains cover the swap period before
+       the webfont arrives, and any glyph outside the shipped unicode-ranges. */
+    --font-display: 'Unbounded', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-sans: 'Instrument Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
-    /* Motion */
+    /* Motion. --transition-lift is new, for the card/button/icon lifts in
+       spec section 4.4; --transition-fast and --transition-base cover colour,
+       background and border transitions as before. */
     --transition-fast: 150ms ease;
-    --transition-base: 300ms ease;
+    --transition-base: 250ms ease;
+    --transition-lift: 400ms cubic-bezier(.2, .8, .2, 1);
 
-    /* Radius. --radius-md and --radius-lg are retuned for the admin surface. */
-    --radius-sm: 6px;
-    --radius-md: 12px;
-    --radius-lg: 16px;
-    --radius-xl: 24px;
+    /* Radius. */
+    --radius-sm: 8px;
+    --radius-md: 10px;
+    --radius-lg: 12px;
+    --radius-xl: 14px;
+    --radius-full: 999px;
 
-    /* Layout. --header-height is retuned for the admin surface. */
-    --container-max: 1200px;
-    --header-height: 72px;
+    /* Layout. --sidebar-width is unchanged until the admin console's own
+       redesign (spec section 6), which retunes it to 188px. */
+    --container-max: 1180px;
+    --header-height: 64px;
     --sidebar-width: 260px;
-
-    /* Mirror / sync status. --status-healthy and --status-syncing used to
-       live here too, but are no longer the same on every theme -- see
-       LIGHT THEME and DARK THEME below, where each now gets its own value.
-       --status-error and --status-info stay here: unchanged on every theme
-       and surface. main.js reads --status-error directly
-       (MirrorStatus.updateOverallStatus's degraded-state
-       pulse.style.background assignment) - do not rename without updating
-       it. It also reads --status-healthy (the healthy-state pulse) and
-       --accent-primary (the syncing-state pulse, not --status-syncing -- see
-       the comment on --status-syncing-tint below for why); both keep
-       resolving correctly through the cascade without a note here, since
-       neither name changes below, only --status-healthy's value. */
-    --status-error: var(--c-red-500);
-    --status-info: var(--c-sky-500);
-
-    /* status-error rendered as TEXT on the admin surface's dark backgrounds
-       (a sync-log error line, an "error"/"at-risk" badge label). --status-error
-       itself stays red-500 for the roles it already covers at 3:1 -- borders,
-       the 3px toast rail, small dots -- changing its value would touch those
-       too. This is additive, for the one role red-500 cannot cover: 4.5:1
-       text. Not consumed by the public site, which never renders
-       status-error as text. */
-    --status-error-text: var(--c-red-400);
-
-    /* Same shape as --status-error-text just above: --status-info (sky-500)
-       reaches only 4.16:1 against --status-info-bg below (needs 4.5:1 as
-       text). Used by the admin health-checks card's "incomplete" badge -- a
-       fifth state squeezed alongside Mirror.status's four, that needs to
-       read as "not a hard failure, but not clean either" without being
-       confused for --status-syncing's amber "stale" badge next to it -- and
-       by the archive-inventory table's Newest/Latest-in-major/Pre-release
-       tags (see .status-badge.info in admin.css), which need the same
-       "purely informational, not a status judgement" read. Not consumed by
-       the public site. */
-    --status-info-text: var(--c-sky-400);
-
-    /* Solid, precomputed equivalents of what a 15-20% status-colour tint over
-       the admin surface's --bg-card used to look like, for the status
-       badges/pills that render a coloured label on a soft coloured chip.
-       Precomputed rather than left as a live rgba() tint because an rgba()
-       tint's contrast depends on whatever is behind it -- and something IS,
-       reliably: `tr:hover td` repaints the row to --bg-tertiary, which is
-       lighter than --bg-card, and every one of these tints measured below
-       4.5:1 for its own text against that lighter backdrop. A solid colour
-       has no backdrop to depend on. Recompute by hand if the inputs below
-       change (--bg-card, or the status colour/alpha):
-         --status-healthy-bg: #22c55e at 20% over --bg-card (#1A1A2E)
-         --status-syncing-bg: #F59E0B at 20% over --bg-card (#1A1A2E)
-         --status-error-bg:   --c-red-400 at 20% over --bg-card (#1A1A2E)
-         --status-info-bg:    --c-sky-400 at 20% over --bg-card (#1A1A2E) */
-    --status-healthy-bg: #1C3C38;
-    --status-syncing-bg: #463427;
-    --status-error-bg: #462B3B;
-    --status-info-bg: #203B56;
-
-    /* Foreground for text/glyphs painted on a solid --accent-primary or
-       --status-error fill (primary buttons, the active sidebar item, the
-       user avatar, the danger button). White fails all of these: as low as
-       2.44:1 on --accent-primary in dark/admin. --text-primary does not
-       work either -- it is theme-dependent and in dark/admin it is a light
-       colour, which has the same problem as white. --c-navy-900 clears
-       4.5:1 against every accent/status fill these components use, in every
-       theme, because those fills are bright/mid-luminance oranges and reds
-       that dark ink reads on far better than white does (the same reason
-       safety-orange signage is printed with black text, not white). */
-    --text-on-accent: var(--c-navy-900);
-
-    /* BSD distribution identity */
-    --freebsd-color: var(--c-freebsd);
-    --netbsd-color: var(--c-netbsd);
-    --openbsd-color: var(--c-openbsd);
 }
 
 /* ===========================================================================
@@ -232,83 +152,55 @@
    =========================================================================== */
 
 :root {
-    --bg-primary: var(--c-sand-50);
-    --bg-secondary: var(--c-sand-100);
-    --bg-tertiary: var(--c-sand-200);
+    --bg-primary: var(--c-graphite-100);
+    --bg-secondary: var(--c-graphite-50);
     --bg-card: var(--c-white);
 
-    --text-primary: var(--c-navy-800);
-    --text-secondary: var(--c-slate-600);
-    /* slate-500, not slate-400: slate-400 (the original value) tops out at
-       3.26:1 against --bg-card and drops to 2.62:1 against --bg-tertiary --
-       fails 4.5:1 everywhere it is actually used as text. slate-500 clears
-       4.5:1 against every surface background this token is used on,
-       including the worst case, --bg-tertiary, at 4.92:1. */
-    --text-muted: var(--c-slate-500);
+    --text-primary: var(--c-graphite-950);
+    --text-secondary: var(--c-graphite-700);
+    --text-muted: var(--c-graphite-700);
 
-    --accent-primary: var(--c-orange-600);
-    --accent-secondary: var(--c-red-700);
-    --accent-gradient: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%);
+    --border-color: var(--c-graphite-200);
+    /* Control border, at least 3:1 against --bg-card (WCAG 2.1 SC 1.4.11).
+       --border-color above is a hairline only (1.36:1 here) -- fine for a
+       card edge or divider, not for a boundary that is the only way to see a
+       control. Not yet consumed on the public site (no form fields); the
+       admin console's own redesign (spec section 6.1) is its first user. */
+    --border-strong: var(--c-graphite-500);
 
-    --border-color: var(--c-sand-300);
+    --accent-primary: var(--c-red-600);
+    --text-on-accent: var(--c-white);
 
-    /* Tinted with the navy-800 ink rather than pure black, so shadows stay warm.
-       Alpha variants are written literally: there is no build step to derive
-       them, and color-mix() would change the resolved value. */
-    --shadow-card: 0 4px 6px -1px rgba(26, 26, 46, 0.06), 0 2px 4px -2px rgba(26, 26, 46, 0.04);
-    --shadow-card-hover: 0 20px 25px -5px rgba(26, 26, 46, 0.08), 0 8px 10px -6px rgba(26, 26, 46, 0.04);
-
-    /* Terminal-style code blocks (public site only) */
-    --terminal-bg: var(--c-navy-800);
-    --terminal-text: var(--c-amber-400);
-    --terminal-prompt: var(--c-green-500);
-
-    /* Mirror / sync status, darker here than the c-green-500/c-amber-500
-       DARK THEME still uses below: green-500 is only 2.28:1 against
-       --bg-card in this theme (needs 3:1 for a UI indicator, WCAG 2.1
-       SC 1.4.11 -- .status-dot.healthy on a mirror card, and the 20px dot in
-       .status-indicator.healthy::before against --status-healthy-tint
-       below). green-700 clears both: 5.02:1 against --bg-card, 4.41:1
-       against --status-healthy-tint (the stricter of the two, since the tint
-       is slightly darker than --bg-card itself). Re-declared back to
-       green-500 in DARK THEME below, which already clears 3:1 there
-       (7.49:1) and is shared with the admin surface's text-on-tint badges
-       (test_contrast.py's ADMIN_CHECKS) -- this fix must not move those. */
     --status-healthy: var(--c-green-700);
-    /* Same shape as --status-healthy just above: amber-500 is only 2.15:1
-       against --bg-card in this theme (.status-dot.syncing on a mirror card;
-       needs 3:1). amber-650 reaches 3.99:1. Re-declared back to amber-500 in
-       DARK THEME below (7.94:1 there already), for the same reason as
-       --status-healthy. */
-    --status-syncing: var(--c-amber-650);
+    --status-syncing: var(--c-amber-800);
+    --status-error: var(--c-red-650);
+    --status-info: var(--c-blue-700);
+    --status-incomplete: var(--c-purple-700);
 
-    /* Solid, precomputed equivalents of the 15% status-colour tint behind
-       the 20px dot in each of .status-indicator's three states (the "Mirror
-       Status" card) -- same rationale as --status-healthy-bg & co. in
-       INVARIANTS above: an rgba() tint's contrast depends on whatever is
-       behind it, and .status-card's --bg-card reliably is, so a solid colour
-       with nothing left to composite at paint time is both simpler to verify
-       and correct once measured. Recompute by hand if --bg-card or the
-       status colour/alpha changes:
-         --status-healthy-tint: --c-green-500 (#22C55E) -- the ORIGINAL
-           healthy shade, not --status-healthy above -- at 15% over --bg-card
-           (#FFFFFF). The halo stays the brighter green; only the solid dot
-           painted on top of it needed darkening.
-         --status-error-tint: --status-error (#EF4444) at 15% over --bg-card
-           (#FFFFFF). Unchanged shade, unchanged alpha -- already 3.10:1
-           against --status-error's own dot, which needs no fix.
-         --status-syncing-tint: --accent-primary (#E85D04) at 10%, not 15%,
-           over --bg-card (#FFFFFF). .status-indicator.syncing::before's dot
-           is --accent-primary, not --status-syncing (main.js's syncing-state
-           pulse reads --accent-primary too -- see
-           MirrorStatus.updateOverallStatus), so darkening --status-syncing
-           above does nothing for it, and --accent-primary is out of scope
-           for this fix: it also backs buttons, nav, and the logo gradient.
-           At the original 15% this dot is 2.93:1 against its own tint (needs
-           3:1); dropping the tint to 10% clears it at 3.11:1. */
-    --status-healthy-tint: #DEF6E7;
-    --status-error-tint: #FDE3E3;
-    --status-syncing-tint: #FDEFE6;
+    --status-healthy-bg: var(--c-green-50);
+    --status-syncing-bg: var(--c-amber-50);
+    --status-error-bg: var(--c-red-50);
+    --status-info-bg: var(--c-blue-50);
+    --status-incomplete-bg: var(--c-purple-50);
+
+    /* Idle sync-stream line, at least 3:1 against --bg-card. */
+    --stream-line: var(--c-graphite-550);
+
+    /* Tinted with the ink rather than pure black, so shadows stay cool
+       rather than muddy. Alpha variants are written literally: there is no
+       build step to derive them, and color-mix() would change the resolved
+       value. */
+    --shadow-card: 0 1px 2px rgba(12, 14, 18, .06), 0 14px 30px -18px rgba(12, 14, 18, .35);
+    --shadow-card-hover: 0 1px 2px rgba(12, 14, 18, .06), 0 14px 38px -18px rgba(12, 14, 18, .35);
+
+    /* The hero mark's sheen sweep (spec section 4.4) and the modal scrim. */
+    --sheen: rgba(255, 255, 255, .85);
+    --sheen-blend: soft-light;
+    --scrim: rgba(12, 14, 18, .45);
+
+    /* The hero mark's vertical gradient fill (spec section 4.5). */
+    --mark-gradient-from: var(--c-graphite-950);
+    --mark-gradient-to: var(--c-graphite-750);
 }
 
 /* ===========================================================================
@@ -317,49 +209,43 @@
    =========================================================================== */
 
 [data-theme="dark"] {
-    --bg-primary: var(--c-navy-900);
-    --bg-secondary: var(--c-navy-800);
-    --bg-tertiary: var(--c-navy-700);
-    --bg-card: var(--c-navy-800);
+    --bg-primary: var(--c-graphite-975);
+    --bg-secondary: var(--c-graphite-900);
+    --bg-card: var(--c-graphite-925);
 
-    --text-primary: var(--c-slate-50);
-    --text-secondary: var(--c-slate-300);
-    /* slate-350, not slate-500: slate-500 (the original value, and still
-       correct for light theme above) only reaches 2.29:1 against this
-       theme's --bg-tertiary -- the pairing this file's PR notes originally
-       flagged. slate-350 clears 4.5:1 against every surface background this
-       token is used on, including that worst case, at 4.82:1, while staying
-       visibly less prominent than --text-secondary (4.82:1 vs
-       --text-secondary's 5.46:1 on the same background). Also read by the
-       admin surface, which does not override --text-muted. */
-    --text-muted: var(--c-slate-350);
+    --text-primary: var(--c-graphite-75);
+    --text-secondary: var(--c-graphite-400);
+    --text-muted: var(--c-graphite-400);
 
-    --accent-primary: var(--c-orange-500);
-    --accent-secondary: var(--c-red-500);
+    --border-color: var(--c-graphite-850);
+    --border-strong: var(--c-graphite-600);
 
-    --border-color: var(--c-navy-700);
+    --accent-primary: var(--c-red-400);
+    --text-on-accent: var(--c-red-975);
 
-    --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.2);
-    --shadow-card-hover: 0 20px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+    --status-healthy: var(--c-green-400);
+    --status-syncing: var(--c-amber-400);
+    --status-error: var(--c-red-300);
+    --status-info: var(--c-blue-400);
+    --status-incomplete: var(--c-purple-400);
 
-    --terminal-bg: var(--c-navy-900);
-    --terminal-text: var(--c-orange-500);
+    --status-healthy-bg: var(--c-green-925);
+    --status-syncing-bg: var(--c-amber-925);
+    --status-error-bg: var(--c-red-900);
+    --status-info-bg: var(--c-blue-925);
+    --status-incomplete-bg: var(--c-purple-925);
 
-    /* Re-declared at their INVARIANTS-default value, unlike LIGHT THEME's
-       darker override above: dark theme already clears 3:1 for both against
-       --bg-card here (7.49:1 / 7.94:1), and this token is shared with the
-       admin surface's text-on-tint badges (test_contrast.py's ADMIN_CHECKS),
-       which must not move. */
-    --status-healthy: var(--c-green-500);
-    --status-syncing: var(--c-amber-500);
+    --stream-line: var(--c-graphite-650);
 
-    /* Same tint precompute as LIGHT THEME above, against this theme's
-       --bg-card (#1A1A2E) instead. Already >=3:1 at the original 15% alpha
-       for all three (5.80:1 / 3.90:1 / 5.90:1), so nothing here changes
-       alpha or colour -- only its form, from a live rgba() to a token. */
-    --status-healthy-tint: #1B3435;
-    --status-error-tint: #3A2031;
-    --status-syncing-tint: #392428;
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, .45), 0 16px 34px -18px rgba(0, 0, 0, .85);
+    --shadow-card-hover: 0 1px 2px rgba(0, 0, 0, .45), 0 16px 38px -18px rgba(0, 0, 0, .85);
+
+    --sheen: rgba(255, 255, 255, .16);
+    --sheen-blend: screen;
+    --scrim: rgba(0, 0, 0, .6);
+
+    --mark-gradient-from: var(--c-graphite-75);
+    --mark-gradient-to: var(--c-graphite-450);
 }
 
 /* ===========================================================================
@@ -413,7 +299,4 @@
     --text-on-accent: #0D0D1A;
     --text-primary: #E8E8F0;
     --text-secondary: #A0A0B8;
-
-    /* Gradient stays within the orange family instead of running orange->red. */
-    --accent-secondary: var(--c-orange-600);
 }
