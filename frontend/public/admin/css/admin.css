@@ -489,6 +489,13 @@ body {
     padding: 20px;
 }
 
+/* Spec 4.3's 14px panel gap between a card and the two-up row after it (the
+   dashboard's Health Checks card, then Recent Sync Jobs and Recent Activity).
+   Scoped to that sequence, so a .u-grid-2 that opens its container gains no
+   stray top margin; the card carries no bottom margin of its own, so the gap
+   is 14px and never doubles. */
+.card + .u-grid-2 { margin-top: 14px; }
+
 .card-header {
     display: flex;
     align-items: center;
@@ -788,10 +795,9 @@ tr:hover td {
 }
 
 /* A date or a size broken across lines ("Sep" / "27," / "10:00" / "PM") is
-   unreadable, and inside .table-container the table already scrolls sideways,
-   so these cells keep to one line. The scope matters: a table outside a
-   container (Settings Info) has nowhere to scroll, and a cell that cannot
-   wrap would push it past its card. */
+   unreadable, so these cells keep to one line. Scoped to .table-container,
+   whose sideways scroll is what makes that safe; every table the console
+   renders sits in one. */
 .table-container .num {
     white-space: nowrap;
 }
@@ -1469,13 +1475,6 @@ code {
 
 .u-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .u-grid-2-tight { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
-
-/* Spec 4.3's 14px panel gap between a card and the two-up row after it (the
-   dashboard's Health Checks card, then Recent Sync Jobs and Recent Activity).
-   Scoped to that sequence, so a .u-grid-2 that opens its container gains no
-   stray top margin; the card carries no bottom margin of its own, so the gap
-   is 14px and never doubles. */
-.card + .u-grid-2 { margin-top: 14px; }
 
 /* ===========================================================================
    Responsive (spec 6.1: "Under 768px" -- the sidebar becomes a horizontal,
