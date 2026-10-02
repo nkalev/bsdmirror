@@ -378,3 +378,22 @@ def test_verify_all_runs_the_cache_check():
     body = re.search(r"^verify_all\(\) \{\n(.*?)^\}", source, re.M | re.S)
     assert body, "verify_all() not found in scripts/deploy.sh"
     assert re.search(r"^\s+verify_cache_headers$", body.group(1), re.M)
+
+
+def test_the_header_check_reads_its_headers_without_a_pipe():
+    """`printf ... | grep -q` is a race under `set -o pipefail`: grep -q exits
+    at its first match, and a printf still writing the remaining lines then
+    dies of SIGPIPE, which fails the pipeline and reports a header that is
+    present as missing. It was observed about once in 50,000 checks under load
+    (PIPESTATUS 141 0): enough to fail this module now and then, and on the
+    server to end a good deploy in "verification failed". The check must hand
+    grep its input another way."""
+    source = DEPLOY_SH.read_text(encoding="utf-8")
+    body = re.search(r"^verify_security_headers\(\) \{\n(.*?)^\}", source, re.M | re.S)
+    assert body, "verify_security_headers() not found in scripts/deploy.sh"
+    # Comment lines are skipped: the one above the fixed line names the pattern.
+    code = "\n".join(
+        line for line in body.group(1).splitlines() if not line.lstrip().startswith("#")
+    )
+    piped = re.findall(r"^.*\|\s*grep\s+-[A-Za-z]*q.*$", code, re.M)
+    assert piped == [], "a pipeline into grep -q can fail on SIGPIPE:\n" + "\n".join(piped)

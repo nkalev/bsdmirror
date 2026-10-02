@@ -1766,7 +1766,12 @@ verify_security_headers() {
         hdrs=$(tr -d '\r' <"$dir/$i" | tr '[:upper:]' '[:lower:]')
         missing=""
         for h in "${want[@]}"; do
-            printf '%s\n' "$hdrs" | grep -q "^$h:" || missing="$missing $h"
+            # A here-string, not `printf ... | grep -q`. grep -q exits at its
+            # first match; under `set -o pipefail` a printf still writing the
+            # rest then dies of SIGPIPE and fails the pipeline, so a header
+            # that is there was reported missing, about once in 50,000 checks
+            # under load (PIPESTATUS 141 0).
+            grep -q "^$h:" <<<"$hdrs" || missing="$missing $h"
         done
         if [ -n "$missing" ]; then
             printf '  %-32s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
