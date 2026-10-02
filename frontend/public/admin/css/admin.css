@@ -787,6 +787,15 @@ tr:hover td {
     font-variant-numeric: tabular-nums;
 }
 
+/* A date or a size broken across lines ("Sep" / "27," / "10:00" / "PM") is
+   unreadable, and inside .table-container the table already scrolls sideways,
+   so these cells keep to one line. The scope matters: a table outside a
+   container (Settings Info) has nowhere to scroll, and a cell that cannot
+   wrap would push it past its card. */
+.table-container .num {
+    white-space: nowrap;
+}
+
 /* ===========================================================================
    Status pills (spec 4.8) -- a dot plus a word, the dot a ::before in
    currentColor so no markup carries a separate span for it. Every modifier
@@ -927,6 +936,18 @@ tr:hover td {
     border-radius: 50%;
     background: var(--bg-secondary);
     color: var(--text-secondary);
+}
+
+/* The pill that leads a row (Recent Sync Jobs, the mirror modal's sync
+   history) took the place of the 32px icon column, so without a floor the text
+   after it started at a different x on every row. The floor is just over the
+   widest word the pill carries: "completed" measures 92.4px at its 12px, and
+   7.75em is 93px. Rounding up to 8em would cost the modal's history rows at
+   400px the 1.2px their dates need to stay on one line. Shorter words sit
+   centred in it. */
+.activity-item > .status-badge {
+    justify-content: center;
+    min-width: 7.75em;
 }
 
 .activity-content {
@@ -1300,8 +1321,12 @@ tr:hover td {
     }
 }
 
+/* `forwards` holds the last keyframe (invisible, off to the right). Toast.show
+   removes the node on a 300ms timer, the same length as this animation, so
+   without it a frame can land between the animation's end and the removal
+   with the toast back at full opacity. */
 .toast.is-leaving {
-    animation: toast-out 0.3s ease;
+    animation: toast-out 0.3s ease forwards;
 }
 
 @keyframes toast-out {
@@ -1445,6 +1470,13 @@ code {
 .u-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .u-grid-2-tight { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 
+/* Spec 4.3's 14px panel gap between a card and the two-up row after it (the
+   dashboard's Health Checks card, then Recent Sync Jobs and Recent Activity).
+   Scoped to that sequence, so a .u-grid-2 that opens its container gains no
+   stray top margin; the card carries no bottom margin of its own, so the gap
+   is 14px and never doubles. */
+.card + .u-grid-2 { margin-top: 14px; }
+
 /* ===========================================================================
    Responsive (spec 6.1: "Under 768px" -- the sidebar becomes a horizontal,
    scrollable bar holding the mark, the nav items, then the avatar and Logout
@@ -1462,8 +1494,27 @@ code {
         grid-template-columns: 1fr;
     }
 
+    /* Unbounded is wide (spec 12): at 25px, "Protected Paths" and "Sync
+       Failures" no longer fit beside the actions at 400px and wrap to two
+       lines, taller than a fixed 64px bar. The bar now grows to fit, never
+       below --header-height; the title steps down with the viewport (25px from
+       500px up, as in spec 6.1) on a tighter line height; and the actions drop
+       to a line of their own only when even the title's longest word cannot
+       share one with them. The side padding is the content's own 20px (spec
+       4.3), so the title and the actions line up with the cards below. */
     .header {
         position: static;
+        height: auto;
+        min-height: var(--header-height);
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        padding: 12px 20px;
+    }
+
+    .header-title {
+        flex: 1;
+        font-size: clamp(18px, 5vw, 25px);
+        line-height: 1.25;
     }
 
     .sidebar {
@@ -1508,8 +1559,18 @@ code {
         display: none;
     }
 
+    /* The active item's own background change is only about 1.1:1 against the
+       bar, too faint to find the current page by. The sidebar's 3px accent bar
+       (spec 6.1) is turned to lie along the item's bottom edge instead, under
+       its icon and label. */
     .nav-item.active::before {
-        display: none;
+        left: 10px;
+        right: 10px;
+        top: auto;
+        bottom: 0;
+        width: auto;
+        height: 3px;
+        border-radius: 3px 3px 0 0;
     }
 
     .sidebar-footer {
@@ -1535,5 +1596,21 @@ code {
     .u-grid-2,
     .u-grid-2-tight {
         grid-template-columns: 1fr;
+    }
+}
+
+/* The band from the sidebar's return (768px) until the content is roomy again
+   (about 1100px). The 188px sidebar (spec 4.3) leaves a table container of only
+   about 500px at 768px, and the one-line .num cells above need more than that
+   on every wide table: roughly 60px more on Mirrors and Audit Logs at 768px,
+   and Users and Sync Failures still need extra at 1024px. Left alone, the last
+   column (the action buttons, the IP address) ends up half out of view where
+   the wrapped cells used to fit. Stepping the cell padding down from 14px to 8px
+   a side gives that room back without letting a date wrap again. */
+@media (min-width: 768px) and (max-width: 1099.98px) {
+    .table-container th,
+    .table-container td {
+        padding-left: 8px;
+        padding-right: 8px;
     }
 }
