@@ -6,8 +6,9 @@ comment that lists several token globs separated by `/` -- `--bg-*/--text-*`
 comment right there. Everything from that point to the next `*/` a browser
 happens to find is no longer a comment at all: it is parsed as CSS, fails to
 parse as any rule the language defines, and is dropped -- taking whatever
-real rule used to sit just after the intended close with it (see spec
-docs/design/2026-09-25-reflection-redesign.md, section 6.1, "Reset").
+real rule used to sit just after the intended close with it. That is what
+admin.css's header comment did in PR 3: it listed `--bg-*/--text-*`, and the
+rule under its "Reset" banner went with it.
 
 Every `*/` in these four stylesheets must therefore be followed by
 whitespace or nothing (the end of the file), and no comment may contain a
@@ -83,10 +84,11 @@ def test_no_closer_survives_stripping_every_well_formed_comment():
 
 
 def test_the_checks_actually_catch_a_planted_defect():
-    """Neither check above has ever been seen failing on real input until
-    the fix below made it pass; plant the admin.css shape in miniature --
-    a `*/` glued to the text after it, `*/x` -- and confirm both formulations
-    catch it, and that neither fires on an ordinary, well-formed comment."""
+    """Both checks above first ran against admin.css's header comment, the one
+    that closed early (see the module docstring); plant that shape in
+    miniature -- a `*/` glued to the text after it, `*/x` -- and confirm both
+    formulations catch it, and that neither fires on an ordinary, well-formed
+    comment."""
     planted = "/* token list --a-*/x more words, closed for real */\n.y { color: red; }\n"
     assert comment_closers_not_followed_by_whitespace(
         planted

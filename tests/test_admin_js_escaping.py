@@ -194,6 +194,22 @@ HARNESS_CHECKS = [
     "releaseTagBadges renders At risk with no emoji",
     "admin.js no longer names status-dot anywhere",
     "no rendered view contains an emoji or symbol glyph beyond the allowed dashes and ellipsis",
+    "renderDashboard gives Recent Sync Jobs pills a class from the job-status allowlist only",
+    "viewSyncLogs gives the status pill a class from the job-status allowlist only",
+    "viewMirror gives each history row pill a class from the job-status allowlist only",
+    "renderMirrors gives the status pill a class from the mirror-status allowlist only",
+    "renderDashboard draws the disk meter only for a finite percentage and clamps its fill to 0-100",
+    "renderDashboard picks the disk meter band from the raw percentage and rounds only the fill width",
+    "router.navigate sends an inherited key to the dashboard and render() does not throw",
+    "renderDashboard gives an inherited activity action the default icon and plain text",
+    "renderHealthChecksCard shows an inherited state as the neutral badge with its own text",
+    "renderProtectedPaths shows an inherited protection value as the neutral pill",
+    "renderAuditLogs shows an inherited action name as plain text",
+    "Modal.show moves focus to the close button and Modal.close hands it back to the opener",
+    "Modal.show retries the focus once a frame until the dialog is visible, and a close cancels the retry",
+    "Modal.show keeps the first opener when it is shown again while open, and never refocuses a detached one",
+    "router.render brings the active nav-item into view when it can, and runs without it",
+    "every <table> a rendered view emits sits inside a .table-container",
 ]
 
 

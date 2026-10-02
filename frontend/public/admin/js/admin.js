@@ -248,7 +248,7 @@ const router = {
     },
 
     navigate(page) {
-        const route = this.routes[page];
+        const route = ownEntry(this.routes, page);
         if (!route) {
             page = 'dashboard';
         }
@@ -268,7 +268,7 @@ const router = {
     },
 
     async render() {
-        const route = this.routes[state.currentPage];
+        const route = ownEntry(this.routes, state.currentPage);
         const app = document.getElementById('app');
 
         if (!route) {
@@ -288,6 +288,7 @@ const router = {
         }
 
         attachEventListeners();
+        revealActiveNavItem();
     },
 
     init() {
@@ -304,6 +305,25 @@ const router = {
 // ===========================================
 // Layout Components
 // ===========================================
+
+/**
+ * Under 768px the sidebar is a horizontal, scrollable bar (spec 6.1), and a
+ * render rebuilds it scrolled back to its start, so the item for the current
+ * page can sit past the edge. Bring it into view. 'nearest' scrolls only as
+ * far as needed, and not at all for an item that is already showing.
+ *
+ * Every access is guarded: the harness sandboxes this file loads into have no
+ * querySelector on their stub documents, and a page with no nav (login) has no
+ * active item.
+ */
+function revealActiveNavItem() {
+    const item = typeof document.querySelector === 'function'
+        ? document.querySelector('.nav-item.active')
+        : null;
+    if (item && typeof item.scrollIntoView === 'function') {
+        item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+}
 
 function renderLayout(content, title) {
     const isAdmin = state.user?.role === 'admin';
@@ -433,9 +453,27 @@ const Toast = {
 // ===========================================
 
 const Modal = {
+    // The element that had focus when the dialog opened. #modal declares
+    // aria-modal, so focus has to go into it when it opens and come back when
+    // it closes; close() hands it back to this.
+    opener: null,
+
+    // The close button, while show() is still waiting for it to take focus.
+    focusTarget: null,
+
     show(title, content, actions = '') {
         const overlay = document.getElementById('modalOverlay');
         const modal = document.getElementById('modal');
+
+        // The sync-log Refresh button calls show() again with the dialog
+        // already open. What has focus then is inside the dialog about to be
+        // replaced, so the opener stays whatever opened it in the first
+        // place. (`?.()` because the stub overlays in the harness sandboxes
+        // have no classList.contains.)
+        const alreadyOpen = Boolean(overlay.classList.contains?.('active'));
+        if (!alreadyOpen) {
+            Modal.opener = document.activeElement || null;
+        }
 
         setHtml(modal, html`
             <div class="modal-header">
@@ -449,12 +487,78 @@ const Modal = {
         `);
 
         overlay.classList.add('active');
+
+        Modal.focusTarget = typeof modal.querySelector === 'function'
+            ? modal.querySelector('.modal-close')
+            : null;
+        Modal.focusCloseButton(10);
+    },
+
+    // .modal-overlay fades its visibility in (admin.css), and a hidden element
+    // cannot take focus: the attempt made synchronously after the class change
+    // misses, and the one after the next frame lands. So: one try per frame,
+    // bounded, so a dialog that never shows does not spin forever. close()
+    // clears focusTarget, which cancels a try that is still pending. Guarded
+    // for the harness sandboxes, which have no document.activeElement and no
+    // requestAnimationFrame.
+    focusCloseButton(framesLeft) {
+        const target = Modal.focusTarget;
+        if (!target || typeof target.focus !== 'function') return;
+
+        target.focus();
+        if (
+            document.activeElement !== target
+            && framesLeft > 0
+            && typeof window.requestAnimationFrame === 'function'
+        ) {
+            window.requestAnimationFrame(() => Modal.focusCloseButton(framesLeft - 1));
+        }
     },
 
     close() {
         document.getElementById('modalOverlay')?.classList.remove('active');
+
+        Modal.focusTarget = null;
+        const opener = Modal.opener;
+        Modal.opener = null;
+        // Only if a re-render has not removed it from the page since.
+        if (opener && opener.isConnected && typeof opener.focus === 'function') {
+            opener.focus();
+        }
     }
 };
+
+// ===========================================
+// Status Pills
+// ===========================================
+//
+// A job's or a mirror's status reaches the page twice: as the pill's text, and
+// as the choice of pill (spec 4.8). Only the text is the status itself. The
+// class comes out of these tables, so a value a table does not list -- one the
+// backend added before this file was told, or one carrying spaces and quotes
+// -- renders the bare, neutral .status-badge with its own text, and can never
+// add a class token to the element. Every class is written out in full, as the
+// icon classes are (spec 4.7); none is assembled at runtime.
+
+const JOB_STATUS_BADGE_CLASS = {
+    pending: 'status-badge pending',
+    running: 'status-badge running',
+    completed: 'status-badge completed',
+    failed: 'status-badge failed',
+    cancelled: 'status-badge cancelled'
+};
+
+const MIRROR_STATUS_BADGE_CLASS = {
+    active: 'status-badge active',
+    syncing: 'status-badge syncing',
+    error: 'status-badge error',
+    disabled: 'status-badge disabled'
+};
+
+/** One status pill: the class from `table` (an allowlist above), the status as text. */
+function statusPill(table, status) {
+    return html`<span class="${ownEntry(table, status) || 'status-badge'}">${status}</span>`;
+}
 
 // ===========================================
 // Page Renderers
@@ -497,10 +601,20 @@ function renderLoginPage() {
  * three full literal branches instead of one template with a class built
  * from a ternary -- every class name it can ever emit stays literal text in
  * this file, the same way the icon spans above do.
+ *
+ * The band is picked from the percentage as the backend sent it, the same
+ * comparison the trend badge beside the meter makes; only the fill's width,
+ * data-percent, is rounded (to a whole percent, clamped to 0-100: the
+ * stylesheet has one rule per whole percent). Rounding first would paint
+ * 84.6% amber beside a green badge, and 94.6% red below the 95% line. A value
+ * that is not a finite number draws no meter at all, as an unknown one does.
  */
 function renderMeter(percentUsed) {
+    if (!Number.isFinite(percentUsed)) {
+        return '';
+    }
     const pct = Math.min(100, Math.max(0, Math.round(percentUsed)));
-    if (pct >= DISK_USAGE_CRITICAL_PERCENT) {
+    if (percentUsed >= DISK_USAGE_CRITICAL_PERCENT) {
         return html`
         <div class="meter" aria-hidden="true">
             <div class="meter-fill is-crit" data-percent="${pct}"></div>
@@ -508,7 +622,7 @@ function renderMeter(percentUsed) {
         </div>
         `;
     }
-    if (pct >= DISK_USAGE_WARNING_PERCENT) {
+    if (percentUsed >= DISK_USAGE_WARNING_PERCENT) {
         return html`
         <div class="meter" aria-hidden="true">
             <div class="meter-fill is-warn" data-percent="${pct}"></div>
@@ -532,6 +646,12 @@ async function renderDashboard() {
     }
 
     const d = state.data.dashboard;
+
+    // percent_used is a number, or null when disk usage is unavailable (spec
+    // 4.8). Anything else is no data either: the tile shows neither the trend
+    // badge nor the meter for it, rather than a "NaN% used" or a fill the
+    // stylesheet has no width for.
+    const diskPercent = Number.isFinite(d.storage.percent_used) ? d.storage.percent_used : null;
 
     // A second, independent fetch. GET /api/admin/health-checks always
     // answers 200 on its own (see backend/app/core/health_status.py), but
@@ -584,12 +704,12 @@ async function renderDashboard() {
             <div class="stat-card">
                 <div class="stat-card-header">
                     <span class="stat-card-icon"><span class="icon icon-disk" aria-hidden="true"></span></span>
-                    ${d.storage.percent_used != null ? html`
-                    <span class="stat-card-trend ${d.storage.percent_used >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${d.storage.percent_used}% used</span>
+                    ${diskPercent != null ? html`
+                    <span class="stat-card-trend ${diskPercent >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${diskPercent}% used</span>
                     ` : ''}
                 </div>
                 <div class="stat-card-value">${d.storage.free_bytes != null ? formatBytes(d.storage.free_bytes) : 'Unknown'}</div>
-                ${d.storage.percent_used != null ? renderMeter(d.storage.percent_used) : ''}
+                ${diskPercent != null ? renderMeter(diskPercent) : ''}
                 <div class="stat-card-label">
                     ${d.storage.total_bytes != null
                         ? html`Disk free of ${formatBytes(d.storage.total_bytes)} (${formatBytes(d.storage.used_bytes)} used)`
@@ -608,7 +728,7 @@ async function renderDashboard() {
                 <ul class="activity-list">
                     ${d.recent_syncs.length ? d.recent_syncs.map(sync => html`
                         <li class="activity-item">
-                            <span class="status-badge ${sync.status}">${sync.status}</span>
+                            ${statusPill(JOB_STATUS_BADGE_CLASS, sync.status)}
                             <div class="activity-content">
                                 <div class="activity-text">
                                     Mirror #${sync.mirror_id}
@@ -673,18 +793,16 @@ const UNREACHABLE_HEALTH = {
     state_persisted: null
 };
 
-// Reuses three of the four existing `.status-badge` colour variants (see
-// admin.css) -- none of the five health states maps onto Mirror.status's set
-// exactly. `active` (green) and `error` (red) fit ok and failing; unknown
-// gets the muted `disabled` tint, since "no signal at all" is a different
-// thing from "a problem was seen". stale and incomplete needed their own
-// look rather than sharing `syncing`: a checker that hasn't reported in a
-// while (stale) and one that ran but skipped checks or never sent its alert
-// (incomplete) are different problems, and this card exists precisely so
-// neither is ever mistaken for the others -- least of all for ok. `stale`
-// keeps the amber `syncing` tint (still "time-based, not a hard failure");
-// `incomplete` gets its own blue `health-incomplete` tint, defined
-// alongside the other four in admin.css.
+// Each of the five health states draws one of the pills of spec 4.8, named by
+// the .status-badge modifier it carries (see admin.css); none of them maps
+// onto Mirror.status's set exactly. ok is the online pill (`active`), failing
+// the red one (`error`), and unknown the neutral one (`disabled`), since "no
+// signal at all" is a different thing from "a problem was seen". stale is the
+// amber pill (`syncing`: still "time-based, not a hard failure"). incomplete
+// -- a checker that ran but skipped checks, or never sent its alert -- has
+// the purple `health-incomplete` pill, which spec 4.8 keeps distinct from the
+// neutral one: this card exists precisely so that none of the five is ever
+// mistaken for another, least of all incomplete for unknown or for ok.
 const HEALTH_STATE_BADGE_CLASS = {
     ok: 'active',
     stale: 'syncing',
@@ -729,8 +847,8 @@ function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
 
 function renderHealthChecksCard(health) {
     const h = health || UNREACHABLE_HEALTH;
-    const badgeClass = HEALTH_STATE_BADGE_CLASS[h.state] || 'disabled';
-    const label = HEALTH_STATE_LABEL[h.state] || h.state || 'Unknown';
+    const badgeClass = ownEntry(HEALTH_STATE_BADGE_CLASS, h.state) || 'disabled';
+    const label = ownEntry(HEALTH_STATE_LABEL, h.state) || h.state || 'Unknown';
     const age = formatHealthAge(h.age_seconds);
 
     return html`
@@ -797,7 +915,7 @@ async function renderMirrors() {
                                     <br><small class="u-text-muted">${mirror.url_path}</small>
                                 </td>
                                 <td>
-                                    <span class="status-badge ${mirror.status}">${mirror.status}</span>
+                                    ${statusPill(MIRROR_STATUS_BADGE_CLASS, mirror.status)}
                                 </td>
                                 <td class="num">${mirror.total_size_human || '--'}</td>
                                 <td class="num">${mirror.last_sync_completed ? formatDate(mirror.last_sync_completed) : 'Never'}</td>
@@ -989,14 +1107,13 @@ async function renderProtectedPaths() {
     `;
 }
 
-// Reuses the four existing `.status-badge` colour variants (see admin.css)
-// the same way renderHealthChecksCard's HEALTH_STATE_BADGE_CLASS does --
-// full/partial/none/unknown has no state of its own to draw from. `none` is
-// deliberately the muted `disabled` tint, not red: it is the expected,
-// correct state for a mirror's actively-served release (see
-// shared/protected_paths.py's "WHY THE NEWEST RELEASE ... IS DELIBERATELY
-// NOT HERE"), not a problem on its own -- `at_risk` (below) is what actually
-// flags a problem.
+// Maps full/partial/none/unknown onto the pills of spec 4.8 the same way
+// HEALTH_STATE_BADGE_CLASS does, since protection has no state of its own to
+// draw from. `none` is deliberately the neutral `disabled` pill, not red (spec
+// 4.8 sends "unknown" there too): it is the expected, correct state for a
+// mirror's actively-served release (see shared/protected_paths.py's "WHY THE
+// NEWEST RELEASE ... IS DELIBERATELY NOT HERE"), not a problem on its own --
+// `at_risk` (below) is what actually flags a problem.
 const PROTECTION_BADGE_CLASS = {
     full: 'active',
     partial: 'syncing',
@@ -1012,8 +1129,8 @@ const PROTECTION_LABEL = {
 };
 
 function protectionBadge(protection) {
-    const cls = PROTECTION_BADGE_CLASS[protection] || 'disabled';
-    const label = PROTECTION_LABEL[protection] || protection;
+    const cls = ownEntry(PROTECTION_BADGE_CLASS, protection) || 'disabled';
+    const label = ownEntry(PROTECTION_LABEL, protection) || protection;
     return html`<span class="status-badge ${cls}">${label}</span>`;
 }
 
@@ -1024,10 +1141,9 @@ function protectionBadge(protection) {
  */
 function releaseTagBadges(release) {
     const tags = [];
-    // .info, not .disabled: .disabled's muted tint means "inactive"
-    // everywhere else in this file (nav items, the mirror status badges),
-    // and these are purely informational. See .status-badge.info in
-    // admin.css.
+    // .info, not .disabled: .disabled's neutral pill means "inactive"
+    // everywhere else in this file (a disabled mirror, a disabled user), and
+    // these are purely informational. See .status-badge.info in admin.css.
     //
     // `current` (shared.protected_paths.CURRENT_RELEASES) is the field
     // at_risk actually keys off; newest/latest_in_major below are shown too
@@ -1044,9 +1160,9 @@ function releaseTagBadges(release) {
     } else if (release.latest_in_major) {
         tags.push(html`<span class="status-badge info">Latest in major</span>`);
     }
-    // .status-badge.at-risk, not the old plain .u-text-error text: needs to
-    // read as a pill matching its row-mates. See that class in admin.css for
-    // why it is the most alarming colour available here, not a softer one.
+    // .status-badge.at-risk, not the old plain .u-text-error text: it needs to
+    // read as a pill matching its row-mates. Spec 4.8 draws it in the amber
+    // pill it shares with syncing -- a warning, not an error.
     if (release.at_risk) {
         tags.push(html`<span class="status-badge at-risk">At risk</span>`);
     }
@@ -1354,22 +1470,24 @@ async function renderSettings() {
                     Some settings may require a service restart to fully apply.
                 </p>
                 ${state.data.settings.length ? html`
-                <table class="u-mt-sm u-full-width">
-                    <thead>
-                        <tr>
-                            <th>Key</th>
-                            <th class="num">Last Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${state.data.settings.map(s => html`
+                <div class="table-container u-mt-sm">
+                    <table class="u-full-width">
+                        <thead>
                             <tr>
-                                <td><code>${s.key}</code></td>
-                                <td class="num">${formatDate(s.updated_at)}</td>
+                                <th>Key</th>
+                                <th class="num">Last Updated</th>
                             </tr>
-                        `)}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            ${state.data.settings.map(s => html`
+                                <tr>
+                                    <td><code>${s.key}</code></td>
+                                    <td class="num">${formatDate(s.updated_at)}</td>
+                                </tr>
+                            `)}
+                        </tbody>
+                    </table>
+                </div>
                 ` : ''}
             </div>
         </div>
@@ -1459,7 +1577,7 @@ const actions = {
                     <ul class="activity-list">
                         ${history.length ? history.map(h => html`
                             <li class="activity-item">
-                                <span class="status-badge ${h.status}">${h.status}</span>
+                                ${statusPill(JOB_STATUS_BADGE_CLASS, h.status)}
                                 <div class="activity-content">
                                     <div class="activity-text">
                                         ${h.bytes_transferred ? formatBytes(h.bytes_transferred) : ''}
@@ -1515,7 +1633,7 @@ const actions = {
                 <div class="u-grid-2-tight">
                     <div>
                         <label class="form-label">Status</label>
-                        <span class="status-badge ${job.status}">${job.status}</span>
+                        ${statusPill(JOB_STATUS_BADGE_CLASS, job.status)}
                     </div>
                     <div>
                         <label class="form-label">Triggered By</label>
@@ -1848,6 +1966,20 @@ function setHtml(el, content) {
     el.innerHTML = content.value;
 }
 
+/**
+ * A table lookup that answers only from the table's own keys.
+ *
+ * A bare table[key] also answers for every name an object inherits --
+ * 'constructor', 'toString', '__proto__' -- so a key that comes from the
+ * server or from location.hash can land on a function or on Object.prototype
+ * instead of on one of the table's entries, and `table[key] || fallback`
+ * then keeps what it found. hasOwnProperty is borrowed from Object.prototype
+ * with .call, never called on the table, whose own keys could shadow it.
+ */
+function ownEntry(table, key) {
+    return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
+
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1924,7 +2056,7 @@ function formatAction(action) {
         'sync_triggered': 'Triggered sync',
         'settings_updated': 'Updated settings'
     };
-    return actions[action] || action.replace(/_/g, ' ');
+    return ownEntry(actions, action) || action.replace(/_/g, ' ');
 }
 
 function getActivityIcon(action) {
@@ -1939,7 +2071,7 @@ function getActivityIcon(action) {
         'sync_triggered': 'icon-sync',
         'settings_updated': 'icon-settings'
     };
-    return icons[action] || 'icon-audit-logs';
+    return ownEntry(icons, action) || 'icon-audit-logs';
 }
 
 // ===========================================

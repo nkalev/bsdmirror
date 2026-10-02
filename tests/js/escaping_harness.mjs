@@ -62,7 +62,7 @@ const EPILOGUE = `
     renderDashboard, renderSyncFailures, renderProtectedPaths, renderHealthChecksCard,
     filesDeletedBadge, actions,
     LARGE_DELETION_THRESHOLD, DISK_USAGE_WARNING_PERCENT, DISK_USAGE_CRITICAL_PERCENT,
-    Toast, Modal, api, state });
+    Toast, Modal, api, state, router });
 `;
 
 let mod = null;
@@ -1660,6 +1660,614 @@ async function main() {
         );
         assert(!corpus.includes('×'), 'the modal-close "×" glyph must be gone');
         return '';
+    });
+
+    // --- Allowlists, own-key lookups, the meter's bands (PR 3) --------------
+    //
+    // A status, an action name or a URL hash reaches a class attribute or a
+    // lookup table as a KEY. The tables here are plain objects, so a bare
+    // table[key] also answers for every name an object inherits, and a status
+    // with spaces in it adds class tokens to its pill. None of these values is
+    // reachable today (statuses are database enums, audit actions are
+    // literals, and the hash only ever holds a route), so these checks are the
+    // only thing standing guard.
+
+    const dashboardWith = ({ storage = {}, recent_syncs = [], recent_activity = [] } = {}) => ({
+        mirrors: { total: 1, active: 1, syncing: 0, error: 0, total_size_bytes: 0 },
+        users: { total: 1 },
+        storage: {
+            path: '/data/mirrors', total_bytes: 1000, used_bytes: 400, free_bytes: 600, percent_used: 40, ...storage
+        },
+        recent_syncs,
+        recent_activity
+    });
+
+    const JOB_STATUSES = ['pending', 'running', 'completed', 'failed', 'cancelled'];
+    const MIRROR_STATUSES = ['active', 'syncing', 'error', 'disabled'];
+    // Extra class tokens (.modal-overlay is a full-screen fixed layer), an
+    // attribute breakout, and names every object inherits.
+    const INHERITED_KEYS = ['constructor', 'toString', '__proto__', 'hasOwnProperty'];
+    const HOSTILE_STATUSES = [
+        'active modal-overlay', 'x" onclick="y', ...INHERITED_KEYS, 'a-status-nobody-defined'
+    ];
+
+    /** Throws unless each known status sits in its own pill and every other
+     *  value in the bare, neutral pill -- with its own text either way. */
+    const assertStatusPills = (out, known, unknown, where) => {
+        for (const status of known) {
+            assert(
+                out.includes(`<span class="status-badge ${status}">${status}</span>`),
+                `${where}: ${status} lost its own pill: ${out}`
+            );
+        }
+        for (const status of unknown) {
+            assert(
+                out.includes(`<span class="status-badge">${mod.escapeHtml(status)}</span>`),
+                `${where}: ${JSON.stringify(status)} should render the bare neutral pill with its own text: ${out}`
+            );
+        }
+        const layers = scanTags(out).filter((t) => (t.attrs.class || '').split(/\s+/).includes('modal-overlay'));
+        assert(layers.length === 0, `${where}: a status put .modal-overlay on an element: ${out}`);
+        assert(badAttrs(out).length === 0, `${where}: injected attrs: ${badAttrs(out)}`);
+        assert(badTags(out).length === 0, `${where}: injected tags: ${badTags(out)}`);
+    };
+
+    await check('renderDashboard gives Recent Sync Jobs pills a class from the job-status allowlist only', async () => {
+        const statuses = [...JOB_STATUSES, ...HOSTILE_STATUSES];
+        const out = await renderWith(mod.renderDashboard, dashboardWith({
+            recent_syncs: statuses.map((status, i) => (
+                { id: i, mirror_id: 1, status, files_deleted: 0, created_at: '2026-01-01T00:00:00Z' }
+            ))
+        }));
+        assertStatusPills(out, JOB_STATUSES, HOSTILE_STATUSES, 'Recent Sync Jobs');
+        return `${statuses.length} statuses`;
+    });
+
+    await check('viewSyncLogs gives the status pill a class from the job-status allowlist only', async () => {
+        for (const status of [...JOB_STATUSES, ...HOSTILE_STATUSES]) {
+            const { node: fakeModal, assigned } = makeWriteCapture();
+            sandbox.document.getElementById = (id) => {
+                if (id === 'modal') return fakeModal;
+                if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+                return null;
+            };
+            mod.api.get = async () => ({
+                id: 42, status, triggered_by: 'scheduler',
+                started_at: '2026-01-01T00:00:00Z', completed_at: '2026-01-01T00:05:00Z',
+                files_transferred: 3, bytes_transferred: 1024, files_deleted: 0,
+                error_message: null, rsync_output: 'log output'
+            });
+
+            await mod.actions.viewSyncLogs(42);
+
+            assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+            const known = JOB_STATUSES.includes(status);
+            assertStatusPills(
+                [...assigned.values()][0], known ? [status] : [], known ? [] : [status],
+                `viewSyncLogs(${JSON.stringify(status)})`
+            );
+        }
+        return '';
+    });
+
+    await check('viewMirror gives each history row pill a class from the job-status allowlist only', async () => {
+        const { node: fakeModal, assigned } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return fakeModal;
+            if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+            return null;
+        };
+        const statuses = [...JOB_STATUSES, ...HOSTILE_STATUSES];
+        mod.api.get = async (endpoint) => {
+            if (endpoint.includes('/sync-history')) {
+                return statuses.map((status, i) => (
+                    { id: i + 1, status, bytes_transferred: 0, files_deleted: 0, triggered_by: null, started_at: '2026-01-01T00:00:00Z' }
+                ));
+            }
+            return { id: 9, name: 'FreeBSD', upstream_url: 'rsync://x/pub', local_path: '/data/x', total_size_human: '1.0 GB' };
+        };
+
+        await mod.actions.viewMirror(9);
+
+        assert(assigned.size === 1, `expected exactly one property assigned, got ${assigned.size}`);
+        assertStatusPills([...assigned.values()][0], JOB_STATUSES, HOSTILE_STATUSES, 'viewMirror history');
+        return `${statuses.length} statuses`;
+    });
+
+    await check('renderMirrors gives the status pill a class from the mirror-status allowlist only', async () => {
+        const statuses = [...MIRROR_STATUSES, ...HOSTILE_STATUSES];
+        const out = await renderWith(mod.renderMirrors, statuses.map((status, i) => (
+            { id: i + 1, name: `mirror ${i}`, url_path: `/m${i}/`, status, total_size_human: '1 GB', last_sync_completed: null }
+        )));
+        assertStatusPills(out, MIRROR_STATUSES, HOSTILE_STATUSES, 'the mirrors table');
+        return `${statuses.length} statuses`;
+    });
+
+    await check('renderDashboard draws the disk meter only for a finite percentage and clamps its fill to 0-100', async () => {
+        const render = (percentUsed) => renderWith(mod.renderDashboard, dashboardWith({ storage: { percent_used: percentUsed } }));
+
+        // Not a finite number: the tile treats it as no data, as it does null.
+        const notNumbers = [
+            ['a numeric string', '91'],
+            ['a hostile string', '91" onmouseover="alert(1)'],
+            ['NaN', NaN],
+            ['Infinity', Infinity],
+            ['an object', {}],
+            ['an array', [91]]
+        ];
+        for (const [label, value] of notNumbers) {
+            const out = await render(value);
+            assert(!out.includes('class="meter"'), `${label}: a meter was drawn: ${out}`);
+            assert(!out.includes('data-percent'), `${label}: a data-percent attribute was written: ${out}`);
+            assert(badAttrs(out).length === 0, `${label}: injected attrs: ${badAttrs(out)}`);
+        }
+
+        // Finite but outside 0-100: a clamped fill, never an invalid width.
+        const low = await render(-10);
+        assert(
+            low.includes('<div class="meter-fill" data-percent="0"></div>'),
+            `-10 should clamp to an empty, unbanded fill: ${low}`
+        );
+        const high = await render(1e9);
+        assert(
+            high.includes('<div class="meter-fill is-crit" data-percent="100"></div>'),
+            `1e9 should clamp to a full, critical fill: ${high}`
+        );
+        return '';
+    });
+
+    await check('renderDashboard picks the disk meter band from the raw percentage and rounds only the fill width', async () => {
+        // [percent_used, the fill's class, its data-percent, the badge beside it]
+        const cases = [
+            [84.6, 'meter-fill', '85', 'up'],
+            [85, 'meter-fill is-warn', '85', 'down'],
+            [94.6, 'meter-fill is-warn', '95', 'down'],
+            [95, 'meter-fill is-crit', '95', 'down']
+        ];
+        for (const [percentUsed, fillClass, width, trend] of cases) {
+            const out = await renderWith(mod.renderDashboard, dashboardWith({ storage: { percent_used: percentUsed } }));
+            assert(
+                out.includes(`<div class="${fillClass}" data-percent="${width}"></div>`),
+                `${percentUsed}%: expected <div class="${fillClass}" data-percent="${width}">: ${out}`
+            );
+            assert(
+                out.includes(`stat-card-trend ${trend}`),
+                `${percentUsed}%: the badge beside the meter should read '${trend}': ${out}`
+            );
+        }
+        return `${cases.length} percentages`;
+    });
+
+    await check('router.navigate sends an inherited key to the dashboard and render() does not throw', async () => {
+        const { node: appNode } = makeWriteCapture();
+        sandbox.document.getElementById = (id) => (id === 'app' ? appNode : null);
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/health-checks' ? { state: 'ok', reason: 'fine' } : dashboardWith());
+
+        // render() is async and navigate() does not await it, so a throw inside
+        // it is a rejected promise nobody holds. Keep every one the router
+        // starts, and settle them here, where a rejection can be reported.
+        const realRender = mod.router.render;
+        const realPush = sandbox.window.history.pushState;
+        const renders = [];
+        const pushed = [];
+        mod.router.render = function () {
+            const pending = realRender.call(this);
+            renders.push(pending);
+            return pending;
+        };
+        sandbox.window.history.pushState = (_state, _title, url) => { pushed.push(url); };
+        try {
+            for (const [token, landing] of [[null, 'login'], ['t', 'dashboard']]) {
+                for (const key of INHERITED_KEYS) {
+                    mod.state.token = token;
+                    mod.state.user = token ? { id: 1, username: 'root', role: 'admin' } : null;
+                    mod.state.currentPage = 'dashboard';
+                    renders.length = 0;
+                    pushed.length = 0;
+
+                    mod.router.navigate(key);
+
+                    const failed = (await Promise.allSettled(renders)).filter((s) => s.status === 'rejected');
+                    const who = `navigate(${JSON.stringify(key)}) with ${token ? 'a' : 'no'} token`;
+                    assert(
+                        failed.length === 0,
+                        `${who}: render() threw: ${failed.map((f) => f.reason && f.reason.message).join('; ')}`
+                    );
+                    assert(
+                        mod.state.currentPage === landing,
+                        `${who} ended on ${JSON.stringify(mod.state.currentPage)}, want ${landing}`
+                    );
+                    assert(
+                        !pushed.some((url) => url.includes(key)),
+                        `${who} wrote ${JSON.stringify(pushed)} to the address bar`
+                    );
+                }
+            }
+        } finally {
+            mod.router.render = realRender;
+            sandbox.window.history.pushState = realPush;
+            mod.state.token = null;
+            mod.state.user = null;
+            mod.state.currentPage = 'dashboard';
+        }
+        return `${INHERITED_KEYS.length} keys, signed in and out`;
+    });
+
+    await check('renderDashboard gives an inherited activity action the default icon and plain text', async () => {
+        const out = await renderWith(mod.renderDashboard, dashboardWith({
+            recent_activity: INHERITED_KEYS.map((action, i) => ({ id: i, action, created_at: '2026-01-01T00:00:00Z' }))
+        }));
+        const icon = '<div class="activity-icon"><span class="icon icon-audit-logs" aria-hidden="true"></span></div>';
+        const found = out.split(icon).length - 1;
+        assert(found === INHERITED_KEYS.length, `expected ${INHERITED_KEYS.length} default icons, found ${found}: ${out}`);
+        assert(!out.includes('[native code]') && !out.includes('[object '), `a function or object was printed: ${out}`);
+        return '';
+    });
+
+    await check('renderHealthChecksCard shows an inherited state as the neutral badge with its own text', () => {
+        for (const state of INHERITED_KEYS) {
+            const out = String(mod.renderHealthChecksCard({
+                state, reason: 'r', finished_at: null, age_seconds: null, ok: [], bad: [], skipped: [], warnings: []
+            }));
+            assert(
+                out.includes(`<span class="status-badge disabled">${state}</span>`),
+                `state ${JSON.stringify(state)} should be the neutral badge showing its own name: ${out}`
+            );
+        }
+        return '';
+    });
+
+    await check('renderProtectedPaths shows an inherited protection value as the neutral pill', async () => {
+        const inventoryPayload = {
+            generated_at: '2026-01-01T00:00:00Z',
+            mirrors: [{
+                mirror_type: 'openbsd', mirror_names: ['OpenBSD'], root: '/x', available: true, error: null,
+                truncated: false, protected_not_on_disk: [],
+                releases: INHERITED_KEYS.map((protection, i) => ({
+                    version: `7.${i}`, line: `7.${i}`, major: '7', kind: 'release', protection,
+                    unprotected_locations: [], locations: ['a'], location_count: 1,
+                    newest: false, latest_in_major: false, current: false, at_risk: false, modified: null
+                }))
+            }]
+        };
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/archive-inventory' ? inventoryPayload : { groups: [] });
+        const out = String(await mod.renderProtectedPaths());
+        for (const protection of INHERITED_KEYS) {
+            assert(
+                out.includes(`<span class="status-badge disabled">${protection}</span>`),
+                `protection ${JSON.stringify(protection)} should be the neutral pill showing its own name: ${out}`
+            );
+        }
+        return '';
+    });
+
+    await check('renderAuditLogs shows an inherited action name as plain text', async () => {
+        const out = await renderWith(mod.renderAuditLogs, INHERITED_KEYS.map((action, i) => ({
+            id: i, created_at: null, username: 'a', action, resource_type: 'user', resource_id: null, ip_address: '127.0.0.1'
+        })));
+        for (const action of INHERITED_KEYS) {
+            const text = action.replace(/_/g, ' ');
+            assert(out.includes(`<td>${text}</td>`), `action ${JSON.stringify(action)} should read ${JSON.stringify(text)}: ${out}`);
+        }
+        return '';
+    });
+
+    // --- The modal's focus, and the active nav item (PR 3) ------------------
+    //
+    // The dialog declares aria-modal="true", so focus has to go in when it
+    // opens and come back when it closes. The vm sandboxes this file shares
+    // with the contrast harness have no document.activeElement, no
+    // requestAnimationFrame and no querySelector on their stub nodes; admin.js
+    // has to load and run in them, and these checks add each piece only for
+    // the one check that needs it.
+
+    /** A #modal that captures the sink's write, whose .modal-close button
+     *  records every focus() call (and only holds focus from the Nth call on,
+     *  as a button inside a still-hidden overlay would), and a #modalOverlay
+     *  with a classList that remembers its classes. */
+    const makeDialog = ({ landsOnCall = 1 } = {}) => {
+        const { node: modal } = makeWriteCapture();
+        const calls = [];
+        const closeButton = {
+            focus() {
+                calls.push('close-button');
+                if (calls.length >= landsOnCall) sandbox.document.activeElement = closeButton;
+            }
+        };
+        Object.defineProperty(modal, 'querySelector', {
+            value: (selector) => (selector === '.modal-close' ? closeButton : null)
+        });
+        const classes = new Set();
+        const overlay = {
+            classList: {
+                add: (name) => classes.add(name),
+                remove: (name) => classes.delete(name),
+                contains: (name) => classes.has(name)
+            }
+        };
+        sandbox.document.getElementById = (id) => {
+            if (id === 'modal') return modal;
+            if (id === 'modalOverlay') return overlay;
+            return null;
+        };
+        return { calls, closeButton };
+    };
+
+    /** An element that was focused before the dialog opened. */
+    const makeOpener = (name, calls, isConnected = true) => ({
+        isConnected,
+        focus() {
+            calls.push(name);
+            sandbox.document.activeElement = this;
+        }
+    });
+
+    await check('Modal.show moves focus to the close button and Modal.close hands it back to the opener', () => {
+        const dialog = makeDialog();
+        const opener = makeOpener('opener', dialog.calls);
+        sandbox.document.activeElement = opener;
+        try {
+            mod.Modal.show('Title', mod.html`<p>body</p>`, mod.html`<button>Close</button>`);
+            assert(dialog.calls.join() === 'close-button', `show() should focus the close button once; focus() calls: ${dialog.calls}`);
+            assert(sandbox.document.activeElement === dialog.closeButton, 'the close button should hold focus after show()');
+
+            mod.Modal.close();
+            assert(dialog.calls.join() === 'close-button,opener', `close() should hand focus back to the opener; focus() calls: ${dialog.calls}`);
+            assert(sandbox.document.activeElement === opener, 'the opener should hold focus after close()');
+
+            mod.Modal.close();
+            assert(dialog.calls.length === 2, `a second close() must not move focus; focus() calls: ${dialog.calls}`);
+        } finally {
+            delete sandbox.document.activeElement;
+            mod.Modal.close();
+        }
+        return '';
+    });
+
+    await check('Modal.show retries the focus once a frame until the dialog is visible, and a close cancels the retry', () => {
+        // The overlay fades its visibility in (admin.css), and a hidden
+        // element cannot take focus: the attempt made synchronously after the
+        // class change fails, and the next frame's succeeds.
+        const frames = [];
+        sandbox.window.requestAnimationFrame = (fn) => { frames.push(fn); return frames.length; };
+        // Runs the queued frames, and how many it ran. Capped, so a retry that
+        // never stops fails the check below instead of hanging the harness.
+        const flush = () => {
+            let ran = 0;
+            while (frames.length && ran < 100) {
+                frames.shift()();
+                ran++;
+            }
+            return ran;
+        };
+        try {
+            const late = makeDialog({ landsOnCall: 3 });
+            mod.Modal.show('Late', mod.html`<p>body</p>`);
+            assert(late.calls.length === 1, `show() should try once at once; focus() calls: ${late.calls}`);
+            assert(sandbox.document.activeElement !== late.closeButton, 'the first attempt was meant to miss');
+            flush();
+            assert(late.calls.length === 3, `the retries should stop once focus lands; focus() calls: ${late.calls}`);
+            assert(sandbox.document.activeElement === late.closeButton, 'the close button should hold focus after the retries');
+            mod.Modal.close();
+
+            // A dialog that never becomes visible must not retry forever.
+            const stuck = makeDialog({ landsOnCall: Infinity });
+            mod.Modal.show('Stuck', mod.html`<p>body</p>`);
+            const ran = flush();
+            assert(ran < 100, 'the retries never stopped');
+            assert(
+                stuck.calls.length > 1 && stuck.calls.length <= 20,
+                `the retries should be bounded; focus() calls: ${stuck.calls.length}`
+            );
+            mod.Modal.close();
+
+            // Closing while a retry is pending cancels it.
+            const closed = makeDialog({ landsOnCall: Infinity });
+            mod.Modal.show('Closed', mod.html`<p>body</p>`);
+            mod.Modal.close();
+            const before = closed.calls.length;
+            flush();
+            assert(closed.calls.length === before, `a pending retry focused a dialog that was closed; focus() calls: ${closed.calls}`);
+        } finally {
+            delete sandbox.window.requestAnimationFrame;
+            delete sandbox.document.activeElement;
+            mod.Modal.close();
+        }
+        return '';
+    });
+
+    await check('Modal.show keeps the first opener when it is shown again while open, and never refocuses a detached one', () => {
+        try {
+            // The sync-log Refresh button re-renders the open dialog in place:
+            // the focused element is then inside the dialog being replaced,
+            // and it is the first opener that close() has to give focus to.
+            const open = makeDialog();
+            const opener = makeOpener('opener', open.calls);
+            sandbox.document.activeElement = opener;
+            mod.Modal.show('One', mod.html`<p>one</p>`);
+            mod.Modal.show('Two', mod.html`<p>two</p>`);
+            mod.Modal.close();
+            assert(
+                open.calls.join() === 'close-button,close-button,opener',
+                `close() should return focus to the first opener; focus() calls: ${open.calls}`
+            );
+
+            // An opener a re-render removed from the page is not refocused.
+            const gone = makeDialog();
+            const detached = makeOpener('detached', gone.calls, false);
+            sandbox.document.activeElement = detached;
+            mod.Modal.show('Three', mod.html`<p>three</p>`);
+            mod.Modal.close();
+            assert(!gone.calls.includes('detached'), `a detached opener was focused; focus() calls: ${gone.calls}`);
+        } finally {
+            delete sandbox.document.activeElement;
+            mod.Modal.close();
+        }
+        return '';
+    });
+
+    await check('router.render brings the active nav-item into view when it can, and runs without it', async () => {
+        // Under 768px the sidebar is a scrollable bar, and each render rebuilds
+        // it scrolled back to its start. The page rendered is protected-paths
+        // so that a real layout (and so a nav) is being built.
+        const { node: appNode } = makeWriteCapture();
+        const asked = [];
+        const scrolls = [];
+        const offer = (found) => {
+            sandbox.document.getElementById = (id) => (id === 'app' ? appNode : null);
+            if (found === undefined) {
+                delete sandbox.document.querySelector;
+            } else {
+                sandbox.document.querySelector = (selector) => { asked.push(selector); return found; };
+            }
+        };
+        mod.state.token = 't';
+        mod.state.user = { id: 1, username: 'root', role: 'admin' };
+        mod.state.currentPage = 'protected-paths';
+        mod.api.get = async (endpoint) =>
+            (endpoint === '/admin/archive-inventory' ? { mirrors: [] } : { groups: [] });
+        try {
+            offer({ scrollIntoView: (options) => { scrolls.push(options); } });
+            await mod.router.render();
+            assert(asked.includes('.nav-item.active'), `render() never asked for .nav-item.active: ${JSON.stringify(asked)}`);
+            assert(scrolls.length === 1, `expected one scrollIntoView call, got ${scrolls.length}`);
+            assert(
+                scrolls[0].block === 'nearest' && scrolls[0].inline === 'nearest',
+                `scrollIntoView got ${JSON.stringify(scrolls[0])}, want { block: 'nearest', inline: 'nearest' }`
+            );
+
+            offer({});               // an element with no scrollIntoView
+            await mod.router.render();
+            offer(null);             // nothing matched: no nav on this page
+            await mod.router.render();
+            offer(undefined);        // the stub document has no querySelector at all
+            await mod.router.render();
+            assert(scrolls.length === 1, `only the first render had anything to scroll; got ${scrolls.length} calls`);
+        } finally {
+            delete sandbox.document.querySelector;
+            mod.state.token = null;
+            mod.state.user = null;
+            mod.state.currentPage = 'dashboard';
+        }
+        return '';
+    });
+
+    // --- Tables scroll inside their card (PR 3) ------------------------------
+    //
+    // A table wider than its card must scroll inside it, and the card's
+    // .table-container (overflow-x: auto) is what lets it; without one the
+    // table pushes the whole page sideways. The sizing a .num cell relies on
+    // (one line, never wrapped) lives on that container's contract too.
+
+    const VOID_TAGS = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+
+    /** Every <table> in a rendered string, and whether one of its ancestors is
+     *  a div.table-container. Tracks nesting with a stack: the templates close
+     *  every element but the void ones, so a closing tag pops to its opener. */
+    const tablesIn = (htmlStr) => {
+        const open = [];
+        const tables = [];
+        for (const m of htmlStr.matchAll(TAG_RE)) {
+            const name = m[1].toLowerCase();
+            if (m[0].startsWith('</')) {
+                const at = open.map((e) => e.name).lastIndexOf(name);
+                if (at !== -1) open.length = at;
+                continue;
+            }
+            const attrs = {};
+            for (const a of (m[2] || '').matchAll(ATTR_RE)) {
+                attrs[a[1].toLowerCase()] = a[2] ?? a[3] ?? a[4] ?? '';
+            }
+            const classes = (attrs.class || '').split(/\s+/);
+            if (name === 'table') {
+                tables.push({ wrapped: open.some((e) => e.name === 'div' && e.classes.includes('table-container')) });
+            }
+            if (!VOID_TAGS.has(name) && !m[0].endsWith('/>')) open.push({ name, classes });
+        }
+        return tables;
+    };
+
+    await check('every <table> a rendered view emits sits inside a .table-container', async () => {
+        const modalHtml = async (run) => {
+            const { node, assigned } = makeWriteCapture();
+            sandbox.document.getElementById = (id) => {
+                if (id === 'modal') return node;
+                if (id === 'modalOverlay') return { classList: { add() {}, remove() {} } };
+                return null;
+            };
+            await run();
+            return [...assigned.values()][0];
+        };
+
+        const views = {};
+        views.mirrors = await renderWith(mod.renderMirrors, [
+            { id: 1, name: 'FreeBSD', url_path: '/FreeBSD/', status: 'active', total_size_human: '1 TB', last_sync_completed: null }
+        ]);
+        views.syncFailures = await renderWith(mod.renderSyncFailures, {
+            period_days: 30,
+            totals: { failed: 1, completed: 1 },
+            by_mirror: [{ mirror_name: 'FreeBSD', failed: 1, completed: 1, failure_rate_percent: 50 }],
+            incidents: [{
+                mirror_name: 'FreeBSD', error_message: 'boom', occurrences: 2,
+                first_seen: null, last_seen: null, latest_job_id: 1
+            }]
+        });
+        mod.api.get = async (endpoint) => (endpoint === '/admin/archive-inventory'
+            ? {
+                generated_at: '2026-01-01T00:00:00Z',
+                mirrors: [{
+                    mirror_type: 'freebsd', mirror_names: ['FreeBSD'], root: '/x', available: true, error: null,
+                    truncated: false, protected_not_on_disk: [],
+                    releases: [{
+                        version: '14.3', line: '14.3', major: '14', kind: 'release', protection: 'partial',
+                        unprotected_locations: ['a'], locations: ['a', 'b'], location_count: 2,
+                        newest: true, latest_in_major: true, current: true, at_risk: false, modified: null
+                    }]
+                }]
+            }
+            : { groups: [{ mirror_type: 'freebsd', mirror_names: ['FreeBSD'], patterns: ['/x/***'] }] });
+        views.protectedPaths = String(await mod.renderProtectedPaths());
+        views.users = await renderWith(mod.renderUsers, [
+            { id: 1, username: 'a', email: 'a@x.com', role: 'admin', is_active: true, last_login: null }
+        ]);
+        views.auditLogs = await renderWith(mod.renderAuditLogs, [{
+            id: 1, created_at: null, username: 'a', action: 'login_success',
+            resource_type: 'user', resource_id: null, ip_address: '127.0.0.1'
+        }]);
+        views.settings = await renderWith(mod.renderSettings, [
+            { key: 'sync_schedule', value: '0 4 * * *', description: 'when', updated_at: null }
+        ]);
+
+        // Views with no table today: one added to any of them is checked too.
+        views.dashboard = await renderWith(mod.renderDashboard, dashboardWith());
+        views.login = String(mod.renderLoginPage());
+        views.layout = String(mod.renderLayout(mod.html`<p>x</p>`, 'Dashboard'));
+        views.healthCard = String(mod.renderHealthChecksCard(null));
+        mod.api.get = async () => ({ id: 9, name: 'FreeBSD', upstream_url: 'rsync://x/pub', local_path: '/data/x', total_size_human: '1 GB' });
+        views.viewMirror = await modalHtml(() => mod.actions.viewMirror(9));
+        mod.api.get = async () => ({ id: 42, status: 'failed', triggered_by: 'scheduler', rsync_output: 'log' });
+        views.viewSyncLogs = await modalHtml(() => mod.actions.viewSyncLogs(42));
+        views.showAddUser = await modalHtml(() => mod.actions.showAddUser());
+        mod.state.data.users = [{ id: 3, username: 'ops', email: 'ops@example.com', role: 'operator', is_active: true }];
+        views.editUser = await modalHtml(() => mod.actions.editUser(3));
+        mod.state.data.users = null;
+
+        let total = 0;
+        for (const [view, out] of Object.entries(views)) {
+            const tables = tablesIn(out);
+            total += tables.length;
+            const loose = tables.filter((t) => !t.wrapped).length;
+            assert(loose === 0, `${view}: ${loose} of ${tables.length} <table>(s) not inside a .table-container`);
+        }
+        // The scan has to be seeing the tables: mirrors 1, sync failures 2,
+        // protected paths 1, users 1, audit logs 1, settings 1.
+        assert(
+            total === 7,
+            `expected the 7 tables the views emit today, found ${total}; if a view legitimately gained or lost one, update this count`
+        );
+        return `${total} tables`;
     });
 
     process.stdout.write(JSON.stringify({ checks }, null, 2) + '\n');
