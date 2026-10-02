@@ -47,11 +47,99 @@ const state = {
 // ETA is shown.
 const DISK_USAGE_WARNING_PERCENT = 85;
 
+// The meter's second severity band (spec 4.8: "Fill from 95%"). A sibling of
+// the constant above rather than a replacement for it -- 85% is "keep an eye
+// on this", 95% is "act now" -- so both stay named constants instead of one
+// magic number appearing twice.
+const DISK_USAGE_CRITICAL_PERCENT = 95;
+
 // rsync's --delete (always on; see sync/sync_service.py) removes a handful
 // of stale files on almost every ordinary sync. A files_deleted count this
 // large is well outside that and is the signature of a mass removal -- most
 // plausibly an EOL release shared/protected_paths.py's filter did not cover.
 const LARGE_DELETION_THRESHOLD = 1000;
+
+// ===========================================
+// Theme
+// ===========================================
+//
+// One 'theme' key in localStorage across the site and the console (spec
+// 6.2). js/theme-init.js has already applied it to <html> before the first
+// paint; AdminTheme adopts that, keeps every rendered toggle in step, and
+// saves only an explicit choice -- the same contract as main.js's
+// ThemeManager. Every document.documentElement access is guarded: the
+// escaping and contrast harnesses load this file into a vm with no
+// documentElement and no matchMedia, and admin.js must still load and render
+// there.
+const AdminTheme = {
+    STORAGE_KEY: 'theme',
+    SYSTEM_DARK: '(prefers-color-scheme: dark)',
+
+    current() {
+        const theme = document.documentElement && document.documentElement.getAttribute('data-theme');
+        return theme === 'light' || theme === 'dark' ? theme : 'light';
+    },
+
+    apply(theme) {
+        if (document.documentElement) {
+            document.documentElement.setAttribute('data-theme', theme);
+        }
+    },
+
+    save(theme) {
+        try {
+            localStorage.setItem(AdminTheme.STORAGE_KEY, theme);
+        } catch {
+            // Storage unavailable: the choice lasts for this page view only.
+        }
+    },
+
+    saved() {
+        try {
+            const value = localStorage.getItem(AdminTheme.STORAGE_KEY);
+            return value === 'light' || value === 'dark' ? value : null;
+        } catch {
+            return null;
+        }
+    },
+
+    init() {
+        const media = typeof window.matchMedia === 'function' ? window.matchMedia(AdminTheme.SYSTEM_DARK) : null;
+        media?.addEventListener?.('change', (event) => {
+            if (AdminTheme.saved() === null) {
+                AdminTheme.apply(event.matches ? 'dark' : 'light');
+                updateThemeToggles();
+            }
+        });
+    }
+};
+
+/** The button rendered in .header-actions and on the login card. */
+function renderThemeToggle() {
+    const theme = AdminTheme.current();
+    return html`
+        <button type="button" class="theme-toggle" data-action="toggleTheme" aria-label="${theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}">
+            <span class="${theme === 'dark' ? 'icon icon-sun' : 'icon icon-moon'}" aria-hidden="true"></span>
+        </button>
+    `;
+}
+
+// Only the dashboard re-renders on its own (the 30s refresh below), so
+// actions.toggleTheme and the matchMedia listener above both update every
+// rendered toggle in place instead of waiting for a re-render that may never
+// come.
+function updateThemeToggles() {
+    const theme = AdminTheme.current();
+    const label = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+    const iconClass = theme === 'dark' ? 'icon icon-sun' : 'icon icon-moon';
+    document.querySelectorAll('.theme-toggle').forEach((toggle) => {
+        toggle.setAttribute('aria-label', label);
+        const icon = toggle.querySelector('.icon');
+        if (icon) {
+            icon.className = iconClass;
+        }
+    });
+}
 
 // ===========================================
 // API Client
@@ -160,7 +248,7 @@ const router = {
     },
 
     navigate(page) {
-        const route = this.routes[page];
+        const route = ownEntry(this.routes, page);
         if (!route) {
             page = 'dashboard';
         }
@@ -180,7 +268,7 @@ const router = {
     },
 
     async render() {
-        const route = this.routes[state.currentPage];
+        const route = ownEntry(this.routes, state.currentPage);
         const app = document.getElementById('app');
 
         if (!route) {
@@ -200,6 +288,7 @@ const router = {
         }
 
         attachEventListeners();
+        revealActiveNavItem();
     },
 
     init() {
@@ -217,6 +306,25 @@ const router = {
 // Layout Components
 // ===========================================
 
+/**
+ * Under 768px the sidebar is a horizontal, scrollable bar (spec 6.1), and a
+ * render rebuilds it scrolled back to its start, so the item for the current
+ * page can sit past the edge. Bring it into view. 'nearest' scrolls only as
+ * far as needed, and not at all for an item that is already showing.
+ *
+ * Every access is guarded: the harness sandboxes this file loads into have no
+ * querySelector on their stub documents, and a page with no nav (login) has no
+ * active item.
+ */
+function revealActiveNavItem() {
+    const item = typeof document.querySelector === 'function'
+        ? document.querySelector('.nav-item.active')
+        : null;
+    if (item && typeof item.scrollIntoView === 'function') {
+        item.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+}
+
 function renderLayout(content, title) {
     const isAdmin = state.user?.role === 'admin';
     const isOperator = ['admin', 'operator'].includes(state.user?.role);
@@ -226,37 +334,37 @@ function renderLayout(content, title) {
             <aside class="sidebar">
                 <div class="sidebar-header">
                     <div class="sidebar-logo">
-                        <span class="sidebar-logo-icon">🔄</span>
-                        <span>BSD Mirror</span>
+                        <span class="mark" aria-hidden="true"><span class="mark-glyph"></span><span class="mark-axis"></span></span>
+                        <span class="wordmark">BSD Mirror</span>
                     </div>
                 </div>
                 
                 <nav class="sidebar-nav">
                     <div class="nav-section">
                         <div class="nav-section-title">Overview</div>
-                        <a class="nav-item ${state.currentPage === 'dashboard' ? 'active' : ''}" data-nav="dashboard">
-                            <span class="nav-item-icon">📊</span>
+                        <a class="nav-item ${state.currentPage === 'dashboard' ? 'active' : ''}" href="#dashboard" data-nav="dashboard" aria-current="${state.currentPage === 'dashboard' ? 'page' : 'false'}">
+                            <span class="icon icon-dashboard" aria-hidden="true"></span>
                             <span>Dashboard</span>
                         </a>
                     </div>
                     
                     <div class="nav-section">
                         <div class="nav-section-title">Management</div>
-                        <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" data-nav="mirrors">
-                            <span class="nav-item-icon">💾</span>
+                        <a class="nav-item ${state.currentPage === 'mirrors' ? 'active' : ''}" href="#mirrors" data-nav="mirrors" aria-current="${state.currentPage === 'mirrors' ? 'page' : 'false'}">
+                            <span class="icon icon-mirrors" aria-hidden="true"></span>
                             <span>Mirrors</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" data-nav="sync-failures">
-                            <span class="nav-item-icon">⚠️</span>
+                        <a class="nav-item ${state.currentPage === 'sync-failures' ? 'active' : ''}" href="#sync-failures" data-nav="sync-failures" aria-current="${state.currentPage === 'sync-failures' ? 'page' : 'false'}">
+                            <span class="icon icon-sync-failures" aria-hidden="true"></span>
                             <span>Sync Failures</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" data-nav="protected-paths">
-                            <span class="nav-item-icon">🔒</span>
+                        <a class="nav-item ${state.currentPage === 'protected-paths' ? 'active' : ''}" href="#protected-paths" data-nav="protected-paths" aria-current="${state.currentPage === 'protected-paths' ? 'page' : 'false'}">
+                            <span class="icon icon-protected-paths" aria-hidden="true"></span>
                             <span>Protected Paths</span>
                         </a>
                         ${isAdmin ? html`
-                        <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" data-nav="users">
-                            <span class="nav-item-icon">👥</span>
+                        <a class="nav-item ${state.currentPage === 'users' ? 'active' : ''}" href="#users" data-nav="users" aria-current="${state.currentPage === 'users' ? 'page' : 'false'}">
+                            <span class="icon icon-users" aria-hidden="true"></span>
                             <span>Users</span>
                         </a>
                         ` : ''}
@@ -265,12 +373,12 @@ function renderLayout(content, title) {
                     ${isAdmin ? html`
                     <div class="nav-section">
                         <div class="nav-section-title">System</div>
-                        <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" data-nav="audit-logs">
-                            <span class="nav-item-icon">📋</span>
+                        <a class="nav-item ${state.currentPage === 'audit-logs' ? 'active' : ''}" href="#audit-logs" data-nav="audit-logs" aria-current="${state.currentPage === 'audit-logs' ? 'page' : 'false'}">
+                            <span class="icon icon-audit-logs" aria-hidden="true"></span>
                             <span>Audit Logs</span>
                         </a>
-                        <a class="nav-item ${state.currentPage === 'settings' ? 'active' : ''}" data-nav="settings">
-                            <span class="nav-item-icon">⚙️</span>
+                        <a class="nav-item ${state.currentPage === 'settings' ? 'active' : ''}" href="#settings" data-nav="settings" aria-current="${state.currentPage === 'settings' ? 'page' : 'false'}">
+                            <span class="icon icon-settings" aria-hidden="true"></span>
                             <span>Settings</span>
                         </a>
                     </div>
@@ -286,7 +394,7 @@ function renderLayout(content, title) {
                         </div>
                     </div>
                     <button class="btn btn-secondary btn-sm u-full-width u-mt-sm" data-action="logout">
-                        Logout
+                        <span class="icon icon-log-out" aria-hidden="true"></span> Logout
                     </button>
                 </div>
             </aside>
@@ -295,6 +403,7 @@ function renderLayout(content, title) {
                 <header class="header">
                     <h1 class="header-title">${title}</h1>
                     <div class="header-actions">
+                        ${renderThemeToggle()}
                         <a href="/" class="btn btn-secondary btn-sm" target="_blank">
                             View Public Site
                         </a>
@@ -307,9 +416,9 @@ function renderLayout(content, title) {
             </main>
         </div>
         
-        <div class="toast-container" id="toastContainer"></div>
+        <div class="toast-container" id="toastContainer" role="status" aria-live="polite"></div>
         <div class="modal-overlay" id="modalOverlay">
-            <div class="modal" id="modal"></div>
+            <div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle"></div>
         </div>
     `;
 }
@@ -326,14 +435,14 @@ const Toast = {
         const toast = document.createElement('div');
         toast.className = `toast ${type}`;
         setHtml(toast, html`
-            <span>${type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'}</span>
+            <span class="${type === 'success' ? 'icon icon-check' : type === 'error' ? 'icon icon-close' : 'icon icon-info'}" aria-hidden="true"></span>
             <span>${message}</span>
         `);
 
         container.appendChild(toast);
 
         setTimeout(() => {
-            toast.style.animation = 'slideIn 0.3s ease reverse';
+            toast.classList.add('is-leaving');
             setTimeout(() => toast.remove(), 300);
         }, 4000);
     }
@@ -344,14 +453,32 @@ const Toast = {
 // ===========================================
 
 const Modal = {
+    // The element that had focus when the dialog opened. #modal declares
+    // aria-modal, so focus has to go into it when it opens and come back when
+    // it closes; close() hands it back to this.
+    opener: null,
+
+    // The close button, while show() is still waiting for it to take focus.
+    focusTarget: null,
+
     show(title, content, actions = '') {
         const overlay = document.getElementById('modalOverlay');
         const modal = document.getElementById('modal');
 
+        // The sync-log Refresh button calls show() again with the dialog
+        // already open. What has focus then is inside the dialog about to be
+        // replaced, so the opener stays whatever opened it in the first
+        // place. (`?.()` because the stub overlays in the harness sandboxes
+        // have no classList.contains.)
+        const alreadyOpen = Boolean(overlay.classList.contains?.('active'));
+        if (!alreadyOpen) {
+            Modal.opener = document.activeElement || null;
+        }
+
         setHtml(modal, html`
             <div class="modal-header">
-                <h3 class="modal-title">${title}</h3>
-                <button class="modal-close" data-action="closeModal">×</button>
+                <h3 class="modal-title" id="modalTitle">${title}</h3>
+                <button class="modal-close" data-action="closeModal" aria-label="Close"><span class="icon icon-close" aria-hidden="true"></span></button>
             </div>
             <div class="modal-body">
                 ${content}
@@ -360,12 +487,78 @@ const Modal = {
         `);
 
         overlay.classList.add('active');
+
+        Modal.focusTarget = typeof modal.querySelector === 'function'
+            ? modal.querySelector('.modal-close')
+            : null;
+        Modal.focusCloseButton(10);
+    },
+
+    // .modal-overlay fades its visibility in (admin.css), and a hidden element
+    // cannot take focus: the attempt made synchronously after the class change
+    // misses, and the one after the next frame lands. So: one try per frame,
+    // bounded, so a dialog that never shows does not spin forever. close()
+    // clears focusTarget, which cancels a try that is still pending. Guarded
+    // for the harness sandboxes, which have no document.activeElement and no
+    // requestAnimationFrame.
+    focusCloseButton(framesLeft) {
+        const target = Modal.focusTarget;
+        if (!target || typeof target.focus !== 'function') return;
+
+        target.focus();
+        if (
+            document.activeElement !== target
+            && framesLeft > 0
+            && typeof window.requestAnimationFrame === 'function'
+        ) {
+            window.requestAnimationFrame(() => Modal.focusCloseButton(framesLeft - 1));
+        }
     },
 
     close() {
         document.getElementById('modalOverlay')?.classList.remove('active');
+
+        Modal.focusTarget = null;
+        const opener = Modal.opener;
+        Modal.opener = null;
+        // Only if a re-render has not removed it from the page since.
+        if (opener && opener.isConnected && typeof opener.focus === 'function') {
+            opener.focus();
+        }
     }
 };
+
+// ===========================================
+// Status Pills
+// ===========================================
+//
+// A job's or a mirror's status reaches the page twice: as the pill's text, and
+// as the choice of pill (spec 4.8). Only the text is the status itself. The
+// class comes out of these tables, so a value a table does not list -- one the
+// backend added before this file was told, or one carrying spaces and quotes
+// -- renders the bare, neutral .status-badge with its own text, and can never
+// add a class token to the element. Every class is written out in full, as the
+// icon classes are (spec 4.7); none is assembled at runtime.
+
+const JOB_STATUS_BADGE_CLASS = {
+    pending: 'status-badge pending',
+    running: 'status-badge running',
+    completed: 'status-badge completed',
+    failed: 'status-badge failed',
+    cancelled: 'status-badge cancelled'
+};
+
+const MIRROR_STATUS_BADGE_CLASS = {
+    active: 'status-badge active',
+    syncing: 'status-badge syncing',
+    error: 'status-badge error',
+    disabled: 'status-badge disabled'
+};
+
+/** One status pill: the class from `table` (an allowlist above), the status as text. */
+function statusPill(table, status) {
+    return html`<span class="${ownEntry(table, status) || 'status-badge'}">${status}</span>`;
+}
 
 // ===========================================
 // Page Renderers
@@ -375,8 +568,9 @@ function renderLoginPage() {
     return html`
         <div class="login-page">
             <div class="login-card">
+                ${renderThemeToggle()}
                 <div class="login-header">
-                    <div class="login-logo">🔄</div>
+                    <div class="login-logo"><span class="mark" aria-hidden="true"><span class="mark-glyph"></span><span class="mark-axis"></span></span></div>
                     <h1 class="login-title">BSD Mirror Admin</h1>
                     <p class="login-subtitle">Sign in to continue</p>
                 </div>
@@ -396,6 +590,51 @@ function renderLoginPage() {
                 </form>
             </div>
         </div>
+        <div id="toastContainer" class="toast-container" role="status" aria-live="polite"></div>
+    `;
+}
+
+/**
+ * The disk-usage meter next to the storage tile's value (spec 4.8). Severity
+ * is a class on the fill element, not a computed value: is-crit replaces
+ * is-warn at DISK_USAGE_CRITICAL_PERCENT rather than joining it, so this is
+ * three full literal branches instead of one template with a class built
+ * from a ternary -- every class name it can ever emit stays literal text in
+ * this file, the same way the icon spans above do.
+ *
+ * The band is picked from the percentage as the backend sent it, the same
+ * comparison the trend badge beside the meter makes; only the fill's width,
+ * data-percent, is rounded (to a whole percent, clamped to 0-100: the
+ * stylesheet has one rule per whole percent). Rounding first would paint
+ * 84.6% amber beside a green badge, and 94.6% red below the 95% line. A value
+ * that is not a finite number draws no meter at all, as an unknown one does.
+ */
+function renderMeter(percentUsed) {
+    if (!Number.isFinite(percentUsed)) {
+        return '';
+    }
+    const pct = Math.min(100, Math.max(0, Math.round(percentUsed)));
+    if (percentUsed >= DISK_USAGE_CRITICAL_PERCENT) {
+        return html`
+        <div class="meter" aria-hidden="true">
+            <div class="meter-fill is-crit" data-percent="${pct}"></div>
+            <div class="meter-tick"></div>
+        </div>
+        `;
+    }
+    if (percentUsed >= DISK_USAGE_WARNING_PERCENT) {
+        return html`
+        <div class="meter" aria-hidden="true">
+            <div class="meter-fill is-warn" data-percent="${pct}"></div>
+            <div class="meter-tick"></div>
+        </div>
+        `;
+    }
+    return html`
+    <div class="meter" aria-hidden="true">
+        <div class="meter-fill" data-percent="${pct}"></div>
+        <div class="meter-tick"></div>
+    </div>
     `;
 }
 
@@ -407,6 +646,12 @@ async function renderDashboard() {
     }
 
     const d = state.data.dashboard;
+
+    // percent_used is a number, or null when disk usage is unavailable (spec
+    // 4.8). Anything else is no data either: the tile shows neither the trend
+    // badge nor the meter for it, rather than a "NaN% used" or a fill the
+    // stylesheet has no width for.
+    const diskPercent = Number.isFinite(d.storage.percent_used) ? d.storage.percent_used : null;
 
     // A second, independent fetch. GET /api/admin/health-checks always
     // answers 200 on its own (see backend/app/core/health_status.py), but
@@ -426,31 +671,31 @@ async function renderDashboard() {
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">💾</span>
+                    <span class="stat-card-icon"><span class="icon icon-mirrors" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.total}</div>
                 <div class="stat-card-label">Total Mirrors</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">✅</span>
+                    <span class="stat-card-icon"><span class="icon icon-check" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.active}</div>
                 <div class="stat-card-label">Active Mirrors</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">🔄</span>
+                    <span class="stat-card-icon"><span class="icon icon-sync" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.mirrors.syncing}</div>
                 <div class="stat-card-label">Currently Syncing</div>
             </div>
-            
+
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">👥</span>
+                    <span class="stat-card-icon"><span class="icon icon-users" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.users.total}</div>
                 <div class="stat-card-label">Admin Users</div>
@@ -458,12 +703,13 @@ async function renderDashboard() {
 
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">🗄️</span>
-                    ${d.storage.percent_used != null ? html`
-                    <span class="stat-card-trend ${d.storage.percent_used >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${d.storage.percent_used}% used</span>
+                    <span class="stat-card-icon"><span class="icon icon-disk" aria-hidden="true"></span></span>
+                    ${diskPercent != null ? html`
+                    <span class="stat-card-trend ${diskPercent >= DISK_USAGE_WARNING_PERCENT ? 'down' : 'up'}">${diskPercent}% used</span>
                     ` : ''}
                 </div>
                 <div class="stat-card-value">${d.storage.free_bytes != null ? formatBytes(d.storage.free_bytes) : 'Unknown'}</div>
+                ${diskPercent != null ? renderMeter(diskPercent) : ''}
                 <div class="stat-card-label">
                     ${d.storage.total_bytes != null
                         ? html`Disk free of ${formatBytes(d.storage.total_bytes)} (${formatBytes(d.storage.used_bytes)} used)`
@@ -482,11 +728,10 @@ async function renderDashboard() {
                 <ul class="activity-list">
                     ${d.recent_syncs.length ? d.recent_syncs.map(sync => html`
                         <li class="activity-item">
-                            <div class="activity-icon">🔄</div>
+                            ${statusPill(JOB_STATUS_BADGE_CLASS, sync.status)}
                             <div class="activity-content">
                                 <div class="activity-text">
-                                    Mirror #${sync.mirror_id} -
-                                    <span class="status-badge ${sync.status}">${sync.status}</span>
+                                    Mirror #${sync.mirror_id}
                                     ${sync.files_deleted ? filesDeletedBadge(sync.files_deleted) : ''}
                                 </div>
                                 <div class="activity-time">${formatDate(sync.created_at)}</div>
@@ -503,7 +748,7 @@ async function renderDashboard() {
                 <ul class="activity-list">
                     ${d.recent_activity.length ? d.recent_activity.map(log => html`
                         <li class="activity-item">
-                            <div class="activity-icon">${getActivityIcon(log.action)}</div>
+                            <div class="activity-icon"><span class="icon ${getActivityIcon(log.action)}" aria-hidden="true"></span></div>
                             <div class="activity-content">
                                 <div class="activity-text">${formatAction(log.action)}</div>
                                 <div class="activity-time">${formatDate(log.created_at)}</div>
@@ -548,18 +793,16 @@ const UNREACHABLE_HEALTH = {
     state_persisted: null
 };
 
-// Reuses three of the four existing `.status-badge` colour variants (see
-// admin.css) -- none of the five health states maps onto Mirror.status's set
-// exactly. `active` (green) and `error` (red) fit ok and failing; unknown
-// gets the muted `disabled` tint, since "no signal at all" is a different
-// thing from "a problem was seen". stale and incomplete needed their own
-// look rather than sharing `syncing`: a checker that hasn't reported in a
-// while (stale) and one that ran but skipped checks or never sent its alert
-// (incomplete) are different problems, and this card exists precisely so
-// neither is ever mistaken for the others -- least of all for ok. `stale`
-// keeps the amber `syncing` tint (still "time-based, not a hard failure");
-// `incomplete` gets its own blue `health-incomplete` tint, defined
-// alongside the other four in admin.css.
+// Each of the five health states draws one of the pills of spec 4.8, named by
+// the .status-badge modifier it carries (see admin.css); none of them maps
+// onto Mirror.status's set exactly. ok is the online pill (`active`), failing
+// the red one (`error`), and unknown the neutral one (`disabled`), since "no
+// signal at all" is a different thing from "a problem was seen". stale is the
+// amber pill (`syncing`: still "time-based, not a hard failure"). incomplete
+// -- a checker that ran but skipped checks, or never sent its alert -- has
+// the purple `health-incomplete` pill, which spec 4.8 keeps distinct from the
+// neutral one: this card exists precisely so that none of the five is ever
+// mistaken for another, least of all incomplete for unknown or for ok.
 const HEALTH_STATE_BADGE_CLASS = {
     ok: 'active',
     stale: 'syncing',
@@ -581,7 +824,10 @@ const HEALTH_STATE_LABEL = {
  * items (via `renderItem`, which may return a plain string or a nested
  * html`` fragment -- both are escaped the same way by the outer template)
  * or a placeholder `<li>` when there are none, matching the empty-state
- * shape Recent Sync Jobs / Recent Activity above already use.
+ * shape Recent Sync Jobs / Recent Activity above already use. `icon` is a
+ * pre-built html`` fragment (the state-specific health-check-icon span), not
+ * a bare icon name, so each of the four calls below can give its own list a
+ * different literal modifier and icon.
  */
 function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
     return html`
@@ -589,7 +835,7 @@ function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
         <ul class="health-check-list">
             ${items.length ? items.map(item => html`
                 <li class="health-check-row">
-                    <div class="health-check-icon">${icon}</div>
+                    ${icon}
                     <div class="health-check-content">
                         <div class="health-check-text">${renderItem(item)}</div>
                     </div>
@@ -601,8 +847,8 @@ function healthChecklistSection(title, items, emptyLabel, icon, renderItem) {
 
 function renderHealthChecksCard(health) {
     const h = health || UNREACHABLE_HEALTH;
-    const badgeClass = HEALTH_STATE_BADGE_CLASS[h.state] || 'disabled';
-    const label = HEALTH_STATE_LABEL[h.state] || h.state || 'Unknown';
+    const badgeClass = ownEntry(HEALTH_STATE_BADGE_CLASS, h.state) || 'disabled';
+    const label = ownEntry(HEALTH_STATE_LABEL, h.state) || h.state || 'Unknown';
     const age = formatHealthAge(h.age_seconds);
 
     return html`
@@ -615,18 +861,23 @@ function renderHealthChecksCard(health) {
                 <span>${h.reason || 'No health-check report is available.'}</span>
             </div>
             <p class="u-text-muted u-text-sm u-mt-sm">
+                <span class="icon icon-clock" aria-hidden="true"></span>
                 ${h.finished_at
                     ? html`Last ran ${formatDate(h.finished_at)}${age ? html` (${age})` : ''}`
                     : 'Last run: unknown'}
             </p>
             <div class="u-mt-sm">
-                ${healthChecklistSection('Bad', h.bad || [], 'No failing checks', '❌',
+                ${healthChecklistSection('Bad', h.bad || [], 'No failing checks',
+                    html`<span class="health-check-icon is-bad"><span class="icon icon-close" aria-hidden="true"></span></span>`,
                     (item) => `${item.label}: ${item.detail}`)}
-                ${healthChecklistSection('Skipped', h.skipped || [], 'No skipped checks', '⏭️',
+                ${healthChecklistSection('Skipped', h.skipped || [], 'No skipped checks',
+                    html`<span class="health-check-icon is-skip"><span class="icon icon-skip" aria-hidden="true"></span></span>`,
                     (item) => `${item.check}: ${item.reason}`)}
-                ${healthChecklistSection('Warnings', h.warnings || [], 'No warnings', '⚠️',
+                ${healthChecklistSection('Warnings', h.warnings || [], 'No warnings',
+                    html`<span class="health-check-icon is-warn"><span class="icon icon-warning" aria-hidden="true"></span></span>`,
                     (item) => item)}
-                ${healthChecklistSection('OK', h.ok || [], 'No checks reported ok', '✅',
+                ${healthChecklistSection('OK', h.ok || [], 'No checks reported ok',
+                    html`<span class="health-check-icon is-ok"><span class="icon icon-check" aria-hidden="true"></span></span>`,
                     (item) => item)}
             </div>
         </div>
@@ -651,8 +902,8 @@ async function renderMirrors() {
                         <tr>
                             <th>Name</th>
                             <th>Status</th>
-                            <th>Size</th>
-                            <th>Last Sync</th>
+                            <th class="num">Size</th>
+                            <th class="num">Last Sync</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -664,13 +915,10 @@ async function renderMirrors() {
                                     <br><small class="u-text-muted">${mirror.url_path}</small>
                                 </td>
                                 <td>
-                                    <span class="status-badge ${mirror.status}">
-                                        <span class="status-dot"></span>
-                                        ${mirror.status}
-                                    </span>
+                                    ${statusPill(MIRROR_STATUS_BADGE_CLASS, mirror.status)}
                                 </td>
-                                <td>${mirror.total_size_human || '--'}</td>
-                                <td>${mirror.last_sync_completed ? formatDate(mirror.last_sync_completed) : 'Never'}</td>
+                                <td class="num">${mirror.total_size_human || '--'}</td>
+                                <td class="num">${mirror.last_sync_completed ? formatDate(mirror.last_sync_completed) : 'Never'}</td>
                                 <td>
                                     <button class="btn btn-primary btn-sm" data-action="syncMirror" data-id="${mirror.id}">
                                         Sync Now
@@ -711,14 +959,14 @@ async function renderSyncFailures() {
         <div class="stats-grid">
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">❌</span>
+                    <span class="stat-card-icon"><span class="icon icon-close" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.totals.failed}</div>
                 <div class="stat-card-label">Failed (last ${d.period_days}d)</div>
             </div>
             <div class="stat-card">
                 <div class="stat-card-header">
-                    <span class="stat-card-icon">✅</span>
+                    <span class="stat-card-icon"><span class="icon icon-check" aria-hidden="true"></span></span>
                 </div>
                 <div class="stat-card-value">${d.totals.completed}</div>
                 <div class="stat-card-label">Completed (last ${d.period_days}d)</div>
@@ -734,18 +982,18 @@ async function renderSyncFailures() {
                     <thead>
                         <tr>
                             <th>Mirror</th>
-                            <th>Failed</th>
-                            <th>Completed</th>
-                            <th>Failure Rate</th>
+                            <th class="num">Failed</th>
+                            <th class="num">Completed</th>
+                            <th class="num">Failure Rate</th>
                         </tr>
                     </thead>
                     <tbody>
                         ${d.by_mirror.map(m => html`
                             <tr>
                                 <td><strong>${m.mirror_name}</strong></td>
-                                <td class="${m.failed > 0 ? 'u-text-error' : ''}">${m.failed}</td>
-                                <td>${m.completed}</td>
-                                <td>${m.failure_rate_percent != null ? m.failure_rate_percent + '%' : '--'}</td>
+                                <td class="num ${m.failed > 0 ? 'u-text-error' : ''}">${m.failed}</td>
+                                <td class="num">${m.completed}</td>
+                                <td class="num">${m.failure_rate_percent != null ? m.failure_rate_percent + '%' : '--'}</td>
                             </tr>
                         `)}
                     </tbody>
@@ -763,9 +1011,9 @@ async function renderSyncFailures() {
                         <tr>
                             <th>Mirror</th>
                             <th>Error</th>
-                            <th>Occurrences</th>
-                            <th>First Seen</th>
-                            <th>Last Seen</th>
+                            <th class="num">Occurrences</th>
+                            <th class="num">First Seen</th>
+                            <th class="num">Last Seen</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -774,9 +1022,9 @@ async function renderSyncFailures() {
                             <tr>
                                 <td><strong>${inc.mirror_name}</strong></td>
                                 <td><code class="code-block">${inc.error_message || '(no error message recorded)'}</code></td>
-                                <td>${inc.occurrences.toLocaleString()}</td>
-                                <td>${formatDate(inc.first_seen)}</td>
-                                <td>${formatDate(inc.last_seen)}</td>
+                                <td class="num">${inc.occurrences.toLocaleString()}</td>
+                                <td class="num">${formatDate(inc.first_seen)}</td>
+                                <td class="num">${formatDate(inc.last_seen)}</td>
                                 <td>
                                     <button class="btn btn-secondary btn-sm" data-action="viewSyncLogs" data-id="${inc.latest_job_id}">
                                         View Logs
@@ -859,19 +1107,18 @@ async function renderProtectedPaths() {
     `;
 }
 
-// Reuses the four existing `.status-badge` colour variants (see admin.css)
-// the same way renderHealthChecksCard's HEALTH_STATE_BADGE_CLASS does --
-// full/partial/none/unknown has no state of its own to draw from. `none` is
-// deliberately the muted `disabled` tint, not red: it is the expected,
-// correct state for a mirror's actively-served release (see
-// shared/protected_paths.py's "WHY THE NEWEST RELEASE ... IS DELIBERATELY
-// NOT HERE"), not a problem on its own -- `at_risk` (below) is what actually
-// flags a problem.
+// Maps full/partial/none/unknown onto the pills of spec 4.8 the same way
+// HEALTH_STATE_BADGE_CLASS does, since protection has no state of its own to
+// draw from. `none` is deliberately the neutral `disabled` pill, not red (spec
+// 4.8 sends "unknown" there too): it is the expected, correct state for a
+// mirror's actively-served release (see shared/protected_paths.py's "WHY THE
+// NEWEST RELEASE ... IS DELIBERATELY NOT HERE"), not a problem on its own --
+// `at_risk` (below) is what actually flags a problem.
 const PROTECTION_BADGE_CLASS = {
     full: 'active',
     partial: 'syncing',
     none: 'disabled',
-    unknown: 'error',
+    unknown: 'disabled',
 };
 
 const PROTECTION_LABEL = {
@@ -882,8 +1129,8 @@ const PROTECTION_LABEL = {
 };
 
 function protectionBadge(protection) {
-    const cls = PROTECTION_BADGE_CLASS[protection] || 'disabled';
-    const label = PROTECTION_LABEL[protection] || protection;
+    const cls = ownEntry(PROTECTION_BADGE_CLASS, protection) || 'disabled';
+    const label = ownEntry(PROTECTION_LABEL, protection) || protection;
     return html`<span class="status-badge ${cls}">${label}</span>`;
 }
 
@@ -894,10 +1141,9 @@ function protectionBadge(protection) {
  */
 function releaseTagBadges(release) {
     const tags = [];
-    // .info, not .disabled: .disabled's muted tint means "inactive"
-    // everywhere else in this file (nav items, the mirror status badges),
-    // and these are purely informational. See .status-badge.info in
-    // admin.css.
+    // .info, not .disabled: .disabled's neutral pill means "inactive"
+    // everywhere else in this file (a disabled mirror, a disabled user), and
+    // these are purely informational. See .status-badge.info in admin.css.
     //
     // `current` (shared.protected_paths.CURRENT_RELEASES) is the field
     // at_risk actually keys off; newest/latest_in_major below are shown too
@@ -914,11 +1160,11 @@ function releaseTagBadges(release) {
     } else if (release.latest_in_major) {
         tags.push(html`<span class="status-badge info">Latest in major</span>`);
     }
-    // .status-badge.at-risk, not the old plain .u-text-error text: needs to
-    // read as a pill matching its row-mates. See that class in admin.css for
-    // why it is the most alarming colour available here, not a softer one.
+    // .status-badge.at-risk, not the old plain .u-text-error text: it needs to
+    // read as a pill matching its row-mates. Spec 4.8 draws it in the amber
+    // pill it shares with syncing -- a warning, not an error.
     if (release.at_risk) {
-        tags.push(html`<span class="status-badge at-risk">⚠️ At risk</span>`);
+        tags.push(html`<span class="status-badge at-risk">At risk</span>`);
     }
     return tags;
 }
@@ -950,8 +1196,8 @@ function releaseRows(release) {
             <td><strong>${release.version}</strong></td>
             <td>${protectionBadge(release.protection)}</td>
             <td><span class="u-row-8">${releaseTagBadges(release)}</span></td>
-            <td>${release.location_count.toLocaleString()}</td>
-            <td>${formatDate(release.modified)}</td>
+            <td class="num">${release.location_count.toLocaleString()}</td>
+            <td class="num">${formatDate(release.modified)}</td>
         </tr>
         ${unprotectedRow}
     `;
@@ -970,8 +1216,8 @@ function renderMirrorInventoryTable(mirror) {
                         <th>Version</th>
                         <th>Protection</th>
                         <th>Tags</th>
-                        <th>Locations</th>
-                        <th>Last Changed</th>
+                        <th class="num">Locations</th>
+                        <th class="num">Last Changed</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1072,7 +1318,7 @@ async function renderUsers() {
             <div class="card-header">
                 <h3 class="card-title">User Management</h3>
                 <button class="btn btn-primary btn-sm" data-action="showAddUser">
-                    + Add User
+                    <span class="icon icon-plus" aria-hidden="true"></span> Add User
                 </button>
             </div>
             <div class="table-container">
@@ -1083,7 +1329,7 @@ async function renderUsers() {
                             <th>Email</th>
                             <th>Role</th>
                             <th>Status</th>
-                            <th>Last Login</th>
+                            <th class="num">Last Login</th>
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -1093,14 +1339,14 @@ async function renderUsers() {
                                 <td><strong>${user.username}</strong></td>
                                 <td>${user.email || '--'}</td>
                                 <td>
-                                    <span class="status-badge ${user.role === 'admin' ? 'active' : ''}">${user.role}</span>
+                                    <span class="status-badge ${user.role === 'admin' ? 'info' : ''}">${user.role}</span>
                                 </td>
                                 <td>
                                     <span class="status-badge ${user.is_active ? 'active' : 'disabled'}">
                                         ${user.is_active ? 'Active' : 'Disabled'}
                                     </span>
                                 </td>
-                                <td>${user.last_login ? formatDate(user.last_login) : 'Never'}</td>
+                                <td class="num">${user.last_login ? formatDate(user.last_login) : 'Never'}</td>
                                 <td>
                                     <button class="btn btn-secondary btn-sm" data-action="editUser" data-id="${user.id}">
                                         Edit
@@ -1136,7 +1382,7 @@ async function renderAuditLogs() {
                 <table>
                     <thead>
                         <tr>
-                            <th>Time</th>
+                            <th class="num">Time</th>
                             <th>User</th>
                             <th>Action</th>
                             <th>Resource</th>
@@ -1146,7 +1392,7 @@ async function renderAuditLogs() {
                     <tbody>
                         ${state.data.auditLogs.map(log => html`
                             <tr>
-                                <td>${formatDate(log.created_at)}</td>
+                                <td class="num">${formatDate(log.created_at)}</td>
                                 <td>${log.username || 'System'}</td>
                                 <td>${formatAction(log.action)}</td>
                                 <td>${log.resource_type}${log.resource_id ? html` #${log.resource_id}` : ''}</td>
@@ -1224,22 +1470,24 @@ async function renderSettings() {
                     Some settings may require a service restart to fully apply.
                 </p>
                 ${state.data.settings.length ? html`
-                <table class="u-mt-sm u-full-width">
-                    <thead>
-                        <tr>
-                            <th>Key</th>
-                            <th>Last Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${state.data.settings.map(s => html`
+                <div class="table-container u-mt-sm">
+                    <table class="u-full-width">
+                        <thead>
                             <tr>
-                                <td><code>${s.key}</code></td>
-                                <td>${formatDate(s.updated_at)}</td>
+                                <th>Key</th>
+                                <th class="num">Last Updated</th>
                             </tr>
-                        `)}
-                    </tbody>
-                </table>
+                        </thead>
+                        <tbody>
+                            ${state.data.settings.map(s => html`
+                                <tr>
+                                    <td><code>${s.key}</code></td>
+                                    <td class="num">${formatDate(s.updated_at)}</td>
+                                </tr>
+                            `)}
+                        </tbody>
+                    </table>
+                </div>
                 ` : ''}
             </div>
         </div>
@@ -1274,6 +1522,13 @@ const actions = {
     logout() {
         api.logout();
         Toast.show('Logged out', 'success');
+    },
+
+    toggleTheme() {
+        const theme = AdminTheme.current() === 'dark' ? 'light' : 'dark';
+        AdminTheme.apply(theme);
+        AdminTheme.save(theme);
+        updateThemeToggles();
     },
 
     async syncMirror(mirrorId) {
@@ -1322,10 +1577,10 @@ const actions = {
                     <ul class="activity-list">
                         ${history.length ? history.map(h => html`
                             <li class="activity-item">
-                                <div class="activity-icon">${h.status === 'completed' ? '✅' : h.status === 'failed' ? '❌' : h.status === 'running' ? '🔄' : '⏳'}</div>
+                                ${statusPill(JOB_STATUS_BADGE_CLASS, h.status)}
                                 <div class="activity-content">
                                     <div class="activity-text">
-                                        ${h.status}${h.bytes_transferred ? ' - ' + formatBytes(h.bytes_transferred) : ''}
+                                        ${h.bytes_transferred ? formatBytes(h.bytes_transferred) : ''}
                                         ${h.files_deleted ? html` ${filesDeletedBadge(h.files_deleted)}` : ''}
                                         ${h.triggered_by ? html` <small>(by ${h.triggered_by})</small>` : ''}
                                     </div>
@@ -1372,14 +1627,13 @@ const actions = {
     async viewSyncLogs(jobId) {
         try {
             const job = await api.get(`/admin/sync-jobs/${jobId}/logs`);
-            const statusIcon = job.status === 'completed' ? '✅' : job.status === 'failed' ? '❌' : job.status === 'running' ? '🔄' : '⏳';
             const isRunning = job.status === 'running' || job.status === 'pending';
 
-            Modal.show(`${statusIcon} Sync Job #${job.id}`, html`
+            Modal.show(`Sync Job #${job.id}`, html`
                 <div class="u-grid-2-tight">
                     <div>
                         <label class="form-label">Status</label>
-                        <span class="status-badge ${job.status}">${job.status}</span>
+                        ${statusPill(JOB_STATUS_BADGE_CLASS, job.status)}
                     </div>
                     <div>
                         <label class="form-label">Triggered By</label>
@@ -1431,20 +1685,20 @@ const actions = {
         Modal.show('Add User', html`
             <form id="addUserForm">
                 <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" name="username" required>
+                    <label class="form-label" for="addUserUsername">Username</label>
+                    <input type="text" id="addUserUsername" class="form-input" name="username" required>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Email (optional)</label>
-                    <input type="email" class="form-input" name="email">
+                    <label class="form-label" for="addUserEmail">Email (optional)</label>
+                    <input type="email" id="addUserEmail" class="form-input" name="email">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Password</label>
-                    <input type="password" class="form-input" name="password" required>
+                    <label class="form-label" for="addUserPassword">Password</label>
+                    <input type="password" id="addUserPassword" class="form-input" name="password" required>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Role</label>
-                    <select class="form-input" name="role">
+                    <label class="form-label" for="addUserRole">Role</label>
+                    <select class="form-input" id="addUserRole" name="role">
                         <option value="readonly">Read Only</option>
                         <option value="operator">Operator</option>
                         <option value="admin">Admin</option>
@@ -1519,24 +1773,24 @@ const actions = {
         Modal.show('Edit User', html`
             <form id="editUserForm">
                 <div class="form-group">
-                    <label class="form-label">Username</label>
-                    <input type="text" class="form-input" value="${user.username}" disabled>
+                    <label class="form-label" for="editUserUsername">Username</label>
+                    <input type="text" id="editUserUsername" class="form-input" value="${user.username}" disabled>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Email</label>
-                    <input type="email" class="form-input" name="email" value="${user.email || ''}">
+                    <label class="form-label" for="editUserEmail">Email</label>
+                    <input type="email" id="editUserEmail" class="form-input" name="email" value="${user.email || ''}">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Role</label>
-                    <select class="form-input" name="role">
+                    <label class="form-label" for="editUserRole">Role</label>
+                    <select class="form-input" id="editUserRole" name="role">
                         <option value="readonly" ${user.role === 'readonly' ? 'selected' : ''}>Read Only</option>
                         <option value="operator" ${user.role === 'operator' ? 'selected' : ''}>Operator</option>
                         <option value="admin" ${user.role === 'admin' ? 'selected' : ''}>Admin</option>
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Status</label>
-                    <select class="form-input" name="is_active">
+                    <label class="form-label" for="editUserStatus">Status</label>
+                    <select class="form-input" id="editUserStatus" name="is_active">
                         <option value="true" ${user.is_active ? 'selected' : ''}>Active</option>
                         <option value="false" ${!user.is_active ? 'selected' : ''}>Disabled</option>
                     </select>
@@ -1712,6 +1966,20 @@ function setHtml(el, content) {
     el.innerHTML = content.value;
 }
 
+/**
+ * A table lookup that answers only from the table's own keys.
+ *
+ * A bare table[key] also answers for every name an object inherits --
+ * 'constructor', 'toString', '__proto__' -- so a key that comes from the
+ * server or from location.hash can land on a function or on Object.prototype
+ * instead of on one of the table's entries, and `table[key] || fallback`
+ * then keeps what it found. hasOwnProperty is borrowed from Object.prototype
+ * with .call, never called on the table, whose own keys could shadow it.
+ */
+function ownEntry(table, key) {
+    return Object.prototype.hasOwnProperty.call(table, key) ? table[key] : undefined;
+}
+
 function formatBytes(bytes) {
     if (!bytes || bytes === 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -1733,7 +2001,9 @@ function formatBytes(bytes) {
  */
 function filesDeletedBadge(count) {
     const large = count >= LARGE_DELETION_THRESHOLD;
-    return html`<span class="${large ? 'u-text-error' : 'u-text-muted'}">${large ? '⚠️ ' : ''}${count.toLocaleString()} deleted</span>`;
+    return large
+        ? html`<span class="u-text-error"><span class="icon icon-warning" aria-hidden="true"></span> ${count.toLocaleString()} deleted</span>`
+        : html`<span class="u-text-muted">${count.toLocaleString()} deleted</span>`;
 }
 
 function formatDate(dateStr) {
@@ -1786,22 +2056,22 @@ function formatAction(action) {
         'sync_triggered': 'Triggered sync',
         'settings_updated': 'Updated settings'
     };
-    return actions[action] || action.replace(/_/g, ' ');
+    return ownEntry(actions, action) || action.replace(/_/g, ' ');
 }
 
 function getActivityIcon(action) {
     const icons = {
-        'login_success': '🔓',
-        'login_failed': '🔒',
-        'logout': '👋',
-        'user_created': '👤',
-        'user_updated': '✏️',
-        'user_deleted': '🗑️',
-        'mirror_updated': '💾',
-        'sync_triggered': '🔄',
-        'settings_updated': '⚙️'
+        'login_success': 'icon-unlock',
+        'login_failed': 'icon-lock',
+        'logout': 'icon-log-out',
+        'user_created': 'icon-user',
+        'user_updated': 'icon-edit',
+        'user_deleted': 'icon-trash',
+        'mirror_updated': 'icon-mirrors',
+        'sync_triggered': 'icon-sync',
+        'settings_updated': 'icon-settings'
     };
-    return icons[action] || '📋';
+    return ownEntry(icons, action) || 'icon-audit-logs';
 }
 
 // ===========================================
@@ -1809,6 +2079,11 @@ function getActivityIcon(action) {
 // ===========================================
 
 async function init() {
+    // Follow the operating system's theme preference until the visitor
+    // chooses (spec 6.2); must run before the first render so the toggle's
+    // icon and aria-label are correct immediately, not one render late.
+    AdminTheme.init();
+
     // Set up global event delegation once — catches all future clicks on
     // [data-action] and [data-nav] elements, including those inside modals
     setupGlobalEventDelegation();

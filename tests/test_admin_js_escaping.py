@@ -66,11 +66,15 @@ import pathlib
 import re
 import shutil
 import subprocess
+from html.parser import HTMLParser
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
+PUBLIC = REPO_ROOT / "frontend" / "public"
 ADMIN_JS = REPO_ROOT / "frontend" / "public" / "admin" / "js" / "admin.js"
+ADMIN_INDEX = PUBLIC / "admin" / "index.html"
+ADMIN_JS_SRC = "/admin/js/admin.js"
 MAIN_JS = REPO_ROOT / "frontend" / "public" / "js" / "main.js"
 HARNESS = REPO_ROOT / "tests" / "js" / "escaping_harness.mjs"
 TOKENS_CSS = REPO_ROOT / "frontend" / "public" / "css" / "tokens.css"
@@ -136,8 +140,20 @@ HARNESS_CHECKS = [
     "renderMirrors escapes name, url_path and status end-to-end",
     "renderSettings escapes setting values in attribute context",
     "renderLayout escapes the logged-in username in the sidebar",
+    "renderLayout renders exactly one theme toggle button",
+    "renderLoginPage renders exactly one theme toggle button",
+    "DISK_USAGE_CRITICAL_PERCENT is defined and equals 95",
+    "renderLayout gives every nav-item a literal href of # plus its data-nav",
+    "renderLayout sets aria-current=page on the current nav-item and false on the rest",
+    "renderLayout toast container carries role=status and aria-live=polite",
+    "renderLoginPage renders one toastContainer with role=status and aria-live=polite",
+    "renderLayout gives #modal role=dialog aria-modal=true and aria-labelledby=modalTitle",
     "Toast.show escapes a hostile server error string",
     "Modal.show escapes a hostile title and trusts SafeHtml body",
+    "Modal.show gives its title id=modalTitle for aria-labelledby",
+    "Toast.show adds is-leaving instead of writing a style",
+    "showAddUser gives every label a for= matching an input id in the form",
+    "editUser gives every label a for= matching an input id in the form",
     "filesDeletedBadge marks a count at the large-deletion threshold",
     "filesDeletedBadge leaves a count below the threshold unmarked",
     "renderDashboard escapes recent activity action and sync status end-to-end",
@@ -156,6 +172,44 @@ HARNESS_CHECKS = [
     "renderHealthChecksCard renders unknown when given no data",
     "renderDashboard renders the health-checks card end-to-end via its own fetch",
     "renderDashboard shows the health-checks card as unknown, not a false all-clear, when that fetch fails",
+    "renderLayout renders the sidebar mark and wordmark",
+    "renderLoginPage renders the mark",
+    "renderLayout gives every nav-item an icon span naming the right icon",
+    "renderLayout gives the logout button an icon-log-out span",
+    "renderDashboard tile icons name mirrors, check, sync, users and disk",
+    "renderSyncFailures tile icons name close and check",
+    "renderHealthChecksCard gives every row an icon wrapper with the right modifier and icon",
+    "renderDashboard activity rows carry the mapped icon for every action, including the default",
+    "Toast.show renders an icon span for success, error and info",
+    "Modal.show renders a close button with an icon-close span and aria-label",
+    "renderUsers Add User button carries an icon-plus span",
+    "every icon span rendered anywhere names a file under img/icons/",
+    "renderMirrors renders the status pill with no inner span",
+    "renderDashboard renders a Recent Sync Jobs pill with no inner span",
+    "viewSyncLogs shows the status as a pill and drops the title emoji prefix",
+    "viewMirror renders each history row status as a pill instead of an emoji",
+    "renderDashboard shows the disk meter at is-warn, at is-crit and never for an unknown percentage",
+    "renderMirrors, renderSyncFailures, renderProtectedPaths, renderUsers, renderAuditLogs and "
+    "renderSettings mark numeric and time cells with class=num",
+    "releaseTagBadges renders At risk with no emoji",
+    "admin.js no longer names status-dot anywhere",
+    "no rendered view contains an emoji or symbol glyph beyond the allowed dashes and ellipsis",
+    "renderDashboard gives Recent Sync Jobs pills a class from the job-status allowlist only",
+    "viewSyncLogs gives the status pill a class from the job-status allowlist only",
+    "viewMirror gives each history row pill a class from the job-status allowlist only",
+    "renderMirrors gives the status pill a class from the mirror-status allowlist only",
+    "renderDashboard draws the disk meter only for a finite percentage and clamps its fill to 0-100",
+    "renderDashboard picks the disk meter band from the raw percentage and rounds only the fill width",
+    "router.navigate sends an inherited key to the dashboard and render() does not throw",
+    "renderDashboard gives an inherited activity action the default icon and plain text",
+    "renderHealthChecksCard shows an inherited state as the neutral badge with its own text",
+    "renderProtectedPaths shows an inherited protection value as the neutral pill",
+    "renderAuditLogs shows an inherited action name as plain text",
+    "Modal.show moves focus to the close button and Modal.close hands it back to the opener",
+    "Modal.show retries the focus once a frame until the dialog is visible, and a close cancels the retry",
+    "Modal.show keeps the first opener when it is shown again while open, and never refocuses a detached one",
+    "router.render brings the active nav-item into view when it can, and runs without it",
+    "every <table> a rendered view emits sits inside a .table-container",
 ]
 
 
@@ -206,8 +260,8 @@ MUTATIONS = [
         "escapeHtml escapes all six metacharacters",
     ),
     (
-        # The bug class the brief called out: an escape that stops in the wrong
-        # place. Without /g only the first metacharacter is replaced.
+        # The bug class this mutation guards against: an escape that stops in
+        # the wrong place. Without /g only the first metacharacter is replaced.
         "drop_global_regex_flag",
         """return String(value).replace(/[&<>"'`]/g, (ch) => HTML_ESCAPES[ch]);""",
         """return String(value).replace(/[&<>"'`]/, (ch) => HTML_ESCAPES[ch]);""",
@@ -452,6 +506,61 @@ def admin_js_source():
     return strip_js_comments(ADMIN_JS.read_text(encoding="utf-8"))
 
 
+# ---------------------------------------------------------------------------
+# Every script the console loads
+#
+# admin/index.html loads /js/theme-init.js ahead of its stylesheets as well as
+# admin.js (spec 6.2), and both run in the authenticated console. The sink,
+# style and inline-handler guards below used to read admin.js alone, so a
+# write in theme-init.js was nobody's business. The set they scan is the
+# page's own <script src> list, read with an HTML parser, so a script added to
+# the page is scanned without anyone remembering to add it here.
+# ---------------------------------------------------------------------------
+class _ScriptTags(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.srcs = []  # one entry per <script>: its src, or None when it has none
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script":
+            self.srcs.append(dict(attrs).get("src"))
+
+
+def script_srcs(page_html):
+    """The src of every <script> in a page, in document order.
+
+    A script the guards cannot read from this checkout -- an inline one,
+    another origin's, a path relative to the page -- fails here, so none is
+    quietly left out of the scan.
+    """
+    tags = _ScriptTags()
+    tags.feed(page_html)
+    for src in tags.srcs:
+        assert (
+            src is not None
+        ), "an inline <script>: script-src 'self' blocks it, and no guard here reads it"
+        assert src.startswith("/") and not src.startswith(
+            "//"
+        ), f"<script src={src!r}> is not a path on this origin; the guards read this checkout"
+    return tags.srcs
+
+
+def console_script_path(src):
+    """Where a <script src> from admin/index.html lives in this checkout.
+
+    admin.js resolves through ADMIN_JS, which the planted-defect controls patch.
+    """
+    return ADMIN_JS if src == ADMIN_JS_SRC else PUBLIC / src.lstrip("/")
+
+
+def console_script_sources():
+    """{src: source with comments blanked} for every script the console loads."""
+    return {
+        src: strip_js_comments(console_script_path(src).read_text(encoding="utf-8"))
+        for src in script_srcs(ADMIN_INDEX.read_text(encoding="utf-8"))
+    }
+
+
 def line_of(source, index):
     return source.count("\n", 0, index) + 1
 
@@ -511,10 +620,64 @@ def test_only_set_html_writes_innerhtml():
     ), "the innerHTML write is outside setHtml()"
 
 
+# Assembled rather than written literally, like OTHER_SINKS above: this file
+# names the property only to match it.
+HTML_PROPERTY = "inner" + "HTML"
+
+
+def test_no_other_console_script_touches_the_html_property():
+    """The sink test above pins admin.js to exactly one writer, setHtml().
+    Every other script the console loads gets none: the property is not named
+    in it at all, as a read, a write or a computed key."""
+    for src, source in console_script_sources().items():
+        if src == ADMIN_JS_SRC:
+            continue
+        assert HTML_PROPERTY not in source, f"{src} names {HTML_PROPERTY}, which bypasses setHtml()"
+
+
 def test_no_other_html_sinks():
-    source = admin_js_source()
-    for sink in OTHER_SINKS:
-        assert sink not in source, f"{sink} bypasses setHtml()"
+    for src, source in console_script_sources().items():
+        for sink in OTHER_SINKS:
+            assert sink not in source, f"{sink} in {src} bypasses setHtml()"
+
+
+# Every way JavaScript can set an element's style. The CSP is style-src 'self'
+# with no 'unsafe-inline', which blocks the style attribute however a script
+# sets it, and the console's rule is that it needs none: a state is a class.
+STYLE_WRITES = [
+    # el.style.x = ..., el.style = ..., el.style[...] = ..., el.style.cssText,
+    # el.style.setProperty(...), Object.assign(el.style, ...), el?.style: every
+    # one of them names the member `.style`. `.styleSheets` does not match.
+    ("a .style member", re.compile(r"\.style\b")),
+    ("a ['style'] member", re.compile(r"""\[\s*['"`]style['"`]\s*\]""")),
+    ("attributeStyleMap", re.compile(r"attributeStyleMap")),
+    ("setAttribute('style', ...)", re.compile(r"""setAttribute\(\s*['"`]style['"`]""")),
+    (
+        "setAttributeNS(ns, 'style', ...)",
+        re.compile(r"""setAttributeNS\(\s*[^,()]*,\s*['"`]style['"`]"""),
+    ),
+]
+
+
+def style_writes(source):
+    """[(line, form)] for every way `source` can set an element's style."""
+    hits = []
+    for form, pattern in STYLE_WRITES:
+        hits += [(line_of(source, m.start()), form) for m in pattern.finditer(source)]
+    return sorted(hits)
+
+
+def test_no_style_property_writes():
+    """No script the console loads writes an element's style anywhere. The
+    toast's animation is a class, is-leaving, applied through classList -- not
+    a CSSOM assignment -- so a style-src 'self' policy with no 'unsafe-inline'
+    has nothing to block here. Reads of .style count too: nothing needs one."""
+    found = {
+        src: hits
+        for src, source in console_script_sources().items()
+        if (hits := style_writes(source))
+    }
+    assert not found, f"element style written at {found}; use a class instead"
 
 
 def test_no_template_literal_join_remains():
@@ -589,19 +752,81 @@ def test_interpolation_scan_covers_the_attribute_sites():
 
 
 def test_no_inline_event_handlers_in_markup():
-    """admin.js dispatches via delegation on [data-action]; on* must stay absent."""
-    source = admin_js_source()
-    # \s prefix so data-action= and similar attribute names do not match.
-    found = sorted({m.group(1) for m in re.finditer(r"\son([a-z]{3,})\s*=", source)})
+    """admin.js dispatches via delegation on [data-action]; on* must stay absent
+    from it and from every other script the console loads."""
+    found = {}
+    for src, source in console_script_sources().items():
+        # \s prefix so data-action= and similar attribute names do not match.
+        names = sorted({m.group(1) for m in re.finditer(r"\son([a-z]{3,})\s*=", source)})
+        if names:
+            found[src] = names
     assert not found, f"inline event handler attribute(s) in markup: {found}"
 
 
 def test_no_interpolation_into_script_or_style_elements():
-    source = admin_js_source()
-    for tag in ("script", "style"):
-        assert f"<{tag}" not in source, (
-            f"a <{tag}> element in a template literal is a context escapeHtml() " f"does not cover"
-        )
+    for src, source in console_script_sources().items():
+        for tag in ("script", "style"):
+            assert (
+                f"<{tag}" not in source
+            ), f"a <{tag}> element in {src} is a context escapeHtml() does not cover"
+
+
+def test_the_scan_covers_theme_init_and_admin_js():
+    """The guards above are only as wide as the set they loop over: if the page
+    parser quietly returned nothing, every one of them would pass over no file."""
+    sources = console_script_sources()
+    assert "/js/theme-init.js" in sources, "the scan no longer reaches theme-init.js"
+    assert ADMIN_JS_SRC in sources, "the scan no longer reaches admin.js"
+    assert all(source.strip() for source in sources.values()), "a scanned script read as empty"
+
+
+def test_script_srcs_lists_a_pages_scripts_in_order():
+    page = '<script src="/a.js"></script><p>x</p><script src="/b/c.js" defer></script>'
+    assert script_srcs(page) == ["/a.js", "/b/c.js"]
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "<script>var x = 1;</script>",
+        "<script src></script>",
+        '<script src="https://cdn.example/x.js"></script>',
+        '<script src="//cdn.example/x.js"></script>',
+        '<script src="js/x.js"></script>',
+    ],
+    ids=["inline", "no_value", "another_origin", "protocol_relative", "relative_to_the_page"],
+)
+def test_script_srcs_refuses_a_script_it_cannot_scan(script):
+    with pytest.raises(AssertionError):
+        script_srcs(f"<html><body>{script}</body></html>")
+
+
+# One snippet per way of setting a style that the scan must see.
+STYLE_WRITE_FORMS = [
+    "el.style.color = 'red';",
+    "el.style = 'color: red';",
+    "el.style['color'] = 'red';",
+    "Object.assign(el.style, { color: 'red' });",
+    "el.attributeStyleMap.set('color', 'red');",
+    "el.setAttribute('style', 'color: red');",
+    'el.setAttribute("style", "color: red");',
+    "el.setAttributeNS(null, 'style', 'color: red');",
+    "el?.style.setProperty('color', 'red');",
+    "el['style'].cssText = 'color: red';",
+]
+
+
+@pytest.mark.parametrize("snippet", STYLE_WRITE_FORMS)
+def test_the_style_scan_sees_every_form_of_write(snippet):
+    assert style_writes(snippet), f"{snippet!r} sets a style and the scan does not see it"
+
+
+def test_the_style_scan_leaves_alone_what_is_not_a_write():
+    clean = (
+        "getComputedStyle(el); document.styleSheets; el.classList.add('is-leaving'); "
+        "el.setAttribute('class', 'style'); el.setAttribute('data-style', 'x');"
+    )
+    assert style_writes(clean) == []
 
 
 # ---------------------------------------------------------------------------
@@ -721,8 +946,8 @@ NEGATIVE_CONTROLS = [
     ),
     (
         "inline_event_handler",
-        '<button class="modal-close" data-action="closeModal">',
-        '<button class="modal-close" onclick="Modal.close()" data-action="closeModal">',
+        '<button class="modal-close" data-action="closeModal" aria-label="Close">',
+        '<button class="modal-close" onclick="Modal.close()" data-action="closeModal" aria-label="Close">',
         "test_no_inline_event_handlers_in_markup",
     ),
     (
@@ -736,6 +961,20 @@ NEGATIVE_CONTROLS = [
         "<td><strong>${user.username}</strong></td>",
         "<td><strong>${escapeHtml(user.username)}</strong></td>",
         "test_no_double_escaping_call_sites",
+    ),
+    (
+        "style_assignment",
+        "function setHtml(el, content) {",
+        "function paint(el) {\n    el.style = 'display: none';\n}\n\n"
+        "function setHtml(el, content) {",
+        "test_no_style_property_writes",
+    ),
+    (
+        "style_attribute_set_from_script",
+        "function setHtml(el, content) {",
+        "function paint(el) {\n    el.setAttribute('style', 'display: none');\n}\n\n"
+        "function setHtml(el, content) {",
+        "test_no_style_property_writes",
     ),
 ]
 
@@ -757,4 +996,71 @@ def test_scanner_catches_planted_defect(tmp_path, monkeypatch, name, old, new, s
     monkeypatch.setattr("tests.test_admin_js_escaping.ADMIN_JS", planted)
 
     with pytest.raises(AssertionError):
+        globals()[scanner]()
+
+
+# ---------------------------------------------------------------------------
+# The same controls for the other script the console loads.
+#
+# The guards loop over every <script src> in admin/index.html, so a defect in
+# theme-init.js has to fail them too. Each defect below is appended to a copy of
+# that file, which the scanners then read in place of the real one, and the
+# failure has to name the file: it is that copy tripping the guard, not
+# something else about the page.
+# ---------------------------------------------------------------------------
+THEME_INIT_SRC = "/js/theme-init.js"
+THEME_INIT_CONTROLS = [
+    (
+        "html_property_write",
+        f"document.body.{HTML_PROPERTY} = window.location.hash;",
+        "test_no_other_console_script_touches_the_html_property",
+    ),
+    (
+        "insert_adjacent_html",
+        "document.body.insertAdjacentHTML('beforeend', window.location.hash);",
+        "test_no_other_html_sinks",
+    ),
+    (
+        "style_assignment",
+        "document.documentElement.style = 'display: none';",
+        "test_no_style_property_writes",
+    ),
+    (
+        "style_attribute_set_from_script",
+        "document.documentElement.setAttribute('style', 'display: none');",
+        "test_no_style_property_writes",
+    ),
+    (
+        "inline_handler_in_markup",
+        "var markup = '<img src=x onerror=alert(1)>';",
+        "test_no_inline_event_handlers_in_markup",
+    ),
+    (
+        "script_element_in_markup",
+        "var markup = '<script src=//evil.example/x.js></script>';",
+        "test_no_interpolation_into_script_or_style_elements",
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "name,defect,scanner",
+    THEME_INIT_CONTROLS,
+    ids=[c[0] for c in THEME_INIT_CONTROLS],
+)
+def test_scanner_catches_a_defect_planted_in_theme_init(
+    tmp_path, monkeypatch, name, defect, scanner
+):
+    original = console_script_path
+    planted = tmp_path / "theme-init.js"
+    planted.write_text(
+        original(THEME_INIT_SRC).read_text(encoding="utf-8") + "\n" + defect + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "tests.test_admin_js_escaping.console_script_path",
+        lambda src: planted if src == THEME_INIT_SRC else original(src),
+    )
+
+    with pytest.raises(AssertionError, match="theme-init"):
         globals()[scanner]()

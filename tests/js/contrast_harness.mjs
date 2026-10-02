@@ -9,8 +9,9 @@
  * (reading finds an onclick attribute that looks like working code; it took a
  * real browser to show the policy killed it).
  *
- * This harness serves frontend/public over plain HTTP (no CSP -- that is a
- * different test's job), drives real headless Chrome over the DevTools
+ * This harness serves frontend/public over plain HTTP (no CSP, except on the
+ * admin fixture pages below -- the public site's CSP is a different test's
+ * job), drives real headless Chrome over the DevTools
  * Protocol, and reads `getComputedStyle(...).color` /
  * `...backgroundColor` for the same elements test_contrast.py reasons about
  * statically. Two pages are covered:
@@ -19,14 +20,27 @@
  *     #themeToggle (not by setting the attribute from here) so the real
  *     ThemeManager code path is exercised;
  *   - a synthetic admin fixture: admin.js's own page-renderer functions
- *     (renderLoginPage, renderLayout, renderUsers, renderMirrors), loaded
- *     into a vm context exactly the way tests/js/escaping_harness.mjs does,
- *     called for their real HTML output, and dropped into a page that links
- *     the real admin.css/tokens.css/fonts.css. The admin SPA needs a live
- *     backend to reach these views by clicking through the app; calling the
- *     renderers directly gets the real markup without one, the same
- *     trade-off escaping_harness.mjs already makes. Unchanged by the public
- *     palette switch.
+ *     (renderLoginPage, renderLayout, renderUsers, renderMirrors,
+ *     renderDashboard), loaded into a vm context exactly the way
+ *     tests/js/escaping_harness.mjs does, called for their real HTML output,
+ *     and dropped into a page that links the real admin.css/tokens.css/
+ *     fonts.css. The admin SPA needs a live backend to reach these views by
+ *     clicking through the app; calling the renderers directly gets the real
+ *     markup without one, the same trade-off escaping_harness.mjs already
+ *     makes. The admin console now follows the same saved light/dark choice
+ *     as the public site (spec section 6.2), so this same rendered markup is
+ *     served twice, as two separate documents each with its own <html
+ *     data-surface="admin"> (light) or <html data-theme="dark"
+ *     data-surface="admin"> (dark) -- a real navigation to each, not a class
+ *     toggle on one shared page, since data-theme is an attribute of <html>
+ *     itself. Both pages are served with the Content-Security-Policy that
+ *     nginx/nginx.conf sends (read from that file, not copied), and every
+ *     violation Chrome reports while one loads and is measured is collected
+ *     and returned in the output's "csp" key. A third page, the light fixture
+ *     with one inline style attribute added, is the control: style-src 'self'
+ *     must refuse it, or the collector cannot be trusted to notice anything.
+ *     The fixture pages hold rendered markup and link the real stylesheets, so
+ *     this covers markup, CSS, fonts and mask images; no script runs in them.
  *
  * :hover states (.nav-link:hover, .btn-secondary:hover) are reached with a
  * genuine Input.dispatchMouseEvent mousemove, not a CSS class toggle, so the
@@ -79,7 +93,10 @@
  * checks.
  *
  * Usage:  node contrast_harness.mjs <docroot> <admin-js-path> [chrome-binary]
- * Output: JSON {"public": {...}, "admin": {...}} on stdout.
+ * Output: JSON {"public": {...}, "admin": {...}, "csp": {...}} on stdout. A CSP
+ *         violation is reported there, never a reason to exit non-zero:
+ *         tests/test_contrast.py pins the lists, and its negative controls
+ *         need them returned.
  */
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, readFile as rf } from 'node:fs/promises';
@@ -87,6 +104,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import vm from 'node:vm';
 
 const DOCROOT = path.resolve(process.argv[2]);
@@ -106,6 +124,25 @@ const CHROME_START_TIMEOUT_MS = Number(process.env.CHROME_START_TIMEOUT_MS) > 0
 // The Chrome this run started, so a run that fails can stop it rather than
 // leave it running into whatever runs next.
 let chromeProcess = null;
+
+// The policy the admin fixture pages are served under: the single `map $host
+// $csp_policy` default in nginx/nginx.conf, read here rather than copied, so
+// the pages can never be checked against a policy nobody serves.
+// tests/test_contrast.py compares what this reads with its own reading of the
+// same file. Found relative to this file, not the working directory, because
+// the harness is always run from the repository.
+const NGINX_CONF = fileURLToPath(new URL('../../nginx/nginx.conf', import.meta.url));
+
+function productionCsp() {
+    const conf = readFileSync(NGINX_CONF, 'utf8');
+    const block = conf.match(/map\s+\$host\s+\$csp_policy\s*\{([\s\S]*?)\}/);
+    if (!block) throw new Error(`no \`map $host $csp_policy\` block in ${NGINX_CONF}`);
+    const value = block[1].match(/default\s+"([^"]+)"/);
+    if (!value) throw new Error(`no default value in the $csp_policy map in ${NGINX_CONF}`);
+    return value[1];
+}
+
+const CSP = productionCsp();
 
 const MIME = {
     '.html': 'text/html; charset=utf-8',
@@ -138,7 +175,7 @@ function loadAdminRenderers(sourcePath) {
     };
     sandbox.globalThis = sandbox;
     const epilogue = `
-;({ html, renderLoginPage, renderLayout, renderUsers, renderMirrors, state, api });
+;({ html, renderLoginPage, renderLayout, renderUsers, renderMirrors, renderDashboard, state, api });
 `;
     return vm.runInNewContext(source + epilogue, sandbox, { filename: sourcePath });
 }
@@ -158,20 +195,53 @@ function buildAdminFixtureHtml(mod) {
     const layout = String(mod.renderLayout(mod.html`<p>fixture</p>`, 'Dashboard'));
 
     // Deferred: renderWith is async and buildAdminFixtureHtml is not, so the
-    // two table renders are produced by the caller and passed in instead.
+    // table and dashboard renders are produced by the caller and passed in
+    // instead.
     return { login, layout };
+}
+
+/** One <html>-level page embedding the same five rendered fragments, for a
+ * given theme: data-surface="admin" always; data-theme="light"/"dark" set
+ * explicitly, exactly as AdminTheme.apply() does in the real console (spec
+ * section 6.2) -- tokens.css has no [data-theme="light"] rule, so this
+ * matches the light state whether the attribute is set or left off, and
+ * setting it explicitly is what a real page after a real toggle click
+ * actually carries. */
+function buildAdminFixturePage(theme, fragments) {
+    const { login, layout, usersHtml, mirrorsHtml, dashboardHtml } = fragments;
+    return `<!DOCTYPE html>
+<html data-theme="${theme}" data-surface="admin">
+<head>
+<meta charset="UTF-8">
+<link rel="stylesheet" href="/css/fonts.css">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/admin/css/admin.css">
+</head>
+<body>
+<div id="login-fixture">${login}</div>
+<div id="layout-fixture">${layout}</div>
+<div id="users-fixture">${usersHtml}</div>
+<div id="mirrors-fixture">${mirrorsHtml}</div>
+<div id="dashboard-fixture">${dashboardHtml}</div>
+</body>
+</html>`;
 }
 
 // ---------------------------------------------------------------------------
 // Static + synthetic-fixture server
 // ---------------------------------------------------------------------------
-function serve(fixtureHtml) {
+function serve(fixturePages) {
     return new Promise((resolve) => {
         const server = createServer(async (req, res) => {
             const url = req.url.split('?')[0];
-            if (url === '/__admin_fixture__.html') {
-                res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-                return res.end(fixtureHtml);
+            if (Object.prototype.hasOwnProperty.call(fixturePages, url)) {
+                // Every fixture page is an admin console page: it gets the
+                // header nginx sends. Nothing else this server answers does.
+                res.writeHead(200, {
+                    'Content-Type': 'text/html; charset=utf-8',
+                    'Content-Security-Policy': CSP
+                });
+                return res.end(fixturePages[url]);
             }
             let rel = decodeURIComponent(url);
             if (rel.endsWith('/')) rel += 'index.html';
@@ -230,8 +300,36 @@ class CDP {
         this.pending = new Map();
         this.jsErrors = [];
         this.consoleErrors = [];
+        this.cspViolations = [];
         ws.addEventListener('message', (ev) => {
             const msg = JSON.parse(ev.data);
+            // CSP violations arrive on two DevTools channels, and a violation
+            // normally shows up on both: the Log domain's console message, and
+            // the Audits domain's structured issue (which names the directive).
+            // Either one counts. Both are matched on what they are, not on a
+            // page: takeCspViolations() says which page they belong to.
+            if (msg.method === 'Log.entryAdded') {
+                const entry = msg.params.entry;
+                if (/Content Security Policy/i.test(entry.text || '')) {
+                    this.cspViolations.push({ via: 'log', text: entry.text, url: entry.url || null });
+                }
+                return;
+            }
+            if (msg.method === 'Audits.issueAdded') {
+                const issue = msg.params.issue;
+                if (issue.code === 'ContentSecurityPolicyIssue') {
+                    const d = issue.details.contentSecurityPolicyIssueDetails || {};
+                    this.cspViolations.push({
+                        via: 'audits',
+                        directive: d.violatedDirective || null,
+                        type: d.contentSecurityPolicyViolationType || null,
+                        blockedUrl: d.blockedURL || null,
+                        reportOnly: Boolean(d.isReportOnly),
+                        url: d.sourceCodeLocation ? d.sourceCodeLocation.url : null
+                    });
+                }
+                return;
+            }
             if (msg.method === 'Runtime.exceptionThrown') {
                 const d = msg.params.exceptionDetails;
                 const detail = d.exception?.description || d.exception?.value || d.text || JSON.stringify(d);
@@ -264,6 +362,16 @@ class CDP {
         this.ws.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }));
         return new Promise((resolve, reject) => this.pending.set(id, { resolve, reject }));
     }
+
+    /** Every CSP violation reported since the last call, and forgets them.
+     *  Called before a page's navigation (so an earlier page's never counts
+     *  against it) and after its last measurement (so a late one, such as a
+     *  font fetched after layout, is still its own). */
+    takeCspViolations() {
+        const taken = this.cspViolations;
+        this.cspViolations = [];
+        return taken;
+    }
 }
 
 /** Throws, naming every collected error, if the public page misbehaved at
@@ -295,7 +403,11 @@ async function launchChrome() {
         '--remote-debugging-port=0',
         `--user-data-dir=${userDataDir}`,
         '--no-first-run', '--no-default-browser-check',
-        '--disable-gpu', '--disable-extensions', '--mute-audio'
+        '--disable-gpu', '--disable-extensions', '--mute-audio',
+        // Nothing but this harness's own 127.0.0.1 server should be contacted:
+        // CI runs this on a bare runner, where Chrome would otherwise reach out
+        // for variations, safe browsing and component updates as well.
+        '--disable-background-networking', '--disable-component-update'
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     chromeProcess = chrome;
 
@@ -360,6 +472,11 @@ async function launchChrome() {
     }, sessionId);
     await cdp.send('Page.enable', {}, sessionId);
     await cdp.send('Runtime.enable', {}, sessionId);
+    // Both domains replay what they already hold when enabled, and report new
+    // entries as they happen: the CSP collector (see class CDP) needs them on
+    // before the first navigation.
+    await cdp.send('Log.enable', {}, sessionId);
+    await cdp.send('Audits.enable', {}, sessionId);
     return { chrome, cdp, sessionId };
 }
 
@@ -570,9 +687,15 @@ const PUBLIC_PROBES = [
     { id: '.status-dot', selector: '#overallStatus .status-dot', bgSelector: '#overallStatus', dot: true, setState: { selector: '#overallStatus', value: 'disabled' } }
 ];
 
+// Measured once per admin theme (see buildAdminFixturePage() and main()): the
+// fixture markup itself does not depend on theme, only which stylesheet
+// cascade layer <html>'s data-theme selects. The three job-status/meter/
+// toggle entries are what the Reflection redesign added to the console (spec
+// sections 4.8 and 6.2); the rest predate it.
 const ADMIN_PROBES = [
     { id: '.login-subtitle', selector: '#login-fixture .login-subtitle', bgSelector: '#login-fixture .login-card' },
     { id: '.btn-primary', selector: '#login-fixture .btn-primary', bgSelector: '#login-fixture .btn-primary' },
+    { id: '.theme-toggle', selector: '#layout-fixture .theme-toggle', bgSelector: '#layout-fixture .theme-toggle' },
     { id: '.nav-item.active', selector: '#layout-fixture .nav-item.active', bgSelector: '#layout-fixture .nav-item.active' },
     { id: '.user-avatar', selector: '#layout-fixture .user-avatar', bgSelector: '#layout-fixture .user-avatar' },
     { id: '.user-role', selector: '#layout-fixture .user-role', bgSelector: '#layout-fixture .user-info' },
@@ -582,7 +705,16 @@ const ADMIN_PROBES = [
     { id: 'th', selector: '#users-fixture th', bgSelector: '#users-fixture th' },
     { id: '.u-text-muted', selector: '#mirrors-fixture .u-text-muted', bgSelector: '#mirrors-fixture .card' },
     { id: '.status-badge.error', selector: '#mirrors-fixture .status-badge.error', bgSelector: '#mirrors-fixture .status-badge.error' },
-    { id: '.status-badge.syncing', selector: '#mirrors-fixture .status-badge.syncing', bgSelector: '#mirrors-fixture .status-badge.syncing' }
+    { id: '.status-badge.syncing', selector: '#mirrors-fixture .status-badge.syncing', bgSelector: '#mirrors-fixture .status-badge.syncing' },
+    // Recent Sync Jobs' job-status pill (dashboard-fixture is seeded with one
+    // completed job, spec 4.8's pill mapping) and the disk meter's own fill,
+    // seeded at 91% so it renders in its is-warn band (DISK_USAGE_WARNING_
+    // PERCENT/_CRITICAL_PERCENT; the .meter-fill on .meter pairing is a UI
+    // indicator, 3:1, not text -- see measureDot()'s reasoning; this one still
+    // has real text content, so the plain (element, property) measure() shape
+    // fits, unlike .status-dot).
+    { id: '.status-badge.completed', selector: '#dashboard-fixture .status-badge.completed', bgSelector: '#dashboard-fixture .status-badge.completed' },
+    { id: '.meter-fill.is-warn', selector: '#dashboard-fixture .meter-fill.is-warn', bgSelector: '#dashboard-fixture .meter', dot: true }
 ];
 
 /** ::placeholder is a pseudo-element, not reachable through the plain
@@ -652,29 +784,42 @@ async function main() {
             total_size_human: '2 GB', last_sync_completed: null
         }
     ]);
+    // A completed job (the pill probe) and 91% storage (the meter's is-warn
+    // band, DISK_USAGE_WARNING_PERCENT/_CRITICAL_PERCENT) in one render.
+    const dashboardHtml = await renderWith(mod, mod.renderDashboard, {
+        mirrors: { total: 3, active: 2, syncing: 1, error: 0, total_size_bytes: 0 },
+        users: { total: 2 },
+        storage: { path: '/data/mirrors', total_bytes: 1000, used_bytes: 910, free_bytes: 90, percent_used: 91 },
+        recent_syncs: [
+            { id: 1, mirror_id: 1, status: 'completed', files_deleted: 0, created_at: new Date().toISOString() }
+        ],
+        recent_activity: []
+    });
 
-    const fixtureHtml = `<!DOCTYPE html>
-<html data-theme="dark" data-surface="admin">
-<head>
-<meta charset="UTF-8">
-<link rel="stylesheet" href="/css/fonts.css">
-<link rel="stylesheet" href="/css/tokens.css">
-<link rel="stylesheet" href="/admin/css/admin.css">
-</head>
-<body>
-<div id="login-fixture">${login}</div>
-<div id="layout-fixture">${layout}</div>
-<div id="users-fixture">${usersHtml}</div>
-<div id="mirrors-fixture">${mirrorsHtml}</div>
-</body>
-</html>`;
+    const fragments = { login, layout, usersHtml, mirrorsHtml, dashboardHtml };
+    const lightPage = buildAdminFixturePage('light', fragments);
+    // The CSP control: the light page with one inline style attribute on
+    // <body>. Under style-src 'self' Chrome must refuse it and say so.
+    const controlPage = lightPage.replace('<body>', '<body style="color: red">');
+    if (controlPage === lightPage) {
+        throw new Error('the CSP control page could not be built: the fixture page has no <body>');
+    }
+    const fixturePages = {
+        '/__admin_fixture_light__.html': lightPage,
+        '/__admin_fixture_dark__.html': buildAdminFixturePage('dark', fragments),
+        '/__admin_fixture_csp_control__.html': controlPage
+    };
 
-    const { server, port } = await serve(fixtureHtml);
+    const { server, port } = await serve(fixturePages);
     const origin = `http://127.0.0.1:${port}`;
     const { chrome, cdp, sessionId } = await launchChrome();
     const evaluate = makeEvaluate(cdp, sessionId);
 
-    const out = { public: { light: {}, dark: {} }, admin: {} };
+    const out = {
+        public: { light: {}, dark: {} },
+        admin: { light: {}, dark: {} },
+        csp: { policy: CSP, admin: { light: [], dark: [] }, controls: { inlineStyleAttribute: [] } }
+    };
 
     await navigate(cdp, sessionId, `${origin}/index.html`);
     const initialTheme = await evaluate('document.documentElement.getAttribute("data-theme")');
@@ -716,13 +861,38 @@ async function main() {
     }
     out.public.dark = await measurePublicProbes(cdp, sessionId, evaluate);
 
-    await navigate(cdp, sessionId, `${origin}/__admin_fixture__.html`);
-    for (const probe of ADMIN_PROBES) {
-        out.admin[probe.id] = await measure(cdp, sessionId, evaluate, probe);
+    // The admin console now follows the same saved light/dark choice as the
+    // public site (spec section 6.2): each theme's fixture is its own
+    // document (data-theme lives on <html>, not on a sub-tree), so every
+    // ADMIN_PROBES entry is measured once per real navigation, not once per
+    // page. checkForPageErrors() runs once at the end of main(), after both.
+    //
+    // Each page is served under the production CSP (see serve()), and the
+    // violations Chrome reports for it are collected into out.csp: those from
+    // before its navigation are dropped, those from after its last measurement
+    // are its own, so a font or mask image fetched late still counts.
+    for (const theme of ['light', 'dark']) {
+        cdp.takeCspViolations();
+        await navigate(cdp, sessionId, `${origin}/__admin_fixture_${theme}__.html`);
+        const admin_theme = await evaluate('document.documentElement.getAttribute("data-theme")');
+        if (admin_theme !== theme) {
+            throw new Error(`admin fixture (${theme}) did not carry data-theme=${theme} (got ${admin_theme})`);
+        }
+        for (const probe of ADMIN_PROBES) {
+            out.admin[theme][probe.id] = await measureProbe(cdp, sessionId, evaluate, probe);
+        }
+        out.admin[theme]['.form-input::placeholder'] = await measurePlaceholder(
+            evaluate, '#login-fixture .form-input', '#login-fixture .form-input'
+        );
+        out.csp.admin[theme] = cdp.takeCspViolations();
     }
-    out.admin['.form-input::placeholder'] = await measurePlaceholder(
-        evaluate, '#login-fixture .form-input', '#login-fixture .form-input'
-    );
+
+    // The control, in the same Chrome session: the collector has to hear about
+    // an inline style attribute here, or its silence above means nothing.
+    cdp.takeCspViolations();
+    await navigate(cdp, sessionId, `${origin}/__admin_fixture_csp_control__.html`);
+    await sleep(300);
+    out.csp.controls.inlineStyleAttribute = cdp.takeCspViolations();
 
     checkForPageErrors(cdp);
 

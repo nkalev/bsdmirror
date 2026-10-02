@@ -1,7 +1,7 @@
 # Self-hosted web fonts
 
-Inter, JetBrains Mono, Instrument Sans and Unbounded, vendored so the site
-loads no fonts from a third party. This is what allows nginx to serve a
+JetBrains Mono, Instrument Sans and Unbounded, vendored so the site loads no
+fonts from a third party. This is what allows nginx to serve a
 `font-src 'self'` CSP without losing the site's typography; before this, both
 stylesheets `@import`ed `fonts.googleapis.com` and the admin panel `<link>`ed
 it a second time.
@@ -12,11 +12,11 @@ The `@font-face` declarations that use these files live in
 
 ## Provenance
 
-Inter and JetBrains Mono were retrieved 2026-08-30 from Google Fonts, which is
-the same source the site used before, so the bytes are the ones production was
-already serving:
+JetBrains Mono was retrieved 2026-08-30 from Google Fonts, which is the same
+source the site used before, so the bytes are the ones production was already
+serving:
 
-    https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap
+    https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap
 
 Instrument Sans and Unbounded were retrieved 2026-09-26 for the Reflection
 redesign (`docs/design/2026-09-25-reflection-redesign.md`), from:
@@ -34,20 +34,18 @@ other modification was performed.
 
 | Family | Version | Axes | Weights used by this site |
 |---|---|---|---|
-| Inter | 4.001 (git-66647c0bb) | `wght` 100-900 (variable) | 300, 400, 500, 600, 700 |
 | JetBrains Mono | 2.211 | `wght` 400-800 (variable) | 400, 500 |
 | Instrument Sans | 1.000 (gftools[0.9.28]) | `wght` 400-700 (variable) | 400, 500, 600 |
 | Unbounded | 1.701 (gftools[0.9.28.dev5+ged2979d]) | `wght` 200-900 (variable) | 600, 700 |
 
-All four are **variable** fonts: one file per subset covers every weight. The
+All three are **variable** fonts: one file per subset covers every weight. The
 per-weight `@font-face` blocks in `fonts.css` all point at the same file.
 
 ## Licensing
 
-All four families are under the SIL Open Font License 1.1, which permits
+All three families are under the SIL Open Font License 1.1, which permits
 redistribution provided the license travels with the fonts:
 
-* `LICENSE-Inter.txt` - from https://github.com/rsms/inter (`LICENSE.txt`)
 * `LICENSE-JetBrainsMono.txt` - from https://github.com/JetBrains/JetBrainsMono (`OFL.txt`)
 * `LICENSE-InstrumentSans.txt` - from https://github.com/google/fonts at commit 23e54b51ddffbc7713c583748e3bd86f62b1fa4a (`ofl/instrumentsans/OFL.txt`)
 * `LICENSE-Unbounded.txt` - from https://github.com/google/fonts at commit 23e54b51ddffbc7713c583748e3bd86f62b1fa4a (`ofl/unbounded/OFL.txt`)
@@ -55,7 +53,7 @@ redistribution provided the license travels with the fonts:
 No family's copyright line declares a **Reserved Font Name**, so Google's
 subset builds may keep their names, and we may redistribute them under those
 names. The license URL embedded in each binary's name table (ID 14) confirms
-OFL for all four.
+OFL for all three.
 
 ## Caching caveat
 
@@ -69,7 +67,7 @@ replace a file in place: if a font ever needs to change, give it a new filename
 ## Regenerating
 
     curl -A "<current desktop Chrome UA>" \
-      "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      "https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap"
 
     curl -A "<current desktop Chrome UA>" \
       "https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Unbounded:wght@600;700&display=swap"
@@ -87,13 +85,6 @@ returned CSS should be altered. List every new file's checksum below.
 ```
 21fac8da552a915e7a9fb84c5afaeb85d35507b2616346d592e78128c1cfe3e0  instrument-sans-latin-ext.woff2
 6219bc4bfdfc5d9b2201dcdf046218b122a758f932e25ed5f168f929b7ca2311  instrument-sans-latin.woff2
-fccca918fea40089dacadc7045861314d1a6bc91f1f323cc1eeb22ebcdb321b5  inter-cyrillic-ext.woff2
-aebf2ab4a4ce6810d73c1ac7be7cafb4e5ec4cee2d6db5fb3e09691747ec4bd6  inter-cyrillic.woff2
-a2e2c783ca6f9c20486e81e72a279203e86730bbf8f01ff6a5ee9dbd09e1c271  inter-greek-ext.woff2
-46dd4cdca58c26ae87cc6927657bf83b2e8abfc39ffd0ab176e301a8d28d22bf  inter-greek.woff2
-a28eb6d3ccb534ae0c94ca999371df024aab60b08c3c8a5720ee9e32fa0faaa2  inter-latin-ext.woff2
-c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4  inter-latin.woff2
-8db00ff46c67b22cda8bed865acf7077651cac8d2841d5b40980556b48961931  inter-vietnamese.woff2
 9343de2ca5d9549f792e7962375af8efb0f320c7643bfd36c884b5a30e5c396f  jetbrains-mono-cyrillic-ext.woff2
 4995a9a43ac659ec32fcd8b463755cd6a07b31a6e6b3894a6a153b661cf490e2  jetbrains-mono-cyrillic.woff2
 49c3da6c9a2b279b0f1f860f5cfb1f5dc38d88a5c7be9c9b1837bbc4e3db6111  jetbrains-mono-greek.woff2

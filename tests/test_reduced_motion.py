@@ -7,23 +7,20 @@ actually animates is what lets one `*, *::before, *::after { transition: none
 !important }` turn all of them off at once, and lets a reviewer see, from the
 rule itself, exactly what moves.
 
-Scope: style.css (spec sections 4.2-4.4) and error.css. A sheet needs its own
-`@media (prefers-reduced-motion: reduce)` block as soon as it declares any
-motion at all: a `@keyframes` rule, or any `transition` or `animation` other
-than `none`. A colour fade counts -- spec section 4.4 turns "every animation
-and transition" off -- so error.css's theme fade needs the block as much as
-style.css's sheen does.
+Scope: style.css (spec sections 4.2-4.4), error.css and admin.css (spec
+section 6.1). A sheet needs its own `@media (prefers-reduced-motion: reduce)`
+block as soon as it declares any motion at all: a `@keyframes` rule, or any
+`transition` or `animation` other than `none`. A colour fade counts -- spec
+section 4.4 turns "every animation and transition" off -- so error.css's
+theme fade needs the block as much as style.css's sheen does, and admin.css's
+four animations (`spin`, `slideIn`, `pill-ring`, `toast-out`) need it as much
+as either.
 
 Colour changes must also settle inside the contrast harness's sampling
 windows (spec section 4.4): a `color`, `background`, `background-color`,
 `border-color`, `fill`, `stroke` or `outline-color` transition runs on
 `--transition-fast` or `--transition-base`, never longer. Transforms and
 shadows may take longer; the harness never measures them.
-
-admin.css still has two real animations (`spin`, `slideIn`) and is
-deliberately out of scope until the admin console's own redesign (spec
-section 10: "PR 3 extends it to admin.css, whose spin and slideIn animations
-stay until then").
 """
 import pathlib
 import re
@@ -31,7 +28,8 @@ import re
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 STYLE_CSS = REPO_ROOT / "frontend" / "public" / "css" / "style.css"
 ERROR_CSS = REPO_ROOT / "frontend" / "public" / "css" / "error.css"
-STYLESHEETS = [STYLE_CSS, ERROR_CSS]
+ADMIN_CSS = REPO_ROOT / "frontend" / "public" / "admin" / "css" / "admin.css"
+STYLESHEETS = [STYLE_CSS, ERROR_CSS, ADMIN_CSS]
 
 # `all` as a whole word inside a transition/animation shorthand's value list
 # -- catches `transition: all 150ms ease` and `transition: color .2s, all
@@ -226,7 +224,8 @@ def test_the_duration_check_can_actually_find_a_slow_colour_transition():
     assert not slow_colour_transitions("* { transition: none !important; }")
 
 
-def test_the_checks_cover_style_css_and_error_css():
-    """The checks above loop over STYLESHEETS; this pins that list to both
-    files, so a typo in it cannot silently shrink every check to one."""
-    assert {p.name for p in STYLESHEETS} == {"style.css", "error.css"}
+def test_the_checks_cover_style_css_error_css_and_admin_css():
+    """The checks above loop over STYLESHEETS; this pins that list to all
+    three files, so a typo in it cannot silently shrink every check to
+    fewer."""
+    assert {p.name for p in STYLESHEETS} == {"style.css", "error.css", "admin.css"}

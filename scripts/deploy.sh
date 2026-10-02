@@ -1766,7 +1766,12 @@ verify_security_headers() {
         hdrs=$(tr -d '\r' <"$dir/$i" | tr '[:upper:]' '[:lower:]')
         missing=""
         for h in "${want[@]}"; do
-            printf '%s\n' "$hdrs" | grep -q "^$h:" || missing="$missing $h"
+            # A here-string, not `printf ... | grep -q`. grep -q exits at its
+            # first match; under `set -o pipefail` a printf still writing the
+            # rest then dies of SIGPIPE and fails the pipeline, so a header
+            # that is there was reported missing, about once in 50,000 checks
+            # under load (PIPESTATUS 141 0).
+            grep -q "^$h:" <<<"$hdrs" || missing="$missing $h"
         done
         if [ -n "$missing" ]; then
             printf '  %-32s %-5s %sMISSING:%s%s\n' "$path" "$code" "$C_RED" "$C_OFF" "$missing"
@@ -1896,7 +1901,7 @@ verify_cache_headers() {
     local immutable=/fonts/jetbrains-mono-latin.woff2
     # What a browser requests to show the console once its fonts and images
     # are cached; they are immutable, so a reload does not ask for them again.
-    local -a console=(/admin/ /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
+    local -a console=(/admin/ /js/theme-init.js /css/fonts.css /css/tokens.css /admin/css/admin.css /admin/js/admin.js)
     local path code values opts round dump fails=0
     dump=$(mktemp)
 

@@ -20,6 +20,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 PUBLIC = REPO_ROOT / "frontend" / "public"
 IMG = PUBLIC / "img"
 ICONS = IMG / "icons"
+ADMIN_JS = PUBLIC / "admin" / "js" / "admin.js"
+INDEX_HTML = PUBLIC / "index.html"
 SVG_NS = "{http://www.w3.org/2000/svg}"
 URL_REFERENCE = re.compile(r"""url\(\s*['"]?([^'")\s]*)""", re.I)
 # Any <?...?> but the XML declaration. ElementTree drops these while parsing,
@@ -52,6 +54,17 @@ ICON_NAMES = {
     "check",
     "close",
     "info",
+    "warning",
+    "clock",
+    "disk",
+    "log-out",
+    "plus",
+    "edit",
+    "trash",
+    "user",
+    "lock",
+    "unlock",
+    "skip",
 }
 ICON_STROKE = {
     "viewBox": "0 0 24 24",
@@ -148,10 +161,13 @@ def test_every_svg_here_is_inert(path):
     assert_inert(path, svg_root(path))
 
 
-def test_the_icon_set_is_the_fifteen_the_design_names():
-    assert {path.stem for path in ICONS.glob("*.svg")} == ICON_NAMES
+def test_the_icon_set_is_exactly_the_names_the_design_lists():
+    on_disk = {path.stem for path in ICONS.glob("*.svg")}
+    assert (
+        on_disk == ICON_NAMES
+    ), f"icons/*.svg must match ICON_NAMES exactly; missing {sorted(ICON_NAMES - on_disk)}, extra {sorted(on_disk - ICON_NAMES)}"
     others = [p.name for p in ICONS.iterdir() if p.suffix != ".svg" and not p.name.startswith(".")]
-    assert others == []
+    assert others == [], f"non-svg files in icons/: {others}"
 
 
 @pytest.mark.parametrize("name", sorted(ICON_NAMES))
@@ -164,6 +180,42 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
         if element is not root:
             overridden = {"fill", "stroke", *ICON_STROKE} & set(element.attrib)
             assert not overridden, f"{name}.svg: <{element.tag}> sets {sorted(overridden)}"
+
+
+def test_every_icon_name_has_a_consumer():
+    """Every file under img/icons/ must be named by admin.js or index.html
+    (spec 4.7's set is exactly what the console and the public page consume,
+    no more). Eight names -- icon-sun, icon-moon, icon-info, icon-unlock,
+    icon-lock, icon-user, icon-edit, icon-trash -- reach the page only through
+    a ternary or a lookup table (renderThemeToggle(), Toast.show(),
+    getActivityIcon()): admin.js still writes their class string as literal
+    text there ('icon-user', never `icon-${name}`), so a text search finds
+    them without executing the file.
+
+    The search is bounded at the end of the name. A bare substring search let
+    `icon-user` be found inside `icon-users` and `icon-sync` inside
+    `icon-sync-failures`, so removing the only consumer of the shorter name
+    left this test green."""
+    corpus = ADMIN_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")
+    missing = sorted(
+        name for name in ICON_NAMES if not re.search(rf"icon-{re.escape(name)}(?![\w-])", corpus)
+    )
+    assert not missing, f"no admin.js/index.html reference to icon-{{{','.join(missing)}}}"
+
+
+def test_every_icon_class_named_in_admin_js_or_index_html_is_a_real_icon():
+    """The converse of the check above: a class naming a file that does not
+    exist under img/icons/ renders an empty mask silently -- a missing
+    mask-image paints nothing, not a broken-image glyph, so nobody would
+    notice without this. Excludes .icon-btn (index.html): an unrelated,
+    pre-existing button class that happens to start with "icon-" too, always
+    its own first class token (class="icon-btn ..."), never preceded by a
+    separate "icon" class the way every real mask reference (class="icon
+    icon-NAME", or a bare 'icon-NAME' lookup-table literal) is."""
+    corpus = ADMIN_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")
+    used = {m.group(1) for m in re.finditer(r'(?<!class=")icon-([a-z][a-z-]*)', corpus)}
+    unknown = sorted(used - ICON_NAMES)
+    assert not unknown, f"icon-NAME(s) with no file under img/icons/: {unknown}"
 
 
 def test_mark_glyph_is_the_regular_b_and_its_mirror_image():
@@ -365,14 +417,25 @@ FAVICON_LINKS = [
 ICON_RELS = {"icon", "apple-touch-icon", "apple-touch-icon-precomposed"}
 
 
-class LinkCollector(HTMLParser):
+class HeadLinkCollector(HTMLParser):  # direct children of <head> only
     def __init__(self):
         super().__init__()
-        self.links = []
+        self.links, self.open = [], []
 
     def handle_starttag(self, tag, attrs):
-        if tag == "link":
-            self.links.append(dict(attrs))
+        if tag == "head":
+            self.open = ["head"]
+        elif self.open:
+            if tag == "link" and self.open == ["head"]:
+                self.links.append(dict(attrs))
+            elif tag not in ("link", "meta", "base"):
+                self.open.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag == "head":
+            self.open = []
+        elif self.open and self.open[-1] == tag:
+            self.open.pop()
 
 
 def test_pages_lists_every_html_page():
@@ -381,7 +444,7 @@ def test_pages_lists_every_html_page():
 
 @pytest.mark.parametrize("page", PAGES, ids=rel)
 def test_every_page_links_the_favicon_set(page):
-    collector = LinkCollector()
+    collector = HeadLinkCollector()
     collector.feed(page.read_text(encoding="utf-8"))
     icons = [
         link for link in collector.links if ICON_RELS & set((link.get("rel") or "").lower().split())
@@ -389,3 +452,26 @@ def test_every_page_links_the_favicon_set(page):
     assert icons == FAVICON_LINKS
     for link in icons:
         assert (PUBLIC / link["href"].lstrip("/")).is_file(), f"{link['href']} does not exist"
+
+
+def test_head_link_collector_ignores_links_outside_head_and_inside_noscript():
+    """Characterises the bug this collector exists to fix: a <link> is only
+    meaningful as a direct child of <head>. One inside <body> is inert, and
+    one inside a <head><noscript> only applies with JavaScript disabled --
+    admin.js and main.js both require it, so that copy never actually
+    applies either. A <link> placed between </head> and <body> is not
+    collected here either, even though a browser's forgiving parser still
+    relocates it into <head> and honours it there: a real page shaped that
+    way fails test_every_page_links_the_favicon_set, and the fix is to move
+    the link, not to loosen this collector. The old, unscoped collector
+    counted the first two as real."""
+    page = (
+        "<html><head>"
+        '<noscript><link rel="icon" href="/noscript-favicon.ico"></noscript>'
+        "</head><body>"
+        '<link rel="icon" href="/body-favicon.ico">'
+        "</body></html>"
+    )
+    collector = HeadLinkCollector()
+    collector.feed(page)
+    assert collector.links == [], f"expected no links collected, got {collector.links}"

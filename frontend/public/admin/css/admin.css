@@ -1,12 +1,22 @@
-/* BSD Mirror Admin Panel - Styles */
-/* BSD-themed dark palette: Orange / Red / Dark Navy */
+/* BSD Mirror Admin Panel - Styles ("Reflection") */
 /* Design tokens live in /css/tokens.css, linked ahead of this file in admin/index.html.
-   The admin surface is dark-only: <html> carries data-theme="dark" data-surface="admin",
-   which selects the shared dark theme plus the admin-specific overrides.
-   Do not declare custom properties here.
-   Web fonts are self-hosted in /css/fonts.css, also linked ahead of this file. */
+   The admin console now follows the same saved light/dark choice as the public
+   site (docs/design/2026-09-25-reflection-redesign.md, section 6.2): <html>
+   carries data-surface="admin" plus whatever data-theme js/theme-init.js and
+   the .theme-toggle button leave it in. Every colour below is a shared
+   --bg-*, --text-*, --accent-*, --border-*, --status-*, --stream-* token,
+   resolved through tokens.css's light or dark layer -- this file declares no custom
+   property and no colour literal of its own, with the one standing exception
+   tokens.css documents: rgba() reached only through --shadow-card,
+   --shadow-card-hover and --scrim.
+   Web fonts are self-hosted in /css/fonts.css, also linked ahead of this file.
+   See spec sections 4.1-4.8, 6.1, 6.2 and 9 for the system this file
+   implements; tests/test_contrast.py checks the pairs it names in both
+   themes. */
 
-/* Reset */
+/* ===========================================================================
+   Reset
+   =========================================================================== */
 *,
 *::before,
 *::after {
@@ -25,9 +35,12 @@ body {
     background-color: var(--bg-primary);
     color: var(--text-primary);
     line-height: 1.5;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-/* Loading Screen */
+/* ===========================================================================
+   Loading screen (index.html's pre-render placeholder)
+   =========================================================================== */
 .loading-screen {
     display: flex;
     flex-direction: column;
@@ -35,12 +48,13 @@ body {
     justify-content: center;
     height: 100vh;
     gap: 16px;
+    color: var(--text-secondary);
 }
 
 .loading-spinner {
     width: 40px;
     height: 40px;
-    border: 3px solid var(--bg-tertiary);
+    border: 3px solid var(--border-color);
     border-top-color: var(--accent-primary);
     border-radius: 50%;
     animation: spin 1s linear infinite;
@@ -52,149 +66,364 @@ body {
     }
 }
 
-/* App Layout */
+/* ===========================================================================
+   Icons (spec 4.7) -- the .icon longhand copied from css/style.css:72-85.
+   admin.css does not load style.css, so it repeats the rule with the same
+   absolute /img/icons/ URLs, which resolve against the document, not this
+   sheet. admin.css defines the 24 icons the console names: one .icon-NAME
+   rule per icon admin.js or admin/index.html actually renders, no more --
+   icon-copy and icon-arrow-right are the public site's own, defined only in
+   style.css, since nothing in the console ever renders either one.
+   =========================================================================== */
+.icon {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    background-color: currentColor;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+.icon-dashboard {
+    -webkit-mask-image: url(/img/icons/dashboard.svg);
+    mask-image: url(/img/icons/dashboard.svg);
+}
+
+.icon-mirrors {
+    -webkit-mask-image: url(/img/icons/mirrors.svg);
+    mask-image: url(/img/icons/mirrors.svg);
+}
+
+.icon-sync-failures {
+    -webkit-mask-image: url(/img/icons/sync-failures.svg);
+    mask-image: url(/img/icons/sync-failures.svg);
+}
+
+.icon-protected-paths {
+    -webkit-mask-image: url(/img/icons/protected-paths.svg);
+    mask-image: url(/img/icons/protected-paths.svg);
+}
+
+.icon-users {
+    -webkit-mask-image: url(/img/icons/users.svg);
+    mask-image: url(/img/icons/users.svg);
+}
+
+.icon-audit-logs {
+    -webkit-mask-image: url(/img/icons/audit-logs.svg);
+    mask-image: url(/img/icons/audit-logs.svg);
+}
+
+.icon-settings {
+    -webkit-mask-image: url(/img/icons/settings.svg);
+    mask-image: url(/img/icons/settings.svg);
+}
+
+.icon-sun {
+    -webkit-mask-image: url(/img/icons/sun.svg);
+    mask-image: url(/img/icons/sun.svg);
+}
+
+.icon-moon {
+    -webkit-mask-image: url(/img/icons/moon.svg);
+    mask-image: url(/img/icons/moon.svg);
+}
+
+.icon-sync {
+    -webkit-mask-image: url(/img/icons/sync.svg);
+    mask-image: url(/img/icons/sync.svg);
+}
+
+.icon-check {
+    -webkit-mask-image: url(/img/icons/check.svg);
+    mask-image: url(/img/icons/check.svg);
+}
+
+.icon-close {
+    -webkit-mask-image: url(/img/icons/close.svg);
+    mask-image: url(/img/icons/close.svg);
+}
+
+.icon-info {
+    -webkit-mask-image: url(/img/icons/info.svg);
+    mask-image: url(/img/icons/info.svg);
+}
+
+.icon-warning {
+    -webkit-mask-image: url(/img/icons/warning.svg);
+    mask-image: url(/img/icons/warning.svg);
+}
+
+.icon-clock {
+    -webkit-mask-image: url(/img/icons/clock.svg);
+    mask-image: url(/img/icons/clock.svg);
+}
+
+.icon-disk {
+    -webkit-mask-image: url(/img/icons/disk.svg);
+    mask-image: url(/img/icons/disk.svg);
+}
+
+.icon-log-out {
+    -webkit-mask-image: url(/img/icons/log-out.svg);
+    mask-image: url(/img/icons/log-out.svg);
+}
+
+.icon-plus {
+    -webkit-mask-image: url(/img/icons/plus.svg);
+    mask-image: url(/img/icons/plus.svg);
+}
+
+.icon-edit {
+    -webkit-mask-image: url(/img/icons/edit.svg);
+    mask-image: url(/img/icons/edit.svg);
+}
+
+.icon-trash {
+    -webkit-mask-image: url(/img/icons/trash.svg);
+    mask-image: url(/img/icons/trash.svg);
+}
+
+.icon-user {
+    -webkit-mask-image: url(/img/icons/user.svg);
+    mask-image: url(/img/icons/user.svg);
+}
+
+.icon-lock {
+    -webkit-mask-image: url(/img/icons/lock.svg);
+    mask-image: url(/img/icons/lock.svg);
+}
+
+.icon-unlock {
+    -webkit-mask-image: url(/img/icons/unlock.svg);
+    mask-image: url(/img/icons/unlock.svg);
+}
+
+.icon-skip {
+    -webkit-mask-image: url(/img/icons/skip.svg);
+    mask-image: url(/img/icons/skip.svg);
+}
+
+/* ===========================================================================
+   The b|d mark (spec 4.5, 6.1) -- two stacked CSS masks, not the public
+   page's inline <symbol>/<use> (constraint 2: no <svg> in admin markup).
+   .mark-glyph takes --text-primary, .mark-axis takes --accent-primary, sized
+   by their .mark parent: 28px in the sidebar, 48px on the login card.
+   =========================================================================== */
+.mark {
+    position: relative;
+    display: inline-block;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+}
+
+.mark-glyph,
+.mark-axis {
+    position: absolute;
+    inset: 0;
+    display: block;
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+.mark-glyph {
+    background-color: var(--text-primary);
+    -webkit-mask-image: url(/img/mark-glyph.svg);
+    mask-image: url(/img/mark-glyph.svg);
+}
+
+.mark-axis {
+    background-color: var(--accent-primary);
+    -webkit-mask-image: url(/img/mark-axis.svg);
+    mask-image: url(/img/mark-axis.svg);
+}
+
+/* ===========================================================================
+   App shell (spec 6.1)
+   =========================================================================== */
 .app-layout {
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
     min-height: 100vh;
 }
 
-/* Sidebar */
 .sidebar {
-    width: var(--sidebar-width);
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border-color);
-    display: flex;
-    flex-direction: column;
-    position: fixed;
+    position: sticky;
+    top: 0;
     height: 100vh;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 16px 12px;
+    background: var(--bg-card);
+    border-right: 1px solid var(--border-color);
 }
 
 .sidebar-header {
-    padding: 20px;
-    border-bottom: 1px solid var(--border-color);
+    padding: 4px 8px 12px;
 }
 
 .sidebar-logo {
     display: flex;
     align-items: center;
-    gap: 12px;
-    font-size: 1.25rem;
-    font-weight: 600;
+    gap: 10px;
 }
 
-.sidebar-logo-icon {
-    font-size: 1.5rem;
+.wordmark {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
+    white-space: nowrap;
 }
 
 .sidebar-nav {
     flex: 1;
-    padding: 16px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
 }
 
 .nav-section {
-    margin-bottom: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.nav-section + .nav-section {
+    margin-top: 12px;
 }
 
 .nav-section-title {
-    font-size: 0.75rem;
+    padding: 8px 10px 4px;
+    font-size: 11px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: var(--text-muted);
-    padding: 0 12px 8px;
 }
 
 .nav-item {
+    position: relative;
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
+    gap: 10px;
+    padding: 8px 10px;
     border-radius: var(--radius-md);
     color: var(--text-secondary);
     text-decoration: none;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    margin-bottom: 4px;
+    font-size: 13.5px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .nav-item:hover {
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
     color: var(--text-primary);
 }
 
 .nav-item.active {
-    background: var(--accent-primary);
-    /* text-on-accent, not white: white on accent-primary is 2.44:1 here
-       (admin is always dark theme, where accent-primary is the lighter
-       orange-500). See the token's definition in tokens.css. */
-    color: var(--text-on-accent);
+    background: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
-.nav-item-icon {
-    width: 20px;
-    text-align: center;
+/* Echoes the mark's own axis (spec 6.1): a 3px accent bar flush with the
+   sidebar's true left edge, reaching past the nav item's own inset the same
+   way the sidebar's own padding (12px) sets it back. */
+.nav-item.active::before {
+    content: '';
+    position: absolute;
+    left: -12px;
+    top: 6px;
+    bottom: 6px;
+    width: 3px;
+    border-radius: 0 3px 3px 0;
+    background: var(--accent-primary);
 }
 
 .sidebar-footer {
-    padding: 16px;
+    margin-top: auto;
+    padding-top: 12px;
     border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
 }
 
 .user-info {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px;
+    gap: 10px;
+    padding: 6px;
     border-radius: var(--radius-md);
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
 }
 
 .user-avatar {
-    width: 36px;
-    height: 36px;
+    width: 32px;
+    height: 32px;
     border-radius: 50%;
-    /* Solid accent-primary and text-on-accent, not the gradient and white --
-       same reasoning as .btn-primary below: no single text colour clears
-       4.5:1 at both ends of the gradient in every theme. */
-    background: var(--accent-primary);
     display: flex;
     align-items: center;
     justify-content: center;
-    font-weight: 600;
-    font-size: 0.875rem;
+    flex-shrink: 0;
+    background: var(--accent-primary);
     color: var(--text-on-accent);
+    font-weight: 600;
+    font-size: 13px;
 }
 
 .user-details {
     flex: 1;
+    min-width: 0;
 }
 
 .user-name {
-    font-weight: 500;
-    font-size: 0.875rem;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 .user-role {
-    font-size: 0.75rem;
+    font-size: 11.5px;
     color: var(--text-muted);
+    text-transform: capitalize;
 }
 
-/* Main Content */
+/* ===========================================================================
+   Main column and header
+   =========================================================================== */
 .main-content {
-    flex: 1;
-    margin-left: var(--sidebar-width);
+    display: flex;
+    flex-direction: column;
     min-height: 100vh;
+    min-width: 0;
 }
 
-/* Header */
 .header {
     height: var(--header-height);
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     border-bottom: 1px solid var(--border-color);
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     padding: 0 24px;
     position: sticky;
     top: 0;
@@ -202,21 +431,57 @@ body {
 }
 
 .header-title {
-    font-size: 1.25rem;
+    font-family: var(--font-display);
+    font-size: 25px;
     font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
 .header-actions {
     display: flex;
+    align-items: center;
     gap: 12px;
 }
 
-/* Page Content */
 .page-content {
-    padding: 24px;
+    padding: 20px;
 }
 
-/* Cards */
+/* ===========================================================================
+   Theme toggle (spec 6.2) -- a square icon button; the icon itself rotates
+   on hover, same timing as the public header's (style.css:256-262).
+   =========================================================================== */
+.theme-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.theme-toggle:hover {
+    background: var(--bg-card);
+}
+
+.theme-toggle .icon {
+    transition: transform var(--transition-lift);
+}
+
+.theme-toggle:hover .icon {
+    transform: rotate(-18deg);
+}
+
+/* ===========================================================================
+   Cards
+   =========================================================================== */
 .card {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -224,26 +489,34 @@ body {
     padding: 20px;
 }
 
+/* Spec 4.3's 14px panel gap between a card and the two-up row after it (the
+   dashboard's Health Checks card, then Recent Sync Jobs and Recent Activity).
+   Scoped to that sequence, so a .u-grid-2 that opens its container gains no
+   stray top margin; the card carries no bottom margin of its own, so the gap
+   is 14px and never doubles. */
+.card + .u-grid-2 { margin-top: 14px; }
+
 .card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
     margin-bottom: 16px;
 }
 
 .card-title {
-    font-size: 1rem;
+    font-family: var(--font-display);
+    font-size: 16px;
     font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
 }
 
 /* A subheading one level below .card-title, for a labelled group inside a
    card's body (e.g. the four "Bad (n)" / "Skipped (n)" / "Warnings (n)" /
-   "OK (n)" lists on the health-checks card) -- .card-title itself is sized
-   for a card's own <h3> header and is too heavy reused on an in-body <h4>,
-   competing with the card's real title instead of reading as a subsection
-   of it. */
+   "OK (n)" lists on the health-checks card). */
 .card-subtitle {
-    font-size: 0.75rem;
+    font-size: 11.5px;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -255,73 +528,230 @@ body {
     margin-top: 0;
 }
 
-/* Stats Grid */
+/* ===========================================================================
+   KPI tiles (spec 6.1: "Stat cards become KPI tiles")
+   =========================================================================== */
 .stats-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 14px;
     margin-bottom: 24px;
 }
 
 .stat-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
     background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-lg);
-    padding: 20px;
-    transition: border-color var(--transition-fast);
+    padding: 16px;
+    box-shadow: var(--shadow-card);
+    transition: transform var(--transition-lift), box-shadow var(--transition-lift);
 }
 
 .stat-card:hover {
-    border-color: var(--accent-primary);
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-card-hover);
 }
 
 .stat-card-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 12px;
 }
 
 .stat-card-icon {
-    font-size: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
 }
 
 .stat-card-trend {
-    font-size: 0.75rem;
-    padding: 4px 8px;
-    border-radius: var(--radius-sm);
+    display: inline-flex;
+    align-items: center;
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: var(--radius-full);
 }
 
 .stat-card-trend.up {
-    /* Precomputed solid tint, not a live rgba() one -- see the token's
-       comment in tokens.css: a translucent tint's contrast depends on
-       whatever is behind it, and a hovered table row repaints to a lighter
-       background than this component was authored against. */
     background: var(--status-healthy-bg);
     color: var(--status-healthy);
 }
 
 .stat-card-trend.down {
     background: var(--status-error-bg);
-    /* status-error-text, not status-error: status-error itself is 3.65:1
-       against this chip's background (needs 4.5:1 as text). See
-       tokens.css. */
-    color: var(--status-error-text);
+    color: var(--status-error);
 }
 
 .stat-card-value {
-    font-size: 1.75rem;
-    font-weight: 700;
-    margin-bottom: 4px;
-    font-family: var(--font-mono);
+    font-family: var(--font-sans);
+    font-size: 27px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text-primary);
 }
 
 .stat-card-label {
-    font-size: 0.875rem;
-    color: var(--text-muted);
+    font-size: 13px;
+    color: var(--text-secondary);
 }
 
-/* Tables */
+/* ===========================================================================
+   Disk meter (spec 4.8) -- severity is a class on .meter-fill, driven by
+   DISK_USAGE_WARNING_PERCENT/DISK_USAGE_CRITICAL_PERCENT; its width comes
+   only from the data-percent attribute the 101 rules below key off, never an
+   inline style. Track is --border-color; the tick at 85% is --text-primary,
+   sized to clear the track on either side so it always shows against the
+   card underneath, whatever fill colour is under it.
+   =========================================================================== */
+.meter {
+    position: relative;
+    height: 8px;
+    margin: 2px 0;
+    border-radius: 4px;
+    background: var(--border-color);
+}
+
+.meter-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    height: 100%;
+    border-radius: 4px;
+    background: var(--text-secondary);
+}
+
+.meter-fill.is-warn {
+    background: var(--status-syncing);
+}
+
+.meter-fill.is-crit {
+    background: var(--status-error);
+}
+
+.meter-tick {
+    position: absolute;
+    left: 85%;
+    top: -4px;
+    bottom: -4px;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: var(--text-primary);
+}
+
+.meter-fill[data-percent="0"] { width: 0%; }
+.meter-fill[data-percent="1"] { width: 1%; }
+.meter-fill[data-percent="2"] { width: 2%; }
+.meter-fill[data-percent="3"] { width: 3%; }
+.meter-fill[data-percent="4"] { width: 4%; }
+.meter-fill[data-percent="5"] { width: 5%; }
+.meter-fill[data-percent="6"] { width: 6%; }
+.meter-fill[data-percent="7"] { width: 7%; }
+.meter-fill[data-percent="8"] { width: 8%; }
+.meter-fill[data-percent="9"] { width: 9%; }
+.meter-fill[data-percent="10"] { width: 10%; }
+.meter-fill[data-percent="11"] { width: 11%; }
+.meter-fill[data-percent="12"] { width: 12%; }
+.meter-fill[data-percent="13"] { width: 13%; }
+.meter-fill[data-percent="14"] { width: 14%; }
+.meter-fill[data-percent="15"] { width: 15%; }
+.meter-fill[data-percent="16"] { width: 16%; }
+.meter-fill[data-percent="17"] { width: 17%; }
+.meter-fill[data-percent="18"] { width: 18%; }
+.meter-fill[data-percent="19"] { width: 19%; }
+.meter-fill[data-percent="20"] { width: 20%; }
+.meter-fill[data-percent="21"] { width: 21%; }
+.meter-fill[data-percent="22"] { width: 22%; }
+.meter-fill[data-percent="23"] { width: 23%; }
+.meter-fill[data-percent="24"] { width: 24%; }
+.meter-fill[data-percent="25"] { width: 25%; }
+.meter-fill[data-percent="26"] { width: 26%; }
+.meter-fill[data-percent="27"] { width: 27%; }
+.meter-fill[data-percent="28"] { width: 28%; }
+.meter-fill[data-percent="29"] { width: 29%; }
+.meter-fill[data-percent="30"] { width: 30%; }
+.meter-fill[data-percent="31"] { width: 31%; }
+.meter-fill[data-percent="32"] { width: 32%; }
+.meter-fill[data-percent="33"] { width: 33%; }
+.meter-fill[data-percent="34"] { width: 34%; }
+.meter-fill[data-percent="35"] { width: 35%; }
+.meter-fill[data-percent="36"] { width: 36%; }
+.meter-fill[data-percent="37"] { width: 37%; }
+.meter-fill[data-percent="38"] { width: 38%; }
+.meter-fill[data-percent="39"] { width: 39%; }
+.meter-fill[data-percent="40"] { width: 40%; }
+.meter-fill[data-percent="41"] { width: 41%; }
+.meter-fill[data-percent="42"] { width: 42%; }
+.meter-fill[data-percent="43"] { width: 43%; }
+.meter-fill[data-percent="44"] { width: 44%; }
+.meter-fill[data-percent="45"] { width: 45%; }
+.meter-fill[data-percent="46"] { width: 46%; }
+.meter-fill[data-percent="47"] { width: 47%; }
+.meter-fill[data-percent="48"] { width: 48%; }
+.meter-fill[data-percent="49"] { width: 49%; }
+.meter-fill[data-percent="50"] { width: 50%; }
+.meter-fill[data-percent="51"] { width: 51%; }
+.meter-fill[data-percent="52"] { width: 52%; }
+.meter-fill[data-percent="53"] { width: 53%; }
+.meter-fill[data-percent="54"] { width: 54%; }
+.meter-fill[data-percent="55"] { width: 55%; }
+.meter-fill[data-percent="56"] { width: 56%; }
+.meter-fill[data-percent="57"] { width: 57%; }
+.meter-fill[data-percent="58"] { width: 58%; }
+.meter-fill[data-percent="59"] { width: 59%; }
+.meter-fill[data-percent="60"] { width: 60%; }
+.meter-fill[data-percent="61"] { width: 61%; }
+.meter-fill[data-percent="62"] { width: 62%; }
+.meter-fill[data-percent="63"] { width: 63%; }
+.meter-fill[data-percent="64"] { width: 64%; }
+.meter-fill[data-percent="65"] { width: 65%; }
+.meter-fill[data-percent="66"] { width: 66%; }
+.meter-fill[data-percent="67"] { width: 67%; }
+.meter-fill[data-percent="68"] { width: 68%; }
+.meter-fill[data-percent="69"] { width: 69%; }
+.meter-fill[data-percent="70"] { width: 70%; }
+.meter-fill[data-percent="71"] { width: 71%; }
+.meter-fill[data-percent="72"] { width: 72%; }
+.meter-fill[data-percent="73"] { width: 73%; }
+.meter-fill[data-percent="74"] { width: 74%; }
+.meter-fill[data-percent="75"] { width: 75%; }
+.meter-fill[data-percent="76"] { width: 76%; }
+.meter-fill[data-percent="77"] { width: 77%; }
+.meter-fill[data-percent="78"] { width: 78%; }
+.meter-fill[data-percent="79"] { width: 79%; }
+.meter-fill[data-percent="80"] { width: 80%; }
+.meter-fill[data-percent="81"] { width: 81%; }
+.meter-fill[data-percent="82"] { width: 82%; }
+.meter-fill[data-percent="83"] { width: 83%; }
+.meter-fill[data-percent="84"] { width: 84%; }
+.meter-fill[data-percent="85"] { width: 85%; }
+.meter-fill[data-percent="86"] { width: 86%; }
+.meter-fill[data-percent="87"] { width: 87%; }
+.meter-fill[data-percent="88"] { width: 88%; }
+.meter-fill[data-percent="89"] { width: 89%; }
+.meter-fill[data-percent="90"] { width: 90%; }
+.meter-fill[data-percent="91"] { width: 91%; }
+.meter-fill[data-percent="92"] { width: 92%; }
+.meter-fill[data-percent="93"] { width: 93%; }
+.meter-fill[data-percent="94"] { width: 94%; }
+.meter-fill[data-percent="95"] { width: 95%; }
+.meter-fill[data-percent="96"] { width: 96%; }
+.meter-fill[data-percent="97"] { width: 97%; }
+.meter-fill[data-percent="98"] { width: 98%; }
+.meter-fill[data-percent="99"] { width: 99%; }
+.meter-fill[data-percent="100"] { width: 100%; }
+
+/* ===========================================================================
+   Tables
+   =========================================================================== */
 .table-container {
     overflow-x: auto;
 }
@@ -329,234 +759,400 @@ body {
 table {
     width: 100%;
     border-collapse: collapse;
+    font-size: 13.5px;
 }
 
 th,
 td {
     text-align: left;
-    padding: 12px 16px;
+    padding: 10px 14px;
     border-bottom: 1px solid var(--border-color);
 }
 
 th {
     font-weight: 600;
-    font-size: 0.75rem;
+    font-size: 12px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    color: var(--text-muted);
-    background: var(--bg-tertiary);
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
 }
 
 td {
-    font-size: 0.875rem;
+    color: var(--text-primary);
 }
 
 tr:hover td {
-    background: var(--bg-tertiary);
+    background: var(--bg-secondary);
 }
 
-/* Status badges */
+/* Sizes, counts, rates and percentages (spec 6.1: "numbers right-aligned in
+   mono"); applies to a th just as well as a td. */
+.num {
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* A date or a size broken across lines ("Sep" / "27," / "10:00" / "PM") is
+   unreadable, so these cells keep to one line. Scoped to .table-container,
+   whose sideways scroll is what makes that safe; every table the console
+   renders sits in one. */
+.table-container .num {
+    white-space: nowrap;
+}
+
+/* ===========================================================================
+   Status pills (spec 4.8) -- a dot plus a word, the dot a ::before in
+   currentColor so no markup carries a separate span for it. Every modifier
+   sets color/background as a bare var() (tests/test_contrast.py's static
+   reader only recognises that form). The bare .status-badge is the neutral
+   pill (disabled/cancelled/unknown values reuse it exactly).
+   =========================================================================== */
 .status-badge {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 10px;
-    border-radius: 100px;
-    font-size: 0.75rem;
-    font-weight: 500;
+    padding: 4px 10px 4px 8px;
+    border-radius: var(--radius-full);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
+.status-badge::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: currentColor;
+    flex-shrink: 0;
+}
+
+/* online: mirror active, job completed */
 .status-badge.active {
-    /* Precomputed solid tints below, not live rgba() ones -- see the tokens'
-       comment in tokens.css. `tr:hover td` (below) repaints a badge's row to
-       --bg-tertiary, and every one of these three tints measured under
-       4.5:1 for its own text against that lighter, hovered backdrop. */
-    background: var(--status-healthy-bg);
     color: var(--status-healthy);
+    background: var(--status-healthy-bg);
 }
 
+.status-badge.completed {
+    color: var(--status-healthy);
+    background: var(--status-healthy-bg);
+}
+
+/* syncing: mirror syncing, job running, archive "At risk" */
 .status-badge.syncing {
+    color: var(--status-syncing);
     background: var(--status-syncing-bg);
+}
+
+.status-badge.running {
+    color: var(--status-syncing);
+    background: var(--status-syncing-bg);
+}
+
+.status-badge.at-risk {
+    color: var(--status-syncing);
+    background: var(--status-syncing-bg);
+}
+
+.status-badge.syncing::before,
+.status-badge.running::before {
+    animation: pill-ring 1.5s cubic-bezier(.2, .8, .2, 1) infinite;
+}
+
+@keyframes pill-ring {
+    0% { box-shadow: 0 0 0 0 color-mix(in srgb, currentColor 55%, transparent); }
+    100% { box-shadow: 0 0 0 7px transparent; }
+}
+
+/* error: mirror error, job failed */
+.status-badge.error {
+    color: var(--status-error);
+    background: var(--status-error-bg);
+}
+
+.status-badge.failed {
+    color: var(--status-error);
+    background: var(--status-error-bg);
+}
+
+/* info: archive "Current"/"Newest"/"Pre-release", job pending, admin role */
+.status-badge.info {
+    color: var(--status-info);
+    background: var(--status-info-bg);
+}
+
+.status-badge.pending {
+    color: var(--status-info);
+    background: var(--status-info-bg);
+}
+
+/* incomplete: health-checks card only (spec 4.8: kept distinct from neutral,
+   so it is never mistaken for "Unknown"). */
+.status-badge.health-incomplete {
+    color: var(--status-incomplete);
+    background: var(--status-incomplete-bg);
+}
+
+/* neutral: mirror disabled, job cancelled, protection/role "unknown" */
+.status-badge.disabled {
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+}
+
+.status-badge.cancelled {
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+}
+
+/* ===========================================================================
+   Health-checks card (dashboard) -- a lighter row than .activity-item: four
+   short lists (bad/skipped/warnings/ok) read as a checklist, so each row's
+   own icon just tints to match its list rather than sitting in a filled
+   circle.
+   =========================================================================== */
+.activity-list {
+    list-style: none;
+}
+
+.activity-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.activity-item:last-child {
+    border-bottom: none;
+}
+
+.activity-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+/* The pill that leads a row (Recent Sync Jobs, the mirror modal's sync
+   history) took the place of the 32px icon column, so without a floor the text
+   after it started at a different x on every row. The floor is just over the
+   widest word the pill carries: "completed" measures 92.4px at its 12px, and
+   7.75em is 93px. Rounding up to 8em would cost the modal's history rows at
+   400px the 1.2px their dates need to stay on one line. Shorter words sit
+   centred in it. */
+.activity-item > .status-badge {
+    justify-content: center;
+    min-width: 7.75em;
+}
+
+.activity-content {
+    flex: 1;
+    min-width: 0;
+}
+
+.activity-text {
+    font-size: 13.5px;
+    margin-bottom: 4px;
+    color: var(--text-primary);
+}
+
+.activity-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+}
+
+.health-check-list {
+    list-style: none;
+}
+
+.health-check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.health-check-row:last-child {
+    border-bottom: none;
+}
+
+.health-check-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
+    color: var(--text-secondary);
+}
+
+.health-check-icon .icon {
+    width: 14px;
+    height: 14px;
+}
+
+.health-check-icon.is-bad {
+    color: var(--status-error);
+}
+
+.health-check-icon.is-warn {
     color: var(--status-syncing);
 }
 
-.status-badge.error {
-    background: var(--status-error-bg);
-    /* status-error-text, not status-error: see tokens.css -- status-error
-       itself is 3.65-3.71:1 here (needs 4.5:1 as text). */
-    color: var(--status-error-text);
+.health-check-icon.is-ok {
+    color: var(--status-healthy);
 }
 
-.status-badge.disabled {
-    background: var(--bg-tertiary);
+.health-check-icon.is-skip {
     color: var(--text-muted);
 }
 
-/* A fifth state for the health-checks card only: Mirror.status has no
-   "incomplete" of its own, and reusing .syncing here would make it look
-   identical to that card's "stale" badge, the one thing the two are required
-   to not do. status-info-text, not status-info: see tokens.css -- status-info
-   itself is 4.16:1 here (needs 4.5:1 as text). */
-.status-badge.health-incomplete {
-    background: var(--status-info-bg);
-    color: var(--status-info-text);
+.health-check-content {
+    flex: 1;
+    min-width: 0;
 }
 
-/* Archive-inventory tags (Protected Paths page): Newest / Latest-in-major /
-   Pre-release are purely informational, not a status judgement -- reusing
-   .disabled here would read as "inactive", which is what that tint means
-   everywhere else in this file (nav items, the mirror status badges). Same
-   info hue .status-badge.health-incomplete uses above; see tokens.css for
-   why status-info-text, not status-info, is used for text. */
-.status-badge.info {
-    background: var(--status-info-bg);
-    color: var(--status-info-text);
+.health-check-text {
+    font-size: 13.5px;
+    line-height: 1.4;
+    color: var(--text-primary);
+    /* bad[].detail / skipped[].reason / warnings[] are free text from a
+       script outside this container and the backend caps them at 500 chars,
+       not at a width that fits this card -- wrap rather than push the card
+       wider than its .stats-grid siblings on any viewport. */
+    overflow-wrap: break-word;
 }
 
-/* "At risk" (same page, releaseTagBadges in admin.js): the one state the
-   operator must notice before the next upstream prune deletes this release
-   locally. It can land next to protection: "none" just as easily as
-   "partial" (a release that is not fully protected and is not an actually-
-   current release -- see archive_inventory.py's _annotate_cross_release_
-   fields -- is at risk regardless of how much of it happens to be covered),
-   so this pill, not the protection badge beside it, is the one reliable
-   "look here" signal in the row. Reuses .status-badge.error's exact colour
-   pair rather than a softer one: it needs to read at least as urgently as
-   an "Unknown" protection badge does. status-error-text, not status-error:
-   see tokens.css -- status-error itself is 3.71:1 against a hovered row's
-   --bg-tertiary (needs 4.5:1 as text), the same reasoning as
-   .status-badge.error above. */
-.status-badge.at-risk {
-    background: var(--status-error-bg);
-    color: var(--status-error-text);
-}
-
-.status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-}
-
-/* Forms */
+/* ===========================================================================
+   Forms
+   =========================================================================== */
 .form-group {
     margin-bottom: 16px;
 }
 
 .form-label {
     display: block;
-    font-size: 0.875rem;
-    font-weight: 500;
+    font-size: 13px;
+    font-weight: 600;
     margin-bottom: 6px;
+    color: var(--text-secondary);
 }
 
 .form-input {
     width: 100%;
     padding: 10px 14px;
-    background: var(--bg-tertiary);
-    border: 1px solid var(--border-color);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-md);
     color: var(--text-primary);
-    font-size: 0.875rem;
-    transition: all var(--transition-fast);
+    font-family: inherit;
+    font-size: 13.5px;
+    transition: border-color var(--transition-fast);
 }
 
 .form-input:focus {
-    outline: none;
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(244, 140, 6, 0.2);
+}
+
+.form-input:disabled {
+    opacity: .6;
+    cursor: not-allowed;
 }
 
 .form-input::placeholder {
     color: var(--text-muted);
 }
 
-/* Buttons */
+/* ===========================================================================
+   Buttons (spec 6.1)
+   =========================================================================== */
 .btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
     padding: 10px 18px;
+    border: 1px solid transparent;
     border-radius: var(--radius-md);
-    font-weight: 500;
-    font-size: 0.875rem;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    border: none;
+    font-family: var(--font-sans);
+    font-weight: 600;
+    font-size: 13.5px;
+    white-space: nowrap;
     text-decoration: none;
+    cursor: pointer;
+    transition: transform var(--transition-base), box-shadow var(--transition-base),
+        background-color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.btn:hover {
+    transform: translateY(-1px);
 }
 
 .btn-primary {
-    /* Solid accent-primary and text-on-accent, not the gradient and white.
-       White on accent-primary alone is 2.44:1 here (admin's dark-theme
-       orange-500). See tokens.css for the full reasoning; --accent-gradient
-       is untouched and still used for the public site's large 3rem
-       .gradient-text heading, where it already clears the 3:1 large-text
-       bar at both stops. */
     background: var(--accent-primary);
     color: var(--text-on-accent);
 }
 
 .btn-primary:hover {
-    box-shadow: 0 4px 12px rgba(244, 140, 6, 0.4);
-    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
 }
 
 .btn-secondary {
-    background: var(--bg-tertiary);
+    background: var(--bg-card);
     color: var(--text-primary);
-    border: 1px solid var(--border-color);
+    border-color: var(--border-strong);
 }
 
 .btn-secondary:hover {
-    background: var(--border-color);
-    border-color: var(--accent-primary);
+    background: var(--bg-secondary);
 }
 
+/* Danger is a tinted pill-like button, not a solid fill (spec 6.1: "Danger:
+   --status-error text on --status-error-bg"), matching the alarm colour the
+   pills already use rather than inventing a second, solid-fill treatment. */
 .btn-danger {
-    background: var(--status-error);
-    /* text-on-accent, not white: white on status-error is 3.76:1 here
-       (needs 4.5:1). navy-900 clears 5.12:1 against this same fill. */
-    color: var(--text-on-accent);
+    background: var(--status-error-bg);
+    color: var(--status-error);
 }
 
 .btn-danger:hover {
-    /* Was a hardcoded #dc2626 (a hand-picked darker red, not a token) --
-       darkening the fill is exactly the wrong direction once the label is
-       dark ink rather than white: navy-900 on that darker red measured
-       3.99:1 (needs 4.5:1), against 5.12:1 on the resting --status-error
-       fill. Matches .btn-primary:hover above instead -- a lift and a glow,
-       fill colour unchanged, so the resting contrast still holds on hover. */
-    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);
-    transform: translateY(-1px);
+    box-shadow: var(--shadow-card);
 }
 
 .btn-sm {
     padding: 6px 12px;
-    font-size: 0.8125rem;
+    font-size: 12.5px;
 }
 
-.btn-icon {
-    padding: 8px;
-    min-width: 36px;
-}
-
-/* Modal */
+/* ===========================================================================
+   Modal (spec 6.1: "surface, 14px radius, --scrim behind")
+   =========================================================================== */
 .modal-overlay {
     position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    background: rgba(0, 0, 0, 0.6);
+    inset: 0;
+    padding: 20px;
+    background: var(--scrim);
     display: flex;
     align-items: center;
     justify-content: center;
     z-index: 1000;
     opacity: 0;
     visibility: hidden;
-    transition: all var(--transition-base);
+    transition: opacity var(--transition-base), visibility var(--transition-base);
 }
 
 .modal-overlay.active {
@@ -565,9 +1161,9 @@ tr:hover td {
 }
 
 .modal {
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
+    background: var(--bg-card);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card-hover);
     width: 100%;
     max-width: 480px;
     max-height: 90vh;
@@ -586,23 +1182,32 @@ tr:hover td {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 12px;
 }
 
 .modal-title {
-    font-size: 1.125rem;
+    font-size: 18px;
     font-weight: 600;
+    color: var(--text-primary);
 }
 
 .modal-close {
-    background: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    background: transparent;
     border: none;
-    color: var(--text-muted);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
     cursor: pointer;
-    font-size: 1.25rem;
-    transition: color var(--transition-fast);
+    transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
 .modal-close:hover {
+    background: var(--bg-secondary);
     color: var(--text-primary);
 }
 
@@ -618,147 +1223,72 @@ tr:hover td {
     gap: 12px;
 }
 
-/* Activity Log */
-.activity-list {
-    list-style: none;
-}
-
-.activity-item {
-    display: flex;
-    gap: 12px;
-    padding: 12px 0;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.activity-item:last-child {
-    border-bottom: none;
-}
-
-.activity-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 50%;
-    background: var(--bg-tertiary);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 0.875rem;
-    flex-shrink: 0;
-}
-
-.activity-content {
-    flex: 1;
-}
-
-.activity-text {
-    font-size: 0.875rem;
-    margin-bottom: 4px;
-}
-
-.activity-time {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-/* Health Checks card (Dashboard)
-   A lighter row than .activity-item/.activity-icon: four short lists stacked
-   in one card (bad/skipped/warnings/ok) read as a checklist, not an activity
-   feed, and a 32px icon circle per row for a one-line entry was too heavy
-   repeated that many times in one place. The leading icon is the emoji
-   renderHealthChecksCard already passes in (kept, not decorative -- it is
-   the per-row, non-colour signal alongside each list's own .card-subtitle,
-   for the row itself where a screen reader lands mid-list). */
-.health-check-list {
-    list-style: none;
-}
-
-.health-check-row {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border-color);
-}
-
-.health-check-row:last-child {
-    border-bottom: none;
-}
-
-.health-check-icon {
-    flex-shrink: 0;
-    line-height: 1.4;
-}
-
-.health-check-content {
-    flex: 1;
-    min-width: 0;
-}
-
-.health-check-text {
-    font-size: 0.875rem;
-    line-height: 1.4;
-    /* bad[].detail / skipped[].reason / warnings[] are free text from a
-       script outside this container (see admin.js's comment on this card)
-       and the backend caps them at 500 chars, not at a width that fits this
-       card -- wrap rather than push the card wider than its .stats-grid
-       siblings on any viewport. */
-    overflow-wrap: break-word;
-}
-
-/* Login Page */
+/* ===========================================================================
+   Login page (spec 6.1: "a centred card with the mark, the wordmark, the
+   form and its own theme toggle")
+   =========================================================================== */
 .login-page {
     min-height: 100vh;
     display: flex;
     align-items: center;
     justify-content: center;
     background: var(--bg-primary);
+    padding: 24px;
 }
 
 .login-card {
-    background: var(--bg-secondary);
+    position: relative;
+    background: var(--bg-card);
     border: 1px solid var(--border-color);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-card);
     padding: 40px;
     width: 100%;
     max-width: 400px;
 }
 
+.login-card .theme-toggle {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+}
+
 .login-header {
     text-align: center;
-    margin-bottom: 32px;
+    margin-bottom: 28px;
 }
 
 .login-logo {
-    font-size: 2.5rem;
-    margin-bottom: 12px;
+    display: flex;
+    justify-content: center;
+    margin-bottom: 16px;
+}
+
+.login-logo .mark {
+    width: 48px;
+    height: 48px;
 }
 
 .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
+    font-family: var(--font-display);
+    font-size: 22px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
 }
 
 .login-subtitle {
-    color: var(--text-muted);
+    color: var(--text-secondary);
     margin-top: 8px;
+    font-size: 14px;
 }
 
-.login-error {
-    /* Precomputed solid tint and status-error-text: see tokens.css.
-       status-error itself is 2.60:1 as text against the old live rgba()
-       tint over this card's background. The border stays plain
-       status-error -- a border only needs 3:1, and this one already clears
-       it against both adjacent colours. */
-    background: var(--status-error-bg);
-    border: 1px solid var(--status-error);
-    color: var(--status-error-text);
-    padding: 12px;
-    border-radius: var(--radius-md);
-    margin-bottom: 16px;
-    font-size: 0.875rem;
-}
-
-/* Toast notifications */
+/* ===========================================================================
+   Toast notifications -- an icon mask (check/close/info) instead of a
+   coloured left border, and its own exit keyframes: a same-name animation
+   never replays once it has already finished once, so reversing slideIn in
+   place left the exit invisible.
+   =========================================================================== */
 .toast-container {
     position: fixed;
     top: 24px;
@@ -770,15 +1300,19 @@ tr:hover td {
 }
 
 .toast {
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     padding: 12px 16px;
     display: flex;
     align-items: center;
     gap: 12px;
-    animation: slideIn 0.3s ease;
     max-width: 360px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-primary);
+    box-shadow: var(--shadow-card-hover);
+    animation: slideIn 0.3s ease;
 }
 
 @keyframes slideIn {
@@ -793,31 +1327,108 @@ tr:hover td {
     }
 }
 
-.toast.success {
-    border-left: 3px solid var(--status-healthy);
+/* `forwards` holds the last keyframe (invisible, off to the right). Toast.show
+   removes the node on a 300ms timer, the same length as this animation, so
+   without it a frame can land between the animation's end and the removal
+   with the toast back at full opacity. */
+.toast.is-leaving {
+    animation: toast-out 0.3s ease forwards;
 }
 
-.toast.error {
-    border-left: 3px solid var(--status-error);
-}
-
-.toast.warning {
-    border-left: 3px solid var(--status-syncing);
-}
-
-/* Responsive */
-@media (max-width: 768px) {
-    .sidebar {
-        transform: translateX(-100%);
-        z-index: 200;
-    }
-
-    .sidebar.open {
+@keyframes toast-out {
+    from {
         transform: translateX(0);
+        opacity: 1;
     }
 
-    .main-content {
-        margin-left: 0;
+    to {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+}
+
+.toast.success .icon {
+    color: var(--status-healthy);
+}
+
+.toast.error .icon {
+    color: var(--status-error);
+}
+
+.toast.info .icon {
+    color: var(--status-info);
+}
+
+/* ===========================================================================
+   Code (spec 6.1: "code chips and log blocks on --bg-secondary, in mono")
+   =========================================================================== */
+code {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.9em;
+}
+
+.code-block {
+    display: block;
+    padding: 8px 10px;
+    background: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12.5px;
+    overflow-x: auto;
+}
+
+/* Archive-inventory location chips (Protected Paths page): joinCodeList's
+   unprotected_locations / protected_not_on_disk names, one <code> per
+   location, scoped to the .code-chip-list wrapper so a plain <code> used
+   elsewhere in this file is unaffected. Its own solid background, not the
+   ambient card/table one, so a chip reads the same neutral "this is just a
+   name" way wherever it appears. */
+.code-chip-list code {
+    display: inline-block;
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+}
+
+/* Shared by the error and output panes of the sync-job detail view. They
+   differ only in colour and how tall they are allowed to get. */
+.log-pre {
+    background: var(--bg-secondary);
+    padding: 12px;
+    border-radius: var(--radius-sm);
+    overflow-x: auto;
+    overflow-y: auto;
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 12px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.log-pre-error  { color: var(--status-error); max-height: 150px; }
+.log-pre-output { max-height: 400px; }
+
+/* ===========================================================================
+   Focus (spec 9: "every interactive element shows a 2px accent outline at a
+   2px offset") and reduced motion (spec 4.4).
+   =========================================================================== */
+:focus-visible {
+    outline: 2px solid var(--accent-primary);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
     }
 }
 
@@ -845,7 +1456,7 @@ tr:hover td {
 
 /* --- spacing --------------------------------------------------------- */
 .u-mt-sm        { margin-top: 12px; }
-.u-mt-md        { margin-top: 24px; }
+.u-mt-md        { margin-top: 14px; }
 .u-push-right   { margin-left: auto; }
 .u-pad-body     { padding: 0 24px 24px; }
 
@@ -862,49 +1473,143 @@ tr:hover td {
 .u-row-8        { display: flex; gap: 8px; align-items: center; }
 .u-row-12       { display: flex; gap: 12px; }
 
-.u-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.u-grid-2       { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .u-grid-2-tight { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
 
-/* --- components ------------------------------------------------------ */
-.code-block {
-    display: block;
-    padding: 8px;
-    background: var(--bg-tertiary);
-    border-radius: 6px;
+/* ===========================================================================
+   Responsive (spec 6.1: "Under 768px" -- the sidebar becomes a horizontal,
+   scrollable bar holding the mark, the nav items, then the avatar and Logout
+   at its end. Nothing is hidden with no way to reach it: everything that
+   does not fit simply scrolls into view.
+
+   Placed after the utilities on purpose: a utility and a media-query rule
+   here are equal specificity, so without this position .u-grid-2's 14px
+   two-column rule above would win the cascade at every width, including
+   under 768px, and this block's own collapse to one column would never take
+   effect.
+   =========================================================================== */
+@media (max-width: 767.98px) {
+    .app-layout {
+        grid-template-columns: 1fr;
+    }
+
+    /* Unbounded is wide (spec 12): at 25px, "Protected Paths" and "Sync
+       Failures" no longer fit beside the actions at 400px and wrap to two
+       lines, taller than a fixed 64px bar. The bar now grows to fit, never
+       below --header-height; the title steps down with the viewport (25px from
+       500px up, as in spec 6.1) on a tighter line height; and the actions drop
+       to a line of their own only when even the title's longest word cannot
+       share one with them. The side padding is the content's own 20px (spec
+       4.3), so the title and the actions line up with the cards below. */
+    .header {
+        position: static;
+        height: auto;
+        min-height: var(--header-height);
+        flex-wrap: wrap;
+        gap: 8px 16px;
+        padding: 12px 20px;
+    }
+
+    .header-title {
+        flex: 1;
+        font-size: clamp(18px, 5vw, 25px);
+        line-height: 1.25;
+    }
+
+    .sidebar {
+        height: auto;
+        flex-direction: row;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 12px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .sidebar-header {
+        padding: 4px;
+        flex-shrink: 0;
+    }
+
+    /* The mark alone stands for the brand in the compact bar; the nav items'
+       own labels already make the row wide enough to need horizontal scroll. */
+    .sidebar-header .wordmark {
+        display: none;
+    }
+
+    .sidebar-nav {
+        flex-direction: row;
+        flex: 0 0 auto;
+        gap: 2px;
+    }
+
+    .nav-section {
+        flex-direction: row;
+        gap: 2px;
+    }
+
+    .nav-section + .nav-section {
+        margin-top: 0;
+    }
+
+    .nav-section-title {
+        display: none;
+    }
+
+    /* The active item's own background change is only about 1.1:1 against the
+       bar, too faint to find the current page by. The sidebar's 3px accent bar
+       (spec 6.1) is turned to lie along the item's bottom edge instead, under
+       its icon and label. */
+    .nav-item.active::before {
+        left: 10px;
+        right: 10px;
+        top: auto;
+        bottom: 0;
+        width: auto;
+        height: 3px;
+        border-radius: 3px 3px 0 0;
+    }
+
+    .sidebar-footer {
+        flex-direction: row;
+        align-items: center;
+        flex-shrink: 0;
+        margin-top: 0;
+        margin-left: auto;
+        padding-top: 0;
+        padding-left: 8px;
+        border-top: none;
+    }
+
+    .user-info {
+        background: none;
+        padding: 0;
+    }
+
+    .user-details {
+        display: none;
+    }
+
+    .u-grid-2,
+    .u-grid-2-tight {
+        grid-template-columns: 1fr;
+    }
 }
 
-/* Archive-inventory location chips (Protected Paths page): joinCodeList's
-   unprotected_locations / protected_not_on_disk names, one <code> per
-   location, scoped to the .code-chip-list wrapper so a plain <code> used
-   elsewhere in this file (the protected-paths pattern list, the intro
-   paragraph) is unaffected. inline-block, not flex: joinCodeList still joins
-   entries with a literal ", " (see admin.js), and plain inline content
-   already wraps at the container's edge on its own -- flex-wrap would turn
-   each ", " into its own anonymous flex item and gap it away from the chip
-   it follows. Its own explicit colour, not inherited, so a chip reads the
-   same neutral "this is just a name" way inside both the muted "Unprotected"
-   line and the higher-alert "Protected but missing from disk" one. */
-.code-chip-list code {
-    display: inline-block;
-    background: var(--bg-tertiary);
-    color: var(--text-muted);
-    padding: 2px 8px;
-    border-radius: var(--radius-sm);
-    white-space: nowrap;
+/* The band from the sidebar's return (768px) until the content is roomy again
+   (about 1100px). The 188px sidebar (spec 4.3) leaves a table container of only
+   about 500px at 768px, and the one-line .num cells above need more than that
+   on every wide table: roughly 60px more on Mirrors and Audit Logs at 768px,
+   and Users and Sync Failures still need extra at 1024px. Left alone, the last
+   column (the action buttons, the IP address) ends up half out of view where
+   the wrapped cells used to fit. Stepping the cell padding down from 14px to 8px
+   a side gives that room back without letting a date wrap again. */
+@media (min-width: 768px) and (max-width: 1099.98px) {
+    .table-container th,
+    .table-container td {
+        padding-left: 8px;
+        padding-right: 8px;
+    }
 }
-
-/* Shared by the error and output panes of the sync-job detail view. They
-   differ only in colour and how tall they are allowed to get. */
-.log-pre {
-    background: var(--bg-tertiary);
-    padding: 12px;
-    border-radius: 6px;
-    overflow-x: auto;
-    overflow-y: auto;
-    font-size: 12px;
-}
-/* status-error-text, not status-error: status-error itself is 3.71:1 on
-   this element's --bg-tertiary background (needs 4.5:1 as text -- this is
-   real sync-job error output, not a decorative dot or border). */
-.log-pre-error  { color: var(--status-error-text); max-height: 150px; }
-.log-pre-output { max-height: 400px; white-space: pre-wrap; word-break: break-all; }

@@ -10,6 +10,7 @@ it looks for. Driven by the stubs in tests/deploy_probe.py, with no network.
 
 import re
 import shutil
+from html.parser import HTMLParser
 
 import pytest
 
@@ -174,6 +175,7 @@ REVALIDATED = ["/", "/css/style.css", "/admin/", "/admin/css/admin.css", "/admin
 FONT = "/fonts/jetbrains-mono-latin.woff2"
 CONSOLE = [
     "/admin/",
+    "/js/theme-init.js",
     "/css/fonts.css",
     "/css/tokens.css",
     "/admin/css/admin.css",
@@ -259,13 +261,36 @@ def test_the_console_is_loaded_twice_after_a_pause_without_retries(workdir):
     assert result.calls == probes + load + load
 
 
+class _ConsoleAssetCollector(HTMLParser):
+    """Collects stylesheet hrefs and script srcs, in document order.
+
+    A regex anchored on `<link rel="stylesheet" href="...">` breaks the
+    moment the two attributes swap order, and a link's rel is a
+    space-separated token list, not a single value to equal literally.
+    Parsing the markup instead makes both non-issues.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.assets = []
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "link" and "stylesheet" in (attrs.get("rel") or "").split():
+            if attrs.get("href"):
+                self.assets.append(attrs["href"])
+        elif tag == "script" and attrs.get("src"):
+            self.assets.append(attrs["src"])
+
+
 def test_the_console_list_is_what_admin_index_html_loads():
     # deploy.sh runs one deploy behind itself, so when the console's page
     # gains or renames a stylesheet or script, its list must change a deploy
     # ahead. This test is what notices.
     html = (REPO_ROOT / "frontend" / "public" / "admin" / "index.html").read_text(encoding="utf-8")
-    assets = re.findall(r'<link rel="stylesheet" href="([^"]+)"|<script src="([^"]+)"', html)
-    assert ["/admin/", *(css or js for css, js in assets)] == CONSOLE
+    collector = _ConsoleAssetCollector()
+    collector.feed(html)
+    assert ["/admin/", *collector.assets] == CONSOLE
 
 
 def test_a_503_while_loading_the_console_fails_and_is_not_retried(workdir):
@@ -353,3 +378,22 @@ def test_verify_all_runs_the_cache_check():
     body = re.search(r"^verify_all\(\) \{\n(.*?)^\}", source, re.M | re.S)
     assert body, "verify_all() not found in scripts/deploy.sh"
     assert re.search(r"^\s+verify_cache_headers$", body.group(1), re.M)
+
+
+def test_the_header_check_reads_its_headers_without_a_pipe():
+    """`printf ... | grep -q` is a race under `set -o pipefail`: grep -q exits
+    at its first match, and a printf still writing the remaining lines then
+    dies of SIGPIPE, which fails the pipeline and reports a header that is
+    present as missing. It was observed about once in 50,000 checks under load
+    (PIPESTATUS 141 0): enough to fail this module now and then, and on the
+    server to end a good deploy in "verification failed". The check must hand
+    grep its input another way."""
+    source = DEPLOY_SH.read_text(encoding="utf-8")
+    body = re.search(r"^verify_security_headers\(\) \{\n(.*?)^\}", source, re.M | re.S)
+    assert body, "verify_security_headers() not found in scripts/deploy.sh"
+    # Comment lines are skipped: the one above the fixed line names the pattern.
+    code = "\n".join(
+        line for line in body.group(1).splitlines() if not line.lstrip().startswith("#")
+    )
+    piped = re.findall(r"^.*\|\s*grep\s+-[A-Za-z]*q.*$", code, re.M)
+    assert piped == [], "a pipeline into grep -q can fail on SIGPIPE:\n" + "\n".join(piped)

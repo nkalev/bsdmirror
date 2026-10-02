@@ -135,7 +135,11 @@ async function main() {
         '--remote-debugging-port=0',
         `--user-data-dir=${userDataDir}`,
         '--no-first-run', '--no-default-browser-check',
-        '--disable-gpu', '--disable-extensions', '--mute-audio'
+        '--disable-gpu', '--disable-extensions', '--mute-audio',
+        // Nothing but this harness's own 127.0.0.1 server should be contacted:
+        // CI runs this on a bare runner, where Chrome would otherwise reach out
+        // for variations, safe browsing and component updates as well.
+        '--disable-background-networking', '--disable-component-update'
     ], { stdio: ['ignore', 'ignore', 'pipe'] });
     chromeProcess = chrome;
 
