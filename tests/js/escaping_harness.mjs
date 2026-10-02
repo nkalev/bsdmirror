@@ -497,24 +497,49 @@ async function main() {
     });
 
     await check('renderLayout sets aria-current=page on the current nav-item and false on the rest', () => {
+        // Every route in turn, not one page: each nav link has its own copy of
+        // the current-page test, and a render only runs the copy for the route
+        // it was rendered for.
         const routes = ['dashboard', 'mirrors', 'sync-failures', 'protected-paths', 'users', 'audit-logs', 'settings'];
         mod.state.user = { id: 1, username: 'root', role: 'admin' };
-        mod.state.currentPage = 'protected-paths';
-        const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Protected Paths'));
-        mod.state.user = null;
-        mod.state.currentPage = 'dashboard';
+        try {
+            for (const current of routes) {
+                mod.state.currentPage = current;
+                const out = String(mod.renderLayout(mod.html`<p>body</p>`, 'Page'));
+                const navItems = scanTags(out).filter((t) => t.name === 'a' && t.attrs['data-nav']);
+                assert(
+                    navItems.length === routes.length,
+                    `${current}: expected ${routes.length} nav items, found ${navItems.length}`
+                );
 
-        const navItems = scanTags(out).filter((t) => t.name === 'a' && t.attrs['data-nav']);
-        for (const route of routes) {
-            const item = navItems.find((t) => t.attrs['data-nav'] === route);
-            assert(item, `no nav-item for ${route}`);
-            const want = route === 'protected-paths' ? 'page' : 'false';
-            assert(
-                item.attrs['aria-current'] === want,
-                `${route}: aria-current is ${JSON.stringify(item.attrs['aria-current'])}, want ${want}`
-            );
+                const marked = navItems
+                    .filter((t) => t.attrs['aria-current'] === 'page')
+                    .map((t) => t.attrs['data-nav']);
+                assert(
+                    marked.length === 1 && marked[0] === current,
+                    `${current}: aria-current="page" is on [${marked}], want exactly [${current}]`
+                );
+                for (const item of navItems) {
+                    const route = item.attrs['data-nav'];
+                    if (route !== current) {
+                        assert(
+                            item.attrs['aria-current'] === 'false',
+                            `${current}: ${route} has aria-current ${JSON.stringify(item.attrs['aria-current'])}, want "false"`
+                        );
+                    }
+                    // The visible state and the announced one are the same fact.
+                    const active = (item.attrs.class || '').split(/\s+/).includes('active');
+                    assert(
+                        active === (route === current),
+                        `${current}: ${route} has class ${JSON.stringify(item.attrs.class)}, active should be ${route === current}`
+                    );
+                }
+            }
+        } finally {
+            mod.state.user = null;
+            mod.state.currentPage = 'dashboard';
         }
-        return '';
+        return `${routes.length} routes`;
     });
 
     await check('renderLayout toast container carries role=status and aria-live=polite', () => {

@@ -381,19 +381,24 @@ def test_the_admin_layer_sets_no_colour_token():
     ADMIN bug this same block used to be on purpose
     (tests/test_legacy_admin_tokens.py, deleted alongside it) -- so this
     checks the block's own declarations directly, not merely that
-    ADMIN_LIGHT/ADMIN_DARK happen to resolve like LIGHT/DARK today."""
-    admin_tokens = parse_custom_properties(find_block(TOKENS_TEXT, '[data-surface="admin"]'))
-    colour_prefixes = (
-        "--bg-",
-        "--text-",
-        "--accent-",
-        "--border-",
-        "--status-",
-        "--stream-",
-        "--mark-",
+    ADMIN_LIGHT/ADMIN_DARK happen to resolve like LIGHT/DARK today.
+
+    The block is pinned to exactly that one declaration rather than scanned
+    for colour-looking names. A list of name prefixes passes any colour token
+    named outside it (--surface-raised, --danger) and any declaration that is
+    not a custom property at all (a `color:` or a `background:` written
+    straight into the block). A second declaration here is a decision to make
+    in this test, with section 7 of the spec beside it."""
+    block = find_block(TOKENS_TEXT, '[data-surface="admin"]')
+    declared_names = [
+        declaration.split(":", 1)[0].strip()
+        for declaration in block.split(";")
+        if declaration.strip()
+    ]
+    assert declared_names == ["--sidebar-width"], (
+        '[data-surface="admin"] must declare exactly --sidebar-width and nothing else '
+        f"(spec section 7); it declares {declared_names}"
     )
-    offenders = sorted(name for name in admin_tokens if name.startswith(colour_prefixes))
-    assert not offenders, f'[data-surface="admin"] still sets colour token(s): {offenders}'
 
 
 # ===========================================================================

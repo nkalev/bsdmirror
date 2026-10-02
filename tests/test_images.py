@@ -185,13 +185,21 @@ def test_each_icon_is_drawn_with_the_shared_round_stroke(name):
 def test_every_icon_name_has_a_consumer():
     """Every file under img/icons/ must be named by admin.js or index.html
     (spec 4.7's set is exactly what the console and the public page consume,
-    no more). Six names -- icon-info, icon-user, icon-edit, icon-trash,
-    icon-lock, icon-unlock -- reach the page only through a lookup table
-    (getActivityIcon(), Toast.show()): admin.js still writes their class
-    string as literal text there ('icon-user', never `icon-${name}`), so a
-    plain substring search finds them without executing the file."""
+    no more). Eight names -- icon-sun, icon-moon, icon-info, icon-unlock,
+    icon-lock, icon-user, icon-edit, icon-trash -- reach the page only through
+    a ternary or a lookup table (renderThemeToggle(), Toast.show(),
+    getActivityIcon()): admin.js still writes their class string as literal
+    text there ('icon-user', never `icon-${name}`), so a text search finds
+    them without executing the file.
+
+    The search is bounded at the end of the name. A bare substring search let
+    `icon-user` be found inside `icon-users` and `icon-sync` inside
+    `icon-sync-failures`, so removing the only consumer of the shorter name
+    left this test green."""
     corpus = ADMIN_JS.read_text(encoding="utf-8") + INDEX_HTML.read_text(encoding="utf-8")
-    missing = sorted(name for name in ICON_NAMES if f"icon-{name}" not in corpus)
+    missing = sorted(
+        name for name in ICON_NAMES if not re.search(rf"icon-{re.escape(name)}(?![\w-])", corpus)
+    )
     assert not missing, f"no admin.js/index.html reference to icon-{{{','.join(missing)}}}"
 
 
