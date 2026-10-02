@@ -17,6 +17,11 @@ half-started browser kept running into the next test.
 These tests swap Chrome for a stand-in that records its pid and never writes
 DevToolsActivePort, so they need node but not Chrome, and they shorten the
 start limit through CHROME_START_TIMEOUT_MS so the failure path takes seconds.
+
+A harness's Chrome should also contact nothing but the harness's own
+127.0.0.1 server. CI runs it on a bare runner, where Chrome would otherwise
+phone home (variations, safe browsing, component updates) alongside the pages
+under test; the last test here pins the two flags that stop that.
 """
 
 import os
@@ -141,3 +146,20 @@ def test_the_default_start_limit_is_at_least_30_seconds(name):
     match = re.search(r"^const DEFAULT_CHROME_START_TIMEOUT_MS = ([0-9_]+);$", source, re.MULTILINE)
     assert match, f"the {name} harness no longer declares DEFAULT_CHROME_START_TIMEOUT_MS"
     assert int(match.group(1).replace("_", "")) >= 30_000
+
+
+# What stops a headless Chrome from reaching out on its own: the first covers
+# its background services, the second its component updater.
+OFFLINE_FLAGS = ("--disable-background-networking", "--disable-component-update")
+
+
+@pytest.mark.parametrize("name", sorted(HARNESSES))
+def test_every_harness_launches_chrome_with_its_own_networking_off(name):
+    source = HARNESSES[name][0].read_text(encoding="utf-8")
+    launch = re.search(r"spawn\(CHROME, \[(.*?)\]", source, re.DOTALL)
+    assert launch, f"the {name} harness no longer starts Chrome with spawn(CHROME, [...])"
+    missing = [flag for flag in OFFLINE_FLAGS if f"'{flag}'" not in launch.group(1)]
+    assert not missing, (
+        f"the {name} harness starts Chrome without {missing}, so a CI runner's Chrome may "
+        f"contact hosts other than the harness's own 127.0.0.1 server"
+    )

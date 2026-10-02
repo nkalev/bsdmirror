@@ -40,7 +40,9 @@ mid-fade -- agrees with what a text-only parser assumed. See that file's
 docstring for the rest of the trade-offs (most notably: it reaches admin.js's
 markup by calling its page-renderer functions directly, the same way
 tests/js/escaping_harness.mjs does, rather than driving the SPA through a
-live backend).
+live backend). The two admin fixture pages are also served under the
+production Content-Security-Policy, and any violation Chrome reports for
+either one fails a test in this file's last section.
 
 Both halves are mutation-tested: tests/test_admin_js_escaping.py's reasoning
 applies here word for word -- a guard only ever seen passing is
@@ -53,6 +55,8 @@ import shutil
 import subprocess
 
 import pytest
+
+from tests.test_public_page_csp import nginx_csp
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 TOKENS_CSS = REPO_ROOT / "frontend" / "public" / "css" / "tokens.css"
@@ -1571,3 +1575,74 @@ def test_harness_reports_an_uncaught_js_error_on_the_public_page(tmp_path):
     assert (
         "planted for test_harness_reports_an_uncaught_js_error_on_the_public_page" in proc.stderr
     ), f"the harness failed, but not with the planted error's message:\n{proc.stderr}"
+
+
+# ===========================================================================
+# The admin console under the production CSP, in a real browser
+#
+# The harness serves its two admin fixture pages with the Content-Security-
+# Policy that nginx/nginx.conf sends, and listens for every violation Chrome
+# reports while it loads and measures them (the DevTools Log and Audits
+# domains). Until it did, nothing loaded the console under that header: the
+# static tests read admin.js for style= and on* and the policy for
+# 'unsafe-inline', and neither can say that a real browser agrees.
+#
+# Only these fixture pages run under the policy, not the public site (that is
+# test_public_page_csp.py's job). They hold admin.js's rendered markup and
+# link the real stylesheets, so what they check is the markup, the CSS, the
+# fonts and the mask images; no script runs in them.
+# ===========================================================================
+def violation_lines(violations):
+    return "\n  ".join(json.dumps(v, sort_keys=True) for v in violations)
+
+
+@requires_browser
+def test_the_harness_serves_the_admin_pages_the_policy_nginx_sends(measured):
+    """Otherwise the checks below test a policy nobody serves."""
+    assert measured["csp"]["policy"] == nginx_csp()
+
+
+@requires_browser
+@pytest.mark.parametrize("theme_label", ["light", "dark"])
+def test_the_admin_fixture_raises_no_csp_violation(measured, theme_label):
+    violations = measured["csp"]["admin"][theme_label]
+    assert violations == [], (
+        f"the admin console's {theme_label} fixture page raised CSP violation(s) under the "
+        f"production policy:\n  {violation_lines(violations)}"
+    )
+
+
+@requires_browser
+def test_the_csp_check_can_see_an_inline_style_attribute(measured):
+    """A guard that cannot fail is not a guard. The control is the light fixture
+    page with one inline style attribute added, served under the same policy in
+    the same Chrome session; style-src 'self' has to refuse it, and the harness
+    has to hear about it from both channels it listens on."""
+    control = measured["csp"]["controls"]["inlineStyleAttribute"]
+    assert any(
+        v.get("directive") == "style-src-attr" for v in control
+    ), f"the Audits channel did not report the inline style:\n  {violation_lines(control)}"
+    assert any(
+        "inline style" in v.get("text", "") for v in control
+    ), f"the Log channel did not report the inline style:\n  {violation_lines(control)}"
+
+
+@requires_browser
+def test_harness_reports_a_csp_violation_when_admin_js_emits_an_inline_style(tmp_path):
+    """The same control from the other end: plant an inline style attribute in a
+    copy of admin.js's own markup (the regression test_admin_inline_styles.py
+    guards against from the source side) and require the real fixture pages,
+    both themes, to report it."""
+    source = ADMIN_JS.read_text(encoding="utf-8")
+    old = '<div class="sidebar-header">'
+    assert source.count(old) == 1, "admin.js's sidebar header no longer matches; update the control"
+    planted = tmp_path / "admin.js"
+    planted.write_text(source.replace(old, '<div class="sidebar-header" style="padding: 0">'))
+
+    result = run_contrast_harness(REPO_ROOT / "frontend" / "public", planted)
+    for theme_label in ("light", "dark"):
+        violations = result["csp"]["admin"][theme_label]
+        assert any(v.get("directive") == "style-src-attr" for v in violations), (
+            f"an inline style attribute in admin.js's markup raised no CSP violation on the "
+            f"{theme_label} fixture page:\n  {violation_lines(violations)}"
+        )
