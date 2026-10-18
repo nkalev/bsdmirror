@@ -453,3 +453,24 @@ def test_at_least_the_expected_icon_variants_are_present():
         variants |= node.classes() - {"icon"}
     missing = {"icon-copy", "icon-arrow-right", "theme-icon"} - variants
     assert not missing, f"no .icon span uses {sorted(missing)}"
+
+
+# ===========================================================================
+# Mirror card marks: one decorative mask span per tile
+# (docs/design/2026-10-17-mirror-card-marks.md, section 4.1).
+# ===========================================================================
+def test_each_mirror_card_tile_holds_one_decorative_mark():
+    """The mark is a <span> masked by style.css, not an <img>: an <img> SVG
+    cannot see the page's colour tokens, so it could not follow the theme.
+    It is decorative because the <h3> beside it already names the card."""
+    for os_id in MIRRORS:
+        card = find_one(ROOT, class_="mirror-card", attrs={"data-mirror": os_id})
+        tile = find_one(card, class_="mirror-logo-tile")
+        children = tile.element_children()
+        assert len(children) == 1, f"{os_id}: the tile must hold exactly one element"
+        mark = children[0]
+        assert mark.tag == "span", f"{os_id}: the mark is a masked <span>, not <{mark.tag}>"
+        expected = {"mirror-logo", f"mirror-logo-{os_id}"}
+        assert mark.classes() == expected, f"{os_id}: {sorted(mark.classes())}"
+        assert mark.attrs.get("aria-hidden") == "true", f"{os_id}: the mark must be aria-hidden"
+        assert list(find_all(card, tag="img")) == [], f"{os_id}: an <img> in a mirror card"

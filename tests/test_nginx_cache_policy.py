@@ -210,7 +210,7 @@ REVALIDATED = [
 LONG_CACHED = [
     "/fonts/jetbrains-mono-latin.woff2",
     "/img/favicon.svg",
-    "/img/freebsd-logo.svg",
+    "/img/freebsd-trident.svg",
     "/img/icons/copy.svg",
     "/img/apple-touch-icon.png",
     "/favicon.ico",
