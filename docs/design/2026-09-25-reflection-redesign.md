@@ -25,7 +25,7 @@ The site and the admin console get a new visual identity:
 |---|---|
 | Direction | Reflection |
 | Delivery | Three PRs: foundation, then the public site with the error pages, then the admin console; the foundation ships as two pull requests, 1a and 1b (section 11) |
-| FreeBSD, NetBSD and OpenBSD logos on the mirror cards | Kept, restyled to fit |
+| FreeBSD, NetBSD and OpenBSD logos on the mirror cards | Kept, restyled to fit. Superseded 2026-10-17: original marks instead, see `2026-10-17-mirror-card-marks.md` |
 | Admin theme | Light and dark, following the same saved choice as the public site |
 | Hero headline | "Every BSD, mirrored." |
 
@@ -112,7 +112,7 @@ What happens to the existing tokens:
 | Token | Fate |
 |---|---|
 | `--accent-gradient`, `--accent-secondary` | Removed in PR 2. The site drops gradient text and has one accent. Their contrast checks go with them. `admin.css` uses neither. |
-| `--freebsd-color`, `--netbsd-color`, `--openbsd-color` | Removed in PR 2. The cards carry each project's logo instead. |
+| `--freebsd-color`, `--netbsd-color`, `--openbsd-color` | Removed in PR 2. The cards carry each project's logo instead. Superseded 2026-10-17: the cards carry original marks, see `2026-10-17-mirror-card-marks.md`. |
 | `--terminal-bg`, `--terminal-prompt`, `--terminal-text` | Removed in PR 2. The access rows use `--bg-secondary` and the text colours. |
 | `--status-healthy-tint`, `--status-syncing-tint`, `--status-error-tint` | Removed in PR 2, replaced by the `-bg` tints above. |
 | `--bg-tertiary`, `--status-error-text`, `--status-info-text` | Kept only in PR 2's legacy admin block (section 7). Removed in PR 3, where pills use `--status-*` on `--status-*-bg` and fields use `--bg-secondary`. |
@@ -269,7 +269,7 @@ From top to bottom:
    - error: a broken dashed line with a ×
    - neutral: the line is hidden
 4. **Mirror cards**, `.mirror-card[data-mirror]`, three of them. Each has:
-   - The project's logo in a 40px raised tile.
+   - The project's logo in a 40px raised tile. Superseded 2026-10-17: an original mark, see `2026-10-17-mirror-card-marks.md`.
    - The name in Unbounded 600, and the pill, `#<os>-status`.
    - The description, size (`#<os>-size`) and last sync (`#<os>-sync`).
    - "Browse files", the primary button, linking to `/<OS>/` as today.
