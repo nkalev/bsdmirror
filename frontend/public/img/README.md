@@ -47,10 +47,28 @@ join the nav icons already here.
 To add an icon, draw it on the same grid with the same root attributes, and add
 its name to `ICON_NAMES` in `tests/test_images.py`.
 
-## Project logos
+## Project marks
 
-`freebsd-logo.svg`, `netbsd-logo.svg` and `openbsd-logo.svg` are simple
-drawings of each project's emblem, used on the mirror cards.
+`freebsd-trident.svg`, `netbsd-flag.svg` and `openbsd-blowfish.svg` are the
+marks on the mirror cards (`docs/design/2026-10-17-mirror-card-marks.md`).
+They are original drawings -- a trident, a flag on a pole, a blowfish -- and
+deliberately not the projects' logos. FreeBSD permits its official logo on
+a site like this one only unaltered, linked to the project and carrying a
+trademark notice; NetBSD licenses its flag to non-commercial sites, not cut up
+or materially altered; OpenBSD's pages state no terms for Puffy. A generic
+symbol needs none of that, so **never redraw these toward the official
+emblems**: that re-creates the altered-logo case the terms rule out.
+
+They are drawn on the icon grid -- `viewBox="0 0 24 24"`, no `width`/`height`,
+no `<style>`, every `fill`/`stroke` `#000` or `none`, nothing outside a
+1.3-unit margin -- but as filled silhouettes rather than 1.6-unit strokes, and
+`style.css` masks each onto its card's tile in `--text-primary`:
+
+    <span class="mirror-logo mirror-logo-freebsd" aria-hidden="true"></span>
+
+`tests/test_images.py` pins the grid, the paint and the class-to-file mapping;
+`tests/test_public_page_structure.py` pins the markup. A changed mark ships
+under a new name, like every image here.
 
 ## Favicons
 

@@ -637,10 +637,35 @@ h1, h2, h3, h4 {
     background: var(--bg-secondary);
 }
 
+/* The project marks (docs/design/2026-10-17-mirror-card-marks.md): original
+   silhouettes drawn for CSS masks, painted in the text colour so they follow
+   the theme the way the icons do. Each card's class names its file. */
 .mirror-logo {
     display: block;
     width: 26px;
     height: 26px;
+    background-color: var(--text-primary);
+    -webkit-mask-position: center;
+    mask-position: center;
+    -webkit-mask-size: contain;
+    mask-size: contain;
+    -webkit-mask-repeat: no-repeat;
+    mask-repeat: no-repeat;
+}
+
+.mirror-logo-freebsd {
+    -webkit-mask-image: url(/img/freebsd-trident.svg);
+    mask-image: url(/img/freebsd-trident.svg);
+}
+
+.mirror-logo-netbsd {
+    -webkit-mask-image: url(/img/netbsd-flag.svg);
+    mask-image: url(/img/netbsd-flag.svg);
+}
+
+.mirror-logo-openbsd {
+    -webkit-mask-image: url(/img/openbsd-blowfish.svg);
+    mask-image: url(/img/openbsd-blowfish.svg);
 }
 
 .mirror-name {

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <!-- Flag, drawn for a CSS mask: pole, base, a flag with one wave. -->
+  <rect x="4.4" y="1.4" width="2.2" height="21.2" rx="1.1"/>
+  <rect x="1.6" y="20.8" width="7.8" height="1.8" rx="0.9"/>
+  <path d="M5.5 4H6.6C8.9 2.1 11.3 2.1 13.6 4S18.3 5.9 20.6 4V13C18.3 14.9 15.9 14.9 13.6 13S8.9 11.1 6.6 13H5.5Z"/>
+</svg>

@@ -1,5 +1,5 @@
 """Static checks on the images frontend/public serves: the b|d mark, the
-icons, the logos and the favicon set.
+icons, the project marks and the favicon set.
 
 docs/design/2026-09-25-reflection-redesign.md, sections 4.5 to 4.7. The CSP
 loads images from this origin only (img-src 'self', no data:), an SVG opened
@@ -75,6 +75,19 @@ ICON_STROKE = {
     "stroke-linecap": "round",
     "stroke-linejoin": "round",
 }
+# The project marks on the mirror cards
+# (docs/design/2026-10-17-mirror-card-marks.md): original silhouettes that
+# style.css masks onto each card's tile in --text-primary. "Mark" alone means
+# the b|d mark in this file, so these carry the PROJECT_ prefix.
+PROJECT_MARKS = {
+    "freebsd": "freebsd-trident.svg",
+    "netbsd": "netbsd-flag.svg",
+    "openbsd": "openbsd-blowfish.svg",
+}
+# A mask reads alpha, so paint never shows; black keeps a file legible when
+# opened directly, and `none` is how a shape says it has no stroke or fill.
+PROJECT_MARK_PAINT = {"#000", "none"}
+STYLE_CSS = PUBLIC / "css" / "style.css"
 # The b's bowl is a ring: the outer circle, then the hole (section 4.5).
 MARK_BOWL = "M5 46a12 12 0 1 0 24 0a12 12 0 1 0-24 0ZM11 46a6 6 0 1 0 12 0a6 6 0 1 0-12 0Z"
 FAVICON_BOWL = (
@@ -216,6 +229,37 @@ def test_every_icon_class_named_in_admin_js_or_index_html_is_a_real_icon():
     used = {m.group(1) for m in re.finditer(r'(?<!class=")icon-([a-z][a-z-]*)', corpus)}
     unknown = sorted(used - ICON_NAMES)
     assert not unknown, f"icon-NAME(s) with no file under img/icons/: {unknown}"
+
+
+@pytest.mark.parametrize("os_id", sorted(PROJECT_MARKS))
+def test_each_project_mark_is_a_black_mask_on_the_icon_grid(os_id):
+    """The icon grid, no width/height so the mask scales to its box, no
+    <style>, and nothing painted in a colour. Inertness is checked for every
+    SVG here by test_every_svg_here_is_inert."""
+    path = IMG / PROJECT_MARKS[os_id]
+    assert path.is_file(), f"{path.relative_to(PUBLIC)} is missing"
+    root = svg_root(path)
+    assert root.get("viewBox") == "0 0 24 24", f"{path.name}: viewBox={root.get('viewBox')!r}"
+    assert root.get("width") is None and root.get("height") is None, f"{path.name}: sized root"
+    assert "style" not in tags(root), f"{path.name}: <style>"
+    for element in root.iter():
+        for name in ("fill", "stroke"):
+            value = element.get(name)
+            assert value is None or value in PROJECT_MARK_PAINT, f"{path.name}: {name}={value!r}"
+
+
+@pytest.mark.parametrize("os_id", sorted(PROJECT_MARKS))
+def test_each_project_mark_is_masked_onto_its_card(os_id):
+    """style.css names each file from its own card's class, in both mask-image
+    longhands. Pinning the mapping is what catches two rules with their files
+    swapped; test_fonts.py already checks that every url() names a file."""
+    css = STYLE_CSS.read_text(encoding="utf-8")
+    rule = re.search(rf"^\.mirror-logo-{os_id}\s*\{{([^}}]*)\}}", css, re.M)
+    assert rule, f".mirror-logo-{os_id} has no rule in style.css"
+    for prop in ("-webkit-mask-image", "mask-image"):
+        declared = re.findall(rf"(?<![\w-]){prop}\s*:\s*([^;]+);", rule.group(1))
+        want = [f"url(/img/{PROJECT_MARKS[os_id]})"]
+        assert declared == want, f".mirror-logo-{os_id} {prop}: {declared}"
 
 
 def test_mark_glyph_is_the_regular_b_and_its_mirror_image():
